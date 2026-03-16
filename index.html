@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Light of Paradise</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: Arial, sans-serif; overflow: hidden; }
+        canvas { display: block; border: 2px solid #333; cursor: pointer; }
+
+        #videoOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 100;
+            transition: opacity 0.9s ease;
+        }
+        #introVideo {
+            max-width: 100%; max-height: 90vh;
+            display: block;
+        }
+        #skipHint {
+            position: absolute; bottom: 28px;
+            color: rgba(255,255,255,0.5);
+            font-size: 13px; font-family: Arial, sans-serif;
+            animation: blink 1.4s infinite;
+        }
+        @keyframes blink {
+            0%,100% { opacity: 0.5; }
+            50%      { opacity: 1;   }
+        }
+    </style>
+</head>
+<body>
+<div id="videoOverlay">
+    <video id="introVideo" src="Light of paradise opening.mp4" autoplay muted playsinline></video>
+    <div id="skipHint">Press SPACE or click to skip</div>
+</div>
+<canvas id="gameCanvas"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width  = 800;
+canvas.height = 600;
+
+// ── VIDEO INTRO ───────────────────────────────────────────────
+let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
+
+(function setupVideoIntro() {
+    const overlay = document.getElementById('videoOverlay');
+    const video   = document.getElementById('introVideo');
+    let dismissed = false;
+
+    function captureLastFrameColor() {
+        try {
+            const oc   = document.createElement('canvas');
+            oc.width   = video.videoWidth  || 640;
+            oc.height  = video.videoHeight || 360;
+            const octx = oc.getContext('2d');
+            octx.drawImage(video, 0, 0, oc.width, oc.height);
+            // Sample a 5×5 grid across the frame
+            let r = 0, g = 0, b = 0, n = 0;
+            for (let sx = 0.1; sx <= 0.95; sx += 0.2) {
+                for (let sy = 0.1; sy <= 0.95; sy += 0.2) {
+                    const d = octx.getImageData(
+                        Math.floor(sx * oc.width),
+                        Math.floor(sy * oc.height), 1, 1).data;
+                    r += d[0]; g += d[1]; b += d[2]; n++;
+                }
+            }
+            // Darken the average so it works as a subtle game background
+            r = Math.floor(r / n * 0.32);
+            g = Math.floor(g / n * 0.32);
+            b = Math.floor(b / n * 0.32);
+            voidBgColor = `rgb(${r},${g},${b})`;
+        } catch (e) { /* keep default if CORS/decode fails */ }
+    }
+
+    function dismiss() {
+        if (dismissed) return;
+        dismissed = true;
+        overlay.style.opacity = '0';
+        overlay.addEventListener('transitionend', () => overlay.remove(), { once: true });
+    }
+
+    video.addEventListener('ended',   dismiss);
+    overlay.addEventListener('click', dismiss);
+    document.addEventListener('keydown', function onKey(e) {
+        if (e.code === 'Space') { e.preventDefault(); dismiss(); document.removeEventListener('keydown', onKey); }
+    });
+
+    // Fallback: if video fails to load/play, still dismiss after a short wait
+    video.addEventListener('error', () => setTimeout(dismiss, 100));
+})();
+
+// ── CONSTANTS ────────────────────────────────────────────────
+const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise' };
+const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone' };
+const BASE_SPEED = 4;
+
+// ── HELL CAVES (player can hide here; devil switches to WANDER) ──
+const HELL_CAVES = [
+    { x: 55,  y: 55,  w: 175, h: 115 },
+    { x: 570, y: 400, w: 175, h: 130 },
+];
+
+// ── STATE ────────────────────────────────────────────────────
+let state = {
+    room:               ROOM.VOID,
+    lightCrystals:      0,
+    power:              POWER.NONE,
+    won:                false,
+    screenShake:        0,
+    playerFlash:        0,
+    gamePhase:          'intro',   // 'intro' | 'playing'
+    playerHp:           3,
+    playerInvincible:   0,
+    confettiSpawned:    false,
+    paradiseClearCount: 0,         // how many crystals collected (0–3)
+};
+
+// ── PLAYER ───────────────────────────────────────────────────
+const player = { x: 400, y: 300, w: 32, h: 32 };
+
+// ── INPUT ────────────────────────────────────────────────────
+const keys = {};
+document.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (e.code === 'Space') {
+        e.preventDefault();
+        if (state.gamePhase === 'intro') {
+            state.gamePhase = 'playing';
+        } else {
+            shoot();
+        }
+    }
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// Play Again click
+canvas.addEventListener('click', e => {
+    if (!state.won) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (800 / rect.width);
+    const my = (e.clientY - rect.top)  * (600 / rect.height);
+    if (mx >= 300 && mx <= 500 && my >= 420 && my <= 475) resetGame();
+});
+
+// ── ENTITY FACTORIES ─────────────────────────────────────────
+function makeHell() {
+    return {
+        iceCrystals: [
+            { x: 150, y: 200, picked: false },
+            { x: 300, y: 450, picked: false },
+        ],
+        brimstones: [
+            { x: 580, y: 150, picked: false },
+            { x: 480, y: 370, picked: false },
+        ],
+        devil: {
+            x: 660, y: 300, r: 28, alive: true, shieldFlash: 0,
+            hp: 5, maxHp: 5,
+            aiState: 'CHASE',
+            wanderTarget: { x: 400, y: 300 },
+            wanderWaitTimer: 0,
+            shootTimer: 220,
+            telegraphTimer: 0,
+            isAboutToShoot: false,
+        },
+    };
+}
+
+function makeParadise() {
+    return {
+        fireMonsters: [
+            { x: 200, y: 150, r: 16, alive: true, dx: 1.2,  dy: 0.8  },
+            { x: 550, y: 200, r: 16, alive: true, dx: -0.9, dy: 1.1  },
+            { x: 350, y: 400, r: 16, alive: true, dx: 1.0,  dy: -1.0 },
+        ],
+        ghosts: [
+            { x: 300, y: 250, r: 16, alive: true, dx: -0.7, dy: 0.9  },
+            { x: 600, y: 350, r: 16, alive: true, dx: 0.8,  dy: -0.8 },
+        ],
+        chests: [
+            { x: 200, y: 480, w: 30, h: 24, opened: false },
+            { x: 400, y: 480, w: 30, h: 24, opened: false },
+            { x: 600, y: 480, w: 30, h: 24, opened: false },
+        ],
+        waveReset: false,   // true → respawn enemies on next paradise entry
+    };
+}
+
+function makeVoidRoom() {
+    return {
+        enemies: [
+        ],
+    };
+}
+
+let hell      = makeHell();
+let paradise  = makeParadise();
+let voidRoom  = makeVoidRoom();
+
+// ── PORTALS ───────────────────────────────────────────────────
+const PORTALS = {
+    void:     [
+        { x: 30,  y: 260, w: 32, h: 80, dest: ROOM.HELL,    color: '#CC2200', label: 'HELL'     },
+        { x: 738, y: 260, w: 32, h: 80, dest: ROOM.PARADISE, color: '#FFD700', label: 'PARADISE' },
+    ],
+    hell:     [{ x: 738, y: 260, w: 32, h: 80, dest: ROOM.VOID, color: '#888888', label: 'VOID' }],
+    paradise: [{ x: 30,  y: 260, w: 32, h: 80, dest: ROOM.VOID, color: '#888888', label: 'VOID' }],
+};
+
+// ── DYNAMIC LISTS ─────────────────────────────────────────────
+let projectiles      = [];
+let enemyProjectiles = [];
+let particles        = [];
+
+// ── HELPERS ───────────────────────────────────────────────────
+function triggerShake(amount = 12) { state.screenShake = amount; }
+
+function spawnParticles(x, y, color, count = 8) {
+    for (let i = 0; i < count; i++) {
+        const a = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+        particles.push({
+            x, y,
+            dx: Math.cos(a) * (2 + Math.random() * 3),
+            dy: Math.sin(a) * (2 + Math.random() * 3),
+            life: 35, maxLife: 35,
+            color, r: 4 + Math.random() * 4,
+        });
+    }
+}
+
+function spawnConfetti() {
+    const colors = ['#FF4444','#FF8800','#FFFF00','#44FF44','#4488FF','#CC44FF','#FF44CC','#FFFFFF','#FF88AA'];
+    for (let i = 0; i < 130; i++) {
+        const a   = Math.random() * Math.PI * 2;
+        const spd = 3 + Math.random() * 9;
+        particles.push({
+            x: 400, y: 300,
+            dx: Math.cos(a) * spd,
+            dy: Math.sin(a) * spd - 2,
+            life: 90 + Math.random() * 70, maxLife: 160,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            r: 0,
+            confetti: true,
+            rotation: Math.random() * Math.PI * 2,
+            rotSpeed: (Math.random() - 0.5) * 0.18,
+            cw: 7 + Math.random() * 6,
+            ch: 4 + Math.random() * 4,
+        });
+    }
+}
+
+function isPlayerInCave() {
+    if (state.room !== ROOM.HELL) return false;
+    return HELL_CAVES.some(c =>
+        player.x >= c.x && player.x <= c.x + c.w &&
+        player.y >= c.y && player.y <= c.y + c.h
+    );
+}
+
+function allMonstersDefeated() {
+    return paradise.fireMonsters.every(e => !e.alive)
+        && paradise.ghosts.every(e => !e.alive);
+}
+
+function getPlayerColor() {
+    if (state.playerFlash > 0) return '#FFFF00';
+    if (state.power === POWER.ICE)       return '#4488FF';
+    if (state.power === POWER.BRIMSTONE) return '#FF4422';
+    return '#FFFFFF';
+}
+
+function damagePlayer() {
+    if (state.playerInvincible > 0) return;
+    state.playerHp--;
+    state.playerInvincible = 90;
+    triggerShake(14);
+    spawnParticles(player.x, player.y, '#FF4444', 8);
+    if (state.playerHp <= 0) respawnPlayer();
+}
+
+function respawnPlayer() {
+    state.power           = POWER.NONE;
+    state.playerHp        = 3;
+    state.playerInvincible = 120;
+    changeRoom(ROOM.VOID);
+}
+
+function resetGame() {
+    Object.assign(state, {
+        room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE,
+        won: false, screenShake: 0, playerFlash: 0,
+        gamePhase: 'intro', playerHp: 3, playerInvincible: 0,
+        confettiSpawned: false, paradiseClearCount: 0,
+    });
+    player.x = 400; player.y = 300;
+    hell             = makeHell();
+    paradise         = makeParadise();
+    voidRoom         = makeVoidRoom();
+    projectiles      = [];
+    enemyProjectiles = [];
+    particles        = [];
+}
+
+// ── ROOM CHANGE ───────────────────────────────────────────────
+function respawnParadiseWave() {
+    paradise.fireMonsters.forEach((e, i) => {
+        e.alive = true;
+        e.x = [200, 550, 350][i]; e.y = [150, 200, 400][i];
+        e.dx = [1.2, -0.9, 1.0][i]; e.dy = [0.8, 1.1, -1.0][i];
+    });
+    paradise.ghosts.forEach((e, i) => {
+        e.alive = true;
+        e.x = [300, 600][i]; e.y = [250, 350][i];
+        e.dx = [-0.7, 0.8][i]; e.dy = [0.9, -0.8][i];
+    });
+}
+
+function changeRoom(dest) {
+    state.room = dest;
+    projectiles      = [];
+    enemyProjectiles = [];
+    if (dest === ROOM.VOID)     { player.x = 400; player.y = 300; }
+    if (dest === ROOM.HELL)     { player.x = 100; player.y = 300; }
+    if (dest === ROOM.PARADISE) {
+        player.x = 700; player.y = 300;
+        if (paradise.waveReset) { respawnParadiseWave(); paradise.waveReset = false; }
+    }
+}
+
+// ── UPDATE: PLAYER ────────────────────────────────────────────
+function updatePlayer() {
+    if (state.won || state.gamePhase !== 'playing') return;
+
+    const spd = state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED;
+    let dx = 0, dy = 0;
+    if (keys['ArrowLeft']  || keys['KeyA']) dx -= spd;
+    if (keys['ArrowRight'] || keys['KeyD']) dx += spd;
+    if (keys['ArrowUp']    || keys['KeyW']) dy -= spd;
+    if (keys['ArrowDown']  || keys['KeyS']) dy += spd;
+    if (dx && dy) { dx *= 0.707; dy *= 0.707; }
+
+    player.x = Math.max(18, Math.min(canvas.width  - 18, player.x + dx));
+    player.y = Math.max(52, Math.min(canvas.height - 18, player.y + dy));
+
+    for (const p of PORTALS[state.room]) {
+        if (player.x > p.x && player.x < p.x + p.w &&
+            player.y > p.y && player.y < p.y + p.h) {
+            changeRoom(p.dest);
+            return;
+        }
+    }
+
+    if (state.playerFlash     > 0) state.playerFlash--;
+    if (state.playerInvincible > 0) state.playerInvincible--;
+
+    // Brimstone spark trail
+    if (state.power === POWER.BRIMSTONE && Math.random() < 0.5) {
+        particles.push({
+            x: player.x + (Math.random() - 0.5) * 14,
+            y: player.y + (Math.random() - 0.5) * 14,
+            dx: (Math.random() - 0.5) * 1.5,
+            dy: (Math.random() - 0.5) * 1.5,
+            life: 14, maxLife: 14,
+            color: Math.random() < 0.5 ? '#FF4422' : '#FF8800',
+            r: 2 + Math.random() * 2,
+        });
+    }
+}
+
+// ── UPDATE: ENEMIES ───────────────────────────────────────────
+// Shield logic: ICE power blocks fire-type attacks; BRIMSTONE blocks ghost-type attacks
+function isShieldedAgainst(enemyType) {
+    if (enemyType === 'fire'  && state.power === POWER.ICE)       return true;
+    if (enemyType === 'ghost' && state.power === POWER.BRIMSTONE) return true;
+    return false;
+}
+
+function updateEnemies() {
+    if (state.won) return;
+
+    // ── VOID enemies ──────────────────────────────────────────
+    if (state.room === ROOM.VOID) {
+        for (const e of voidRoom.enemies) {
+            e.x += e.dx; e.y += e.dy;
+            if (e.x < 60 || e.x > 740) e.dx *= -1;
+            if (e.y < 60 || e.y > 540) e.dy *= -1;
+            // Contact damage (shielded by matching power)
+            if (state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
+                Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
+                damagePlayer();
+            }
+            // Shoot at player periodically
+            e.shootTimer--;
+            if (e.shootTimer <= 0) {
+                e.shootTimer = 100 + Math.floor(Math.random() * 60);
+                const a = Math.atan2(player.y - e.y, player.x - e.x);
+                enemyProjectiles.push({
+                    x: e.x, y: e.y,
+                    dx: Math.cos(a) * 3.5, dy: Math.sin(a) * 3.5,
+                    color: e.type === 'fire' ? '#FF6600' : '#CC88FF',
+                    life: 140, r: 6,
+                    enemyType: e.type,
+                });
+            }
+        }
+    }
+
+    if (state.room === ROOM.PARADISE) {
+        for (const e of paradise.fireMonsters) {
+            if (!e.alive) continue;
+            e.x += e.dx; e.y += e.dy;
+            if (e.x < 60 || e.x > 740) e.dx *= -1;
+            if (e.y < 60 || e.y > 540) e.dy *= -1;
+            if (state.playerInvincible === 0 && !isShieldedAgainst('fire') &&
+                Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
+                damagePlayer();
+            }
+        }
+        for (const e of paradise.ghosts) {
+            if (!e.alive) continue;
+            const a = Math.atan2(player.y - e.y, player.x - e.x);
+            e.x += Math.cos(a) * 0.5 + e.dx * 0.25;
+            e.y += Math.sin(a) * 0.5 + e.dy * 0.25;
+            if (e.x < 60 || e.x > 740) e.dx *= -1;
+            if (e.y < 60 || e.y > 540) e.dy *= -1;
+            if (state.playerInvincible === 0 && !isShieldedAgainst('ghost') &&
+                Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
+                damagePlayer();
+            }
+        }
+        // Show only the current wave's chest once all enemies are cleared
+        if (allMonstersDefeated() && state.paradiseClearCount < 3) {
+            paradise.chests[state.paradiseClearCount].visible = true;
+        }
+    }
+
+    if (state.room === ROOM.HELL) {
+        const d = hell.devil;
+        if (!d.alive) return;
+        if (d.shieldFlash > 0) d.shieldFlash--;
+
+        if (d.telegraphTimer > 0) {
+            // Frozen while telegraphing
+            d.telegraphTimer--;
+            if (d.telegraphTimer === 0 && d.isAboutToShoot) {
+                const a = Math.atan2(player.y - d.y, player.x - d.x);
+                enemyProjectiles.push({
+                    x: d.x, y: d.y,
+                    dx: Math.cos(a) * 5, dy: Math.sin(a) * 5,
+                    color: '#FF6600', life: 130, r: 7,
+                });
+                d.isAboutToShoot = false;
+            }
+        } else {
+            const inCave = isPlayerInCave();
+
+            if (inCave) {
+                d.aiState = 'WANDER';
+                if (d.wanderWaitTimer > 0) {
+                    d.wanderWaitTimer--;
+                } else {
+                    const dist = Math.hypot(d.wanderTarget.x - d.x, d.wanderTarget.y - d.y);
+                    if (dist < 14) {
+                        // Arrived — telegraph, then pick new spot after wait
+                        d.telegraphTimer  = 30;
+                        d.wanderWaitTimer = 120; // 2 s
+                        d.wanderTarget = {
+                            x: 80 + Math.random() * 640,
+                            y: 80 + Math.random() * 440,
+                        };
+                    } else {
+                        const a = Math.atan2(d.wanderTarget.y - d.y, d.wanderTarget.x - d.x);
+                        d.x = Math.max(50, Math.min(750, d.x + Math.cos(a) * 1.6));
+                        d.y = Math.max(50, Math.min(550, d.y + Math.sin(a) * 1.6));
+                    }
+                }
+            } else {
+                d.aiState = 'CHASE';
+                const a = Math.atan2(player.y - d.y, player.x - d.x);
+                d.x = Math.max(60, Math.min(740, d.x + Math.cos(a) * 0.9));
+                d.y = Math.max(60, Math.min(540, d.y + Math.sin(a) * 0.9));
+                if (state.playerInvincible === 0 &&
+                    Math.hypot(d.x - player.x, d.y - player.y) < d.r + 16) {
+                    damagePlayer();
+                }
+            }
+
+            // Periodic shooting (telegraph before firing)
+            d.shootTimer--;
+            if (d.shootTimer <= 0) {
+                d.shootTimer     = 190;
+                d.telegraphTimer = 30;
+                d.isAboutToShoot = true;
+            }
+        }
+    }
+}
+
+// ── UPDATE: ENEMY PROJECTILES ─────────────────────────────────
+function updateEnemyProjectiles() {
+    for (let i = enemyProjectiles.length - 1; i >= 0; i--) {
+        const p = enemyProjectiles[i];
+        p.x += p.dx; p.y += p.dy;
+        p.life--;
+        if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y < 0 || p.y > 600) {
+            enemyProjectiles.splice(i, 1); continue;
+        }
+        if (Math.hypot(p.x - player.x, p.y - player.y) < p.r + 16) {
+            if (!isShieldedAgainst(p.enemyType)) {
+                if (state.playerInvincible === 0) damagePlayer();
+            }
+            // Blocked projectiles vanish with a small spark
+            spawnParticles(p.x, p.y, p.color, 4);
+            enemyProjectiles.splice(i, 1);
+        }
+    }
+}
+
+// ── UPDATE: SHOOTING ──────────────────────────────────────────
+function shoot() {
+    if (state.won || state.power === POWER.NONE || state.room === ROOM.VOID) return;
+
+    const enemies = [];
+    if (state.room === ROOM.PARADISE) {
+        paradise.fireMonsters.filter(e => e.alive).forEach(e => enemies.push(e));
+        paradise.ghosts.filter(e => e.alive).forEach(e => enemies.push(e));
+    }
+    if (state.room === ROOM.HELL && hell.devil.alive) enemies.push(hell.devil);
+    if (!enemies.length) return;
+
+    const target = enemies.reduce((best, e) => {
+        const d = Math.hypot(e.x - player.x, e.y - player.y);
+        return d < best.dist ? { en: e, dist: d } : best;
+    }, { en: null, dist: Infinity }).en;
+
+    if (!target) return;
+    const a = Math.atan2(target.y - player.y, target.x - player.x);
+    const color = state.power === POWER.ICE ? '#4488FF' : '#FF4422';
+    projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a) * 9, dy: Math.sin(a) * 9,
+        color, power: state.power, life: 90, r: 6 });
+}
+
+// ── UPDATE: PROJECTILES & HITS ────────────────────────────────
+function updateProjectiles() {
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+        const p = projectiles[i];
+        p.x += p.dx; p.y += p.dy;
+        p.life--;
+        if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y < 0 || p.y > 600) {
+            projectiles.splice(i, 1); continue;
+        }
+
+        let hit = false;
+
+        if (state.room === ROOM.PARADISE) {
+            for (const e of paradise.fireMonsters) {
+                if (!e.alive) continue;
+                if (Math.hypot(p.x - e.x, p.y - e.y) < e.r + p.r) {
+                    if (p.power === POWER.ICE) { e.alive = false; spawnParticles(e.x, e.y, '#FF6600'); triggerShake(); }
+                    hit = true; break;
+                }
+            }
+            if (!hit) {
+                for (const e of paradise.ghosts) {
+                    if (!e.alive) continue;
+                    if (Math.hypot(p.x - e.x, p.y - e.y) < e.r + p.r) {
+                        if (p.power === POWER.BRIMSTONE) { e.alive = false; spawnParticles(e.x, e.y, '#CC88FF'); triggerShake(); }
+                        hit = true; break;
+                    }
+                }
+            }
+        }
+
+        if (!hit && state.room === ROOM.HELL) {
+            const d = hell.devil;
+            if (d.alive && Math.hypot(p.x - d.x, p.y - d.y) < d.r + p.r) {
+                if (state.lightCrystals >= 3) {
+                    d.hp--;
+                    d.shieldFlash = 15;
+                    spawnParticles(d.x, d.y, '#FF4400', 8);
+                    triggerShake(8);
+                    if (d.hp <= 0) {
+                        d.alive = false;
+                        spawnParticles(d.x, d.y, '#880000', 20);
+                        triggerShake(20);
+                        state.won = true;
+                    }
+                } else {
+                    d.shieldFlash = 25;
+                    spawnParticles(d.x, d.y, '#FFFFFF', 6);
+                    triggerShake(6);
+                }
+                hit = true;
+            }
+        }
+
+        if (hit) projectiles.splice(i, 1);
+    }
+}
+
+// ── UPDATE: PICKUPS ───────────────────────────────────────────
+function checkPickups() {
+    if (state.won) return;
+
+    if (state.room === ROOM.HELL) {
+        for (const c of hell.iceCrystals) {
+            if (!c.picked && Math.hypot(player.x - c.x, player.y - c.y) < 26) {
+                c.picked = true; state.power = POWER.ICE;
+                state.playerFlash = 25; spawnParticles(c.x, c.y, '#4488FF');
+            }
+        }
+        for (const b of hell.brimstones) {
+            if (!b.picked && Math.hypot(player.x - b.x, player.y - b.y) < 26) {
+                b.picked = true; state.power = POWER.BRIMSTONE;
+                state.playerFlash = 25; spawnParticles(b.x, b.y, '#FF4422');
+            }
+        }
+    }
+
+    if (state.room === ROOM.PARADISE) {
+        const idx = state.paradiseClearCount;
+        if (idx < 3) {
+            const c = paradise.chests[idx];
+            if (!c.opened && c.visible &&
+                Math.abs(player.x - c.x) < 28 && Math.abs(player.y - c.y) < 28) {
+                c.opened = true;
+                state.lightCrystals++;
+                state.paradiseClearCount++;
+                state.playerFlash = 35;
+                triggerShake(14);
+                spawnParticles(c.x, c.y, '#FFD700', 14);
+                // Queue enemies to respawn next time player enters paradise
+                if (state.paradiseClearCount < 3) paradise.waveReset = true;
+            }
+        }
+    }
+}
+
+// ── UPDATE: PARTICLES ─────────────────────────────────────────
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x  += p.dx; p.y  += p.dy;
+        p.dx *= 0.92; p.dy *= 0.92;
+        if (p.confetti) {
+            p.dy       += 0.09;
+            p.rotation += p.rotSpeed;
+        }
+        p.life--;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+}
+
+// ── DRAW HELPERS ──────────────────────────────────────────────
+function drawStar(x, y, r, color) {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+        const a = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+        const b = ((i * 4 + 2) * Math.PI) / 5 - Math.PI / 2;
+        ctx.lineTo(x + Math.cos(a) * r,          y + Math.sin(a) * r);
+        ctx.lineTo(x + Math.cos(b) * (r * 0.4),  y + Math.sin(b) * (r * 0.4));
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+}
+
+// ── DRAW: INTRO SCREEN ────────────────────────────────────────
+function drawIntro() {
+    ctx.fillStyle = '#080018';
+    ctx.fillRect(0, 0, 800, 600);
+
+    // Twinkling stars
+    const t = Date.now() / 3000;
+    for (let i = 0; i < 35; i++) {
+        const sx = ((i * 137 + 50) % 760) + 20;
+        const sy = ((i * 97  + 30) % 520) + 40;
+        const al = 0.25 + 0.4 * Math.sin(t * 2.5 + i);
+        ctx.fillStyle = `rgba(255,255,255,${al})`;
+        ctx.fillRect(sx, sy, 2, 2);
+    }
+
+    // Title
+    ctx.save();
+    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 30;
+    ctx.fillStyle   = '#FFD700';
+    ctx.font = 'bold 40px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('The Light of Paradise', 400, 78);
+    ctx.restore();
+
+    // Story text
+    const lines = [
+        'The Devil stole the Golden Light',
+        'and hid it in Paradise City!',
+        '',
+        'Go to Hell to get Magic Power.',
+        'Use the Power to clear the City',
+        'and find 3 Light Crystals.',
+        '',
+        'Collect them all to defeat the Devil',
+        'and save the world!',
+    ];
+    ctx.font = '18px Arial'; ctx.textAlign = 'center';
+    lines.forEach((line, i) => {
+        ctx.fillStyle = line === '' ? 'transparent' : 'rgba(210,210,255,0.92)';
+        ctx.fillText(line, 400, 138 + i * 34);
+    });
+
+    // Hint: Caves
+    ctx.fillStyle = 'rgba(180,120,60,0.7)';
+    ctx.font = '13px Arial';
+    ctx.fillText('Tip: Hide inside Caves in Hell — the Devil will lose track of you!', 400, 460);
+
+    // Pulsing Press Space
+    const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 400);
+    ctx.save();
+    ctx.fillStyle   = `rgba(255,255,80,${pulse})`;
+    ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 16 * pulse;
+    ctx.font = 'bold 22px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('Press SPACE to Begin!', 400, 508);
+    ctx.restore();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = '11px Arial';
+    ctx.fillText('Move: WASD / Arrows  |  Shoot nearest enemy: Spacebar  |  Walk into portals to travel', 400, 562);
+}
+
+// ── DRAW: PORTALS ─────────────────────────────────────────────
+function drawPortals() {
+    const t = Date.now() / 600;
+    for (const p of PORTALS[state.room]) {
+        ctx.save();
+        ctx.shadowColor = p.color; ctx.shadowBlur = 20 + Math.sin(t) * 8;
+        ctx.fillStyle   = p.color;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+        ctx.restore();
+        ctx.fillStyle = '#FFF';
+        ctx.font      = 'bold 10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(p.label, p.x + p.w / 2, p.y - 6);
+    }
+}
+
+// ── DRAW: VOID ────────────────────────────────────────────────
+function drawVoid() {
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.font      = 'bold 26px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('~ THE VOID ~', 400, 295);
+    ctx.font      = '14px Arial';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillText('Enter a portal to begin your journey', 400, 328);
+
+    // Shield hint
+    if (state.power !== POWER.NONE) {
+        const shielded = state.power === POWER.ICE ? 'FIRE' : 'GHOST';
+        ctx.fillStyle = state.power === POWER.ICE ? 'rgba(80,160,255,0.75)' : 'rgba(255,100,60,0.75)';
+        ctx.font = 'bold 12px Arial';
+        ctx.fillText(`🛡 ${state.power.toUpperCase()} SHIELD active — blocks ${shielded} attacks`, 400, 360);
+    }
+
+    // Void enemies
+    const t = Date.now() / 400;
+    for (const e of voidRoom.enemies) {
+        ctx.save();
+        if (e.type === 'fire') {
+            ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
+            ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#FFAA00';
+            for (let i = 0; i < 5; i++) {
+                const a = (i / 5) * Math.PI * 2 + t;
+                ctx.beginPath();
+                ctx.arc(e.x + Math.cos(a) * e.r * 0.85, e.y + Math.sin(a) * e.r * 0.85, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else {
+            ctx.globalAlpha = 0.8;
+            ctx.fillStyle = '#CC88FF'; ctx.shadowColor = '#AA44FF'; ctx.shadowBlur = 16;
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, e.r, Math.PI, 0);
+            ctx.lineTo(e.x + e.r,       e.y + e.r * 0.7);
+            ctx.lineTo(e.x + e.r * 0.5, e.y + e.r * 0.25);
+            ctx.lineTo(e.x,             e.y + e.r * 0.7);
+            ctx.lineTo(e.x - e.r * 0.5, e.y + e.r * 0.25);
+            ctx.lineTo(e.x - e.r,       e.y + e.r * 0.7);
+            ctx.closePath(); ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = '#330055';
+            ctx.beginPath();
+            ctx.arc(e.x - 4, e.y - 2, 3, 0, Math.PI * 2);
+            ctx.arc(e.x + 4, e.y - 2, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+// ── DRAW: HELL ────────────────────────────────────────────────
+function drawHell() {
+    const t = Date.now() / 500;
+
+    // Caves
+    for (const c of HELL_CAVES) {
+        ctx.save();
+        ctx.fillStyle   = 'rgba(15, 8, 4, 0.85)';
+        ctx.strokeStyle = '#5a2800';
+        ctx.lineWidth   = 3;
+        const rad = 18;
+        ctx.beginPath();
+        ctx.moveTo(c.x + rad, c.y);
+        ctx.arcTo(c.x + c.w, c.y,       c.x + c.w, c.y + c.h, rad);
+        ctx.arcTo(c.x + c.w, c.y + c.h, c.x,       c.y + c.h, rad);
+        ctx.arcTo(c.x,       c.y + c.h, c.x,       c.y,       rad);
+        ctx.arcTo(c.x,       c.y,       c.x + c.w, c.y,       rad);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle   = 'rgba(120,70,30,0.55)';
+        ctx.font        = 'bold 11px Arial'; ctx.textAlign = 'center';
+        ctx.fillText('CAVE  (hide here!)', c.x + c.w / 2, c.y + c.h / 2 + 4);
+        ctx.restore();
+    }
+
+    // Ice Crystals
+    for (const c of hell.iceCrystals) {
+        if (c.picked) continue;
+        drawStar(c.x, c.y + Math.sin(t + c.x) * 3, 12, '#4488FF');
+        ctx.fillStyle = '#88BBFF'; ctx.font = '10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText('ICE', c.x, c.y + 30);
+    }
+
+    // Brimstones
+    for (const b of hell.brimstones) {
+        if (b.picked) continue;
+        drawStar(b.x, b.y + Math.sin(t + b.x) * 3, 12, '#FF4422');
+        ctx.fillStyle = '#FF8866'; ctx.font = '10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText('FIRE', b.x, b.y + 30);
+    }
+
+    // Devil
+    const d = hell.devil;
+    if (d.alive) {
+        const telegraphing = d.telegraphTimer > 0;
+        const flashOn      = telegraphing && Math.floor(Date.now() / 80) % 2 === 0;
+
+        ctx.save();
+        ctx.shadowColor = telegraphing ? '#FFFF00' : (d.shieldFlash > 0 ? '#FFFFFF' : '#FF0000');
+        ctx.shadowBlur  = telegraphing ? 50 : (d.shieldFlash > 0 ? 40 : 20);
+
+        // Body
+        ctx.fillStyle = telegraphing ? (flashOn ? '#FFFF44' : '#FFFFFF')
+                      : (d.shieldFlash > 0 ? '#FFFFFF' : '#880000');
+        ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill();
+
+        // Horns
+        ctx.fillStyle = telegraphing ? '#FFAA00' : (d.shieldFlash > 0 ? '#DDDDDD' : '#550000');
+        [[d.x - 14, -1], [d.x + 14, 1]].forEach(([hx, dir]) => {
+            ctx.beginPath();
+            ctx.moveTo(hx, d.y - d.r + 2);
+            ctx.lineTo(hx + dir * 6,  d.y - d.r - 20);
+            ctx.lineTo(hx + dir * 14, d.y - d.r);
+            ctx.fill();
+        });
+
+        // Eyes
+        ctx.fillStyle = '#FFFF00';
+        ctx.beginPath();
+        ctx.arc(d.x - 9, d.y - 4, 6, 0, Math.PI * 2);
+        ctx.arc(d.x + 9, d.y - 4, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.arc(d.x - 9, d.y - 4, 3, 0, Math.PI * 2);
+        ctx.arc(d.x + 9, d.y - 4, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // State label
+        ctx.fillStyle = 'rgba(255,120,120,0.65)';
+        ctx.font = '10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(d.aiState, d.x, d.y + d.r + 14);
+
+        // HP bar (only shown when player has 3 crystals and can damage devil)
+        if (state.lightCrystals >= 3) {
+            const bw = 70, bh = 9;
+            const bx = d.x - bw / 2, by = d.y - d.r - 30;
+            ctx.fillStyle = '#400';
+            ctx.fillRect(bx, by, bw, bh);
+            ctx.fillStyle = `hsl(${(d.hp / d.maxHp) * 120}, 100%, 45%)`;
+            ctx.fillRect(bx, by, bw * (d.hp / d.maxHp), bh);
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+            ctx.strokeRect(bx, by, bw, bh);
+            ctx.fillStyle = '#fff'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+            ctx.fillText(`${d.hp}/${d.maxHp}`, d.x, by + bh - 1);
+        }
+
+        // Crystal warning
+        if (state.lightCrystals < 3 && d.shieldFlash > 0) {
+            ctx.fillStyle = '#FFFF00';
+            ctx.font = 'bold 15px Arial'; ctx.textAlign = 'center';
+            ctx.fillText('NEED ALL LIGHT CRYSTALS!', d.x, d.y - d.r - 14);
+        }
+    }
+}
+
+// ── DRAW: PARADISE ────────────────────────────────────────────
+function drawParadise() {
+    const t = Date.now() / 400;
+
+    for (const e of paradise.fireMonsters) {
+        if (!e.alive) continue;
+        ctx.save();
+        ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFAA00';
+        for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + t;
+            ctx.beginPath();
+            ctx.arc(e.x + Math.cos(a) * e.r * 0.9, e.y + Math.sin(a) * e.r * 0.9, 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+
+    for (const e of paradise.ghosts) {
+        if (!e.alive) continue;
+        ctx.save();
+        ctx.globalAlpha = 0.78;
+        ctx.fillStyle = '#CC88FF'; ctx.shadowColor = '#AA44FF'; ctx.shadowBlur = 18;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r, Math.PI, 0);
+        ctx.lineTo(e.x + e.r,       e.y + e.r * 0.7);
+        ctx.lineTo(e.x + e.r * 0.5, e.y + e.r * 0.25);
+        ctx.lineTo(e.x,             e.y + e.r * 0.7);
+        ctx.lineTo(e.x - e.r * 0.5, e.y + e.r * 0.25);
+        ctx.lineTo(e.x - e.r,       e.y + e.r * 0.7);
+        ctx.closePath(); ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#330055';
+        ctx.beginPath();
+        ctx.arc(e.x - 5, e.y - 3, 3.5, 0, Math.PI * 2);
+        ctx.arc(e.x + 5, e.y - 3, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    for (const c of paradise.chests) {
+        if (!c.visible) continue;
+        ctx.save();
+        if (!c.opened) { ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 16; }
+        ctx.fillStyle = c.opened ? '#5a3010' : '#8B4513';
+        ctx.fillRect(c.x - c.w / 2, c.y - c.h / 2, c.w, c.h);
+        ctx.fillStyle = c.opened ? '#3a200a' : '#6B3410';
+        ctx.fillRect(c.x - c.w / 2, c.y - c.h / 2, c.w, c.h / 2);
+        if (!c.opened) {
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(c.x - 3, c.y - 4, 7, 7);
+        } else {
+            drawStar(c.x, c.y - 22, 11, '#FFD700');
+        }
+        ctx.restore();
+    }
+
+    if (!allMonstersDefeated()) {
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.font = '13px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(`Wave ${state.paradiseClearCount + 1}/3 — Defeat all enemies to reveal a chest!`, 400, 544);
+    }
+}
+
+// ── DRAW: PLAYER ──────────────────────────────────────────────
+function drawPlayer() {
+    const t = Date.now() / 400;
+
+    // Ice aura
+    if (state.power === POWER.ICE) {
+        const pulse = 30 + Math.sin(t * 3) * 5;
+        const alpha = 0.28 + 0.18 * Math.sin(t * 3);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(100,180,255,${alpha})`;
+        ctx.lineWidth   = 4;
+        ctx.shadowColor = '#88CCFF'; ctx.shadowBlur = 14;
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // Invincibility flicker
+    if (state.playerInvincible > 0 && Math.floor(Date.now() / 80) % 2 === 0) return;
+
+    const color = getPlayerColor();
+    ctx.save();
+    ctx.shadowColor = color; ctx.shadowBlur = 14;
+    ctx.fillStyle   = color;
+    ctx.fillRect(player.x - player.w / 2, player.y - player.h / 2, player.w, player.h);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(player.x - 9, player.y - 7, 5, 5);
+    ctx.fillRect(player.x + 4, player.y - 7, 5, 5);
+    ctx.restore();
+}
+
+// ── DRAW: PROJECTILES ─────────────────────────────────────────
+function drawProjectiles() {
+    for (const p of projectiles) {
+        ctx.save();
+        ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    }
+}
+
+function drawEnemyProjectiles() {
+    for (const p of enemyProjectiles) {
+        ctx.save();
+        ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 16;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    }
+}
+
+// ── DRAW: PARTICLES ───────────────────────────────────────────
+function drawParticles() {
+    for (const p of particles) {
+        const a = p.life / p.maxLife;
+        ctx.save();
+        ctx.globalAlpha = a;
+        if (p.confetti) {
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.rotation);
+            ctx.fillStyle = p.color;
+            ctx.fillRect(-p.cw / 2, -p.ch / 2, p.cw, p.ch);
+        } else {
+            ctx.fillStyle = p.color;
+            ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.1, p.r * a), 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+// ── DRAW: HUD ─────────────────────────────────────────────────
+function drawHUD() {
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, 800, 46);
+
+    // Light Crystals
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 17px Arial'; ctx.textAlign = 'left';
+    ctx.fillText(`Crystals: ${state.lightCrystals}/3`, 14, 28);
+    for (let i = 0; i < 3; i++) {
+        drawStar(210 + i * 28, 23, i < state.lightCrystals ? 11 : 7,
+            i < state.lightCrystals ? '#FFD700' : '#333');
+    }
+
+    // HP hearts
+    ctx.font = '18px Arial'; ctx.textAlign = 'center';
+    let hearts = '';
+    for (let i = 0; i < 3; i++) hearts += i < state.playerHp ? '❤' : '♡';
+    ctx.fillStyle = '#FF4444';
+    ctx.fillText(hearts, 400, 20);
+
+    // Room name
+    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE CITY' };
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '11px Arial';
+    ctx.fillText(names[state.room], 400, 38);
+
+    // Power
+    const pc = { None: '#888', Ice: '#4488FF', Brimstone: '#FF4422' };
+    ctx.fillStyle = pc[state.power];
+    ctx.font = 'bold 17px Arial'; ctx.textAlign = 'right';
+    ctx.fillText(`Power: ${state.power}`, 786, 28);
+}
+
+// ── DRAW: RAINBOW BACKGROUND ──────────────────────────────────
+function drawRainbowBg() {
+    const t    = Date.now() / 2200;
+    const grad = ctx.createLinearGradient(0, 0, 800, 600);
+    grad.addColorStop(0,    `hsl(${(t * 60)       % 360}, 85%, 12%)`);
+    grad.addColorStop(0.25, `hsl(${(t * 60 + 90)  % 360}, 85%, 12%)`);
+    grad.addColorStop(0.5,  `hsl(${(t * 60 + 180) % 360}, 85%, 12%)`);
+    grad.addColorStop(0.75, `hsl(${(t * 60 + 270) % 360}, 85%, 12%)`);
+    grad.addColorStop(1,    `hsl(${(t * 60 + 360) % 360}, 85%, 12%)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 800, 600);
+}
+
+// ── DRAW: WIN SCREEN ──────────────────────────────────────────
+function drawWin() {
+    ctx.fillStyle = 'rgba(0,0,0,0.52)';
+    ctx.fillRect(0, 0, 800, 600);
+
+    ctx.save();
+    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 55;
+    ctx.fillStyle   = '#FFD700';
+    ctx.font = 'bold 54px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('PARADISE IS SAVED!', 400, 195);
+    ctx.restore();
+
+    ctx.save();
+    ctx.shadowColor = '#FFFFFF'; ctx.shadowBlur = 22;
+    ctx.fillStyle   = '#FFFFFF';
+    ctx.font = 'bold 32px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('YOU ARE A HERO!', 400, 255);
+    ctx.restore();
+
+    // Orbiting stars
+    const t = Date.now() / 300;
+    for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 + t;
+        drawStar(400 + Math.cos(a) * 110, 355 + Math.sin(a) * 42,
+            14 + Math.sin(t + i) * 4, '#FFD700');
+    }
+
+    // Play Again button
+    ctx.save();
+    ctx.shadowColor = '#4488FF'; ctx.shadowBlur = 20;
+    ctx.fillStyle   = '#1a3488';
+    ctx.fillRect(300, 420, 200, 55);
+    ctx.strokeStyle = '#6699FF'; ctx.lineWidth = 2;
+    ctx.strokeRect(300, 420, 200, 55);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('Play Again', 400, 454);
+    ctx.restore();
+}
+
+// ── DRAW: CONTROLS ────────────────────────────────────────────
+function drawControls() {
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.font = '11px Arial'; ctx.textAlign = 'right';
+    ctx.fillText('Move: WASD / Arrows  |  Shoot: Spacebar', 792, 592);
+}
+
+// ── MAIN LOOP ─────────────────────────────────────────────────
+function update() {
+    if (state.gamePhase === 'intro') return;
+
+    updatePlayer();
+    if (!state.won) {
+        updateEnemies();
+        updateProjectiles();
+        updateEnemyProjectiles();
+        checkPickups();
+    }
+    updateParticles();
+    if (state.screenShake > 0) state.screenShake--;
+
+    // Fire confetti once on win
+    if (state.won && !state.confettiSpawned) {
+        state.confettiSpawned = true;
+        spawnConfetti();
+    }
+}
+
+function draw() {
+    ctx.save();
+    if (state.screenShake > 0) {
+        const s = state.screenShake * 0.8;
+        ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
+    }
+
+    if (state.gamePhase === 'intro') {
+        drawIntro();
+        ctx.restore();
+        return;
+    }
+
+    // Background
+    if (state.won) {
+        drawRainbowBg();
+    } else {
+        const bg = { void: voidBgColor, hell: '#1a0000', paradise: '#001a1a' };
+        ctx.fillStyle = bg[state.room];
+        ctx.fillRect(0, 0, 800, 600);
+    }
+
+    // Subtle grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.lineWidth = 1;
+    for (let x = 0; x <= 800; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 600); ctx.stroke(); }
+    for (let y = 0; y <= 600; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(800, y); ctx.stroke(); }
+
+    if (!state.won) drawPortals();
+    if (state.room === ROOM.VOID)     drawVoid();
+    if (state.room === ROOM.HELL)     drawHell();
+    if (state.room === ROOM.PARADISE) drawParadise();
+    drawPlayer();
+    drawProjectiles();
+    drawEnemyProjectiles();
+    drawParticles();
+    drawHUD();
+    drawControls();
+    if (state.won) drawWin();
+
+    ctx.restore();
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
