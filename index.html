@@ -101,6 +101,38 @@ const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise' };
 const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone' };
 const BASE_SPEED = 4;
 
+// ── LEVEL CONFIGURATIONS ─────────────────────────────────────
+const LEVEL_CONFIGS = [
+    { // Level 1 – Standard
+        ammoMax: 5, reloadFrames: 180,
+        devilHp: 5, devilR: 28, devilSpeed: 0.9, devilShootRate: 190, devilShotsPerFire: 1,
+        extraFireMonsters: 0, extraGhosts: 0,
+        playerMaxHp: 3,
+        coinCount: 6, isBoss: false,
+    },
+    { // Level 2 – Hard
+        ammoMax: 4, reloadFrames: 240,
+        devilHp: 10, devilR: 28, devilSpeed: 1.2, devilShootRate: 140, devilShotsPerFire: 1,
+        extraFireMonsters: 1, extraGhosts: 1,
+        playerMaxHp: 3,
+        coinCount: 8, isBoss: false,
+    },
+    { // Level 3 – BOSS
+        ammoMax: 4, reloadFrames: 270,
+        devilHp: 20, devilR: 52, devilSpeed: 1.4, devilShootRate: 100, devilShotsPerFire: 3,
+        extraFireMonsters: 2, extraGhosts: 2,
+        playerMaxHp: 2,
+        coinCount: 10, isBoss: true,
+    },
+];
+const MAX_LEVELS       = 3;
+const CAVE_MAX_FRAMES  = 180;   // 3 seconds at 60 fps — same for all levels
+
+// ── AVATAR SKINS ─────────────────────────────────────────────
+const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700'];
+const AVATAR_NAMES       = ['White', 'Blue', 'Green', 'Red', 'Gold'];
+const AVATAR_UNLOCK_COST = [0, 5, 10, 15, 20];  // coins needed to unlock each skin
+
 // ── HELL CAVES (player can hide here; devil switches to WANDER) ──
 const HELL_CAVES = [
     { x: 55,  y: 55,  w: 175, h: 115 },
@@ -113,6 +145,7 @@ let state = {
     lightCrystals:      0,
     power:              POWER.NONE,
     won:                false,
+    levelComplete:      false,     // true when current level beaten (but more levels remain)
     screenShake:        0,
     playerFlash:        0,
     gamePhase:          'intro',   // 'intro' | 'playing'
@@ -121,6 +154,21 @@ let state = {
     confettiSpawned:    false,
     paradiseClearCount: 0,         // how many crystals collected (0–3)
     voidHealTimer:      0,         // counts frames toward next +1 HP heal in Void
+    // Level / progression
+    level:              1,
+    // Ammo
+    ammo:               5,
+    ammoMax:            5,
+    ammoReloading:      false,
+    ammoReloadTimer:    0,
+    // Cave timer
+    caveTimer:          0,
+    caveProtectionExpired: false,
+    // Coins & shop
+    coins:              0,
+    shopOpen:           false,
+    unlockedSkins:      [true, ...Array(AVATAR_COLORS.length - 1).fill(false)],
+    activeSkin:         0,
 };
 
 // ── PLAYER ───────────────────────────────────────────────────
@@ -134,20 +182,43 @@ document.addEventListener('keydown', e => {
         e.preventDefault();
         if (state.gamePhase === 'intro') {
             state.gamePhase = 'playing';
+        } else if (state.levelComplete) {
+            advanceLevel();
         } else {
             shoot();
+        }
+    }
+    // Shop toggle (E key, only in Void)
+    if (e.code === 'KeyE' && state.gamePhase === 'playing'
+        && state.room === ROOM.VOID && !state.won && !state.levelComplete) {
+        state.shopOpen = !state.shopOpen;
+    }
+    // Number keys 1-5: equip / unlock skins in shop
+    const skinKey = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4 };
+    if (e.code in skinKey && state.shopOpen) {
+        const idx = skinKey[e.code];
+        if (state.unlockedSkins[idx]) {
+            state.activeSkin = idx;
+        } else if (state.coins >= AVATAR_UNLOCK_COST[idx]) {
+            state.coins -= AVATAR_UNLOCK_COST[idx];
+            state.unlockedSkins[idx] = true;
+            state.activeSkin = idx;
+            spawnParticles(player.x, player.y, AVATAR_COLORS[idx], 8);
         }
     }
 });
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 
-// Play Again click
+// Play Again / Next Level click
 canvas.addEventListener('click', e => {
-    if (!state.won) return;
+    if (!state.won && !state.levelComplete) return;
     const rect = canvas.getBoundingClientRect();
     const mx = (e.clientX - rect.left) * (800 / rect.width);
     const my = (e.clientY - rect.top)  * (600 / rect.height);
-    if (mx >= 300 && mx <= 500 && my >= 420 && my <= 475) resetGame();
+    if (mx >= 300 && mx <= 500 && my >= 420 && my <= 475) {
+        if (state.levelComplete) advanceLevel();
+        else resetGame();
+    }
 });
 
 // ── VIRTUAL TOUCH CONTROLS ────────────────────────────────────
@@ -174,8 +245,9 @@ canvas.addEventListener('touchstart', e => {
         if (state.gamePhase === 'intro') {
             state.gamePhase = 'playing';
         }
-        if (state.won && p.x >= 300 && p.x <= 500 && p.y >= 420 && p.y <= 475) {
-            resetGame();
+        if ((state.won || state.levelComplete) && p.x >= 300 && p.x <= 500 && p.y >= 420 && p.y <= 475) {
+            if (state.levelComplete) advanceLevel();
+            else resetGame();
         }
         if (vTouch.joyId === null && Math.hypot(p.x - VJOY.x, p.y - VJOY.y) < VJOY.baseR * TOUCH_AREA_MULTIPLIER) {
             vTouch.joyId = t.identifier; vTouch.joyOriX = p.x; vTouch.joyOriY = p.y;
@@ -208,7 +280,16 @@ canvas.addEventListener('touchend',    e => { e.preventDefault(); for (const t o
 canvas.addEventListener('touchcancel', e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
 
 // ── ENTITY FACTORIES ─────────────────────────────────────────
+function makeCoins(count) {
+    const list = [];
+    for (let i = 0; i < count; i++) {
+        list.push({ x: 80 + Math.random() * 640, y: 80 + Math.random() * 440, picked: false });
+    }
+    return list;
+}
+
 function makeHell() {
+    const cfg = LEVEL_CONFIGS[state.level - 1];
     return {
         iceCrystals: [
             { x: 150, y: 200, picked: false },
@@ -219,42 +300,54 @@ function makeHell() {
             { x: 480, y: 370, picked: false },
         ],
         devil: {
-            x: 660, y: 300, r: 28, alive: true, shieldFlash: 0,
-            hp: 5, maxHp: 5,
+            x: 660, y: 300, r: cfg.devilR, alive: true, shieldFlash: 0,
+            hp: cfg.devilHp, maxHp: cfg.devilHp,
             aiState: 'CHASE',
             wanderTarget: { x: 400, y: 300 },
             wanderWaitTimer: 0,
-            shootTimer: 220,
+            shootTimer: cfg.devilShootRate,
             telegraphTimer: 0,
             isAboutToShoot: false,
         },
+        coins: makeCoins(cfg.coinCount),
     };
 }
 
 function makeParadise() {
+    const cfg = LEVEL_CONFIGS[state.level - 1];
+    const baseFireMonsters = [
+        { x: 200, y: 150, r: 16, alive: true, dx: 1.2,  dy: 0.8  },
+        { x: 550, y: 200, r: 16, alive: true, dx: -0.9, dy: 1.1  },
+        { x: 350, y: 400, r: 16, alive: true, dx: 1.0,  dy: -1.0 },
+    ];
+    const baseGhosts = [
+        { x: 300, y: 250, r: 16, alive: true, dx: -0.7, dy: 0.9  },
+        { x: 600, y: 350, r: 16, alive: true, dx: 0.8,  dy: -0.8 },
+    ];
+    // Extra enemies for harder levels
+    for (let i = 0; i < cfg.extraFireMonsters; i++) {
+        baseFireMonsters.push({ x: 150 + i * 200, y: 100 + i * 80, r: 16, alive: true, dx: 1.1 + i * 0.2, dy: -0.9 - i * 0.15 });
+    }
+    for (let i = 0; i < cfg.extraGhosts; i++) {
+        baseGhosts.push({ x: 450 + i * 150, y: 150 + i * 100, r: 16, alive: true, dx: -0.8 - i * 0.2, dy: 1.0 + i * 0.2 });
+    }
     return {
-        fireMonsters: [
-            { x: 200, y: 150, r: 16, alive: true, dx: 1.2,  dy: 0.8  },
-            { x: 550, y: 200, r: 16, alive: true, dx: -0.9, dy: 1.1  },
-            { x: 350, y: 400, r: 16, alive: true, dx: 1.0,  dy: -1.0 },
-        ],
-        ghosts: [
-            { x: 300, y: 250, r: 16, alive: true, dx: -0.7, dy: 0.9  },
-            { x: 600, y: 350, r: 16, alive: true, dx: 0.8,  dy: -0.8 },
-        ],
+        fireMonsters: baseFireMonsters,
+        ghosts:       baseGhosts,
         chests: [
             { x: 200, y: 480, w: 30, h: 24, opened: false },
             { x: 400, y: 480, w: 30, h: 24, opened: false },
             { x: 600, y: 480, w: 30, h: 24, opened: false },
         ],
         waveReset: false,   // true → respawn enemies on next paradise entry
+        coins: makeCoins(cfg.coinCount),
     };
 }
 
 function makeVoidRoom() {
     return {
-        enemies: [
-        ],
+        enemies: [],
+        coins:   makeCoins(4),
     };
 }
 
@@ -316,6 +409,15 @@ function spawnConfetti() {
 
 function isPlayerInCave() {
     if (state.room !== ROOM.HELL) return false;
+    if (state.caveProtectionExpired) return false;
+    return HELL_CAVES.some(c =>
+        player.x >= c.x && player.x <= c.x + c.w &&
+        player.y >= c.y && player.y <= c.y + c.h
+    );
+}
+
+function isPlayerPhysicallyInCave() {
+    if (state.room !== ROOM.HELL) return false;
     return HELL_CAVES.some(c =>
         player.x >= c.x && player.x <= c.x + c.w &&
         player.y >= c.y && player.y <= c.y + c.h
@@ -331,7 +433,7 @@ function getPlayerColor() {
     if (state.playerFlash > 0) return '#FFFF00';
     if (state.power === POWER.ICE)       return '#4488FF';
     if (state.power === POWER.BRIMSTONE) return '#FF4422';
-    return '#FFFFFF';
+    return AVATAR_COLORS[state.activeSkin];
 }
 
 function damagePlayer() {
@@ -344,18 +446,53 @@ function damagePlayer() {
 }
 
 function respawnPlayer() {
+    const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
     state.power           = POWER.NONE;
-    state.playerHp        = 3;
+    state.playerHp        = maxHp;
     state.playerInvincible = 120;
     changeRoom(ROOM.VOID);
 }
 
 function resetGame() {
+    const cfg = LEVEL_CONFIGS[0];
     Object.assign(state, {
         room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE,
-        won: false, screenShake: 0, playerFlash: 0,
-        gamePhase: 'intro', playerHp: 3, playerInvincible: 0,
+        won: false, levelComplete: false, screenShake: 0, playerFlash: 0,
+        gamePhase: 'intro', playerHp: cfg.playerMaxHp, playerInvincible: 0,
         confettiSpawned: false, paradiseClearCount: 0, voidHealTimer: 0,
+        level: 1,
+        ammo: cfg.ammoMax, ammoMax: cfg.ammoMax, ammoReloading: false, ammoReloadTimer: 0,
+        caveTimer: 0, caveProtectionExpired: false,
+        coins: 0, shopOpen: false,
+        unlockedSkins: [true, ...Array(AVATAR_COLORS.length - 1).fill(false)], activeSkin: 0,
+    });
+    player.x = 400; player.y = 300;
+    hell             = makeHell();
+    paradise         = makeParadise();
+    voidRoom         = makeVoidRoom();
+    projectiles      = [];
+    enemyProjectiles = [];
+    particles        = [];
+}
+
+function advanceLevel() {
+    if (state.level >= MAX_LEVELS) {
+        // True final win — game complete
+        state.won = true;
+        state.levelComplete = false;
+        if (!state.confettiSpawned) { state.confettiSpawned = true; spawnConfetti(); }
+        return;
+    }
+    state.level++;
+    const cfg = LEVEL_CONFIGS[state.level - 1];
+    Object.assign(state, {
+        room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE,
+        won: false, levelComplete: false, screenShake: 0, playerFlash: 0,
+        gamePhase: 'playing', playerHp: cfg.playerMaxHp, playerInvincible: 0,
+        confettiSpawned: false, paradiseClearCount: 0, voidHealTimer: 0,
+        ammo: cfg.ammoMax, ammoMax: cfg.ammoMax, ammoReloading: false, ammoReloadTimer: 0,
+        caveTimer: 0, caveProtectionExpired: false,
+        shopOpen: false,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -382,6 +519,7 @@ function respawnParadiseWave() {
 
 function changeRoom(dest) {
     state.room = dest;
+    state.shopOpen = false;   // close shop when changing rooms
     projectiles      = [];
     enemyProjectiles = [];
     if (dest === ROOM.VOID)     { player.x = 400; player.y = 300; }
@@ -399,7 +537,7 @@ function changeRoom(dest) {
 
 // ── UPDATE: PLAYER ────────────────────────────────────────────
 function updatePlayer() {
-    if (state.won || state.gamePhase !== 'playing') return;
+    if (state.won || state.levelComplete || state.gamePhase !== 'playing') return;
 
     const spd = state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED;
     let dx = 0, dy = 0;
@@ -429,6 +567,20 @@ function updatePlayer() {
     if (state.playerFlash     > 0) state.playerFlash--;
     if (state.playerInvincible > 0) state.playerInvincible--;
 
+    // ── CAVE TIMER ─────────────────────────────────────────────
+    if (isPlayerPhysicallyInCave()) {
+        state.caveTimer++;
+        if (state.caveTimer >= CAVE_MAX_FRAMES) {
+            state.caveProtectionExpired = true;
+        }
+    } else {
+        // Reset when player leaves the cave
+        if (state.caveTimer > 0) {
+            state.caveTimer = 0;
+            state.caveProtectionExpired = false;
+        }
+    }
+
     // Brimstone spark trail
     if (state.power === POWER.BRIMSTONE && Math.random() < 0.5) {
         particles.push({
@@ -452,7 +604,7 @@ function isShieldedAgainst(enemyType) {
 }
 
 function updateEnemies() {
-    if (state.won) return;
+    if (state.won || state.levelComplete) return;
 
     // ── VOID enemies ──────────────────────────────────────────
     if (state.room === ROOM.VOID) {
@@ -482,6 +634,9 @@ function updateEnemies() {
     }
 
     if (state.room === ROOM.PARADISE) {
+        // After all 3 crystals are collected paradise is peaceful — no more enemies
+        if (state.lightCrystals >= 3) return;
+
         for (const e of paradise.fireMonsters) {
             if (!e.alive) continue;
             e.x += e.dx; e.y += e.dy;
@@ -515,6 +670,8 @@ function updateEnemies() {
         if (!d.alive) return;
         if (d.shieldFlash > 0) d.shieldFlash--;
 
+        const cfg = LEVEL_CONFIGS[state.level - 1];
+
         if (d.telegraphTimer > 0) {
             // Frozen while telegraphing
             d.telegraphTimer--;
@@ -522,11 +679,16 @@ function updateEnemies() {
                 // Only fire if the player is still visible (not hiding in a cave)
                 if (!isPlayerInCave()) {
                     const a = Math.atan2(player.y - d.y, player.x - d.x);
-                    enemyProjectiles.push({
-                        x: d.x, y: d.y,
-                        dx: Math.cos(a) * 5, dy: Math.sin(a) * 5,
-                        color: '#FF6600', life: 130, r: 7,
-                    });
+                    const shotsPerFire = cfg.devilShotsPerFire;
+                    const spreadAngle = shotsPerFire > 1 ? 0.25 : 0;
+                    for (let s = 0; s < shotsPerFire; s++) {
+                        const offset = shotsPerFire > 1 ? (s - (shotsPerFire - 1) / 2) * spreadAngle : 0;
+                        enemyProjectiles.push({
+                            x: d.x, y: d.y,
+                            dx: Math.cos(a + offset) * 5, dy: Math.sin(a + offset) * 5,
+                            color: '#FF6600', life: 130, r: cfg.isBoss ? 9 : 7,
+                        });
+                    }
                 }
                 d.isAboutToShoot = false;
             }
@@ -556,8 +718,8 @@ function updateEnemies() {
             } else {
                 d.aiState = 'CHASE';
                 const a = Math.atan2(player.y - d.y, player.x - d.x);
-                d.x = Math.max(60, Math.min(740, d.x + Math.cos(a) * 0.9));
-                d.y = Math.max(60, Math.min(540, d.y + Math.sin(a) * 0.9));
+                d.x = Math.max(60, Math.min(740, d.x + Math.cos(a) * cfg.devilSpeed));
+                d.y = Math.max(60, Math.min(540, d.y + Math.sin(a) * cfg.devilSpeed));
                 if (state.playerInvincible === 0 &&
                     Math.hypot(d.x - player.x, d.y - player.y) < d.r + 16) {
                     damagePlayer();
@@ -566,7 +728,7 @@ function updateEnemies() {
                 // Periodic shooting — only while player is visible (CHASE mode)
                 d.shootTimer--;
                 if (d.shootTimer <= 0) {
-                    d.shootTimer     = 190;
+                    d.shootTimer     = cfg.devilShootRate;
                     d.telegraphTimer = 30;
                     d.isAboutToShoot = true;
                 }
@@ -597,10 +759,11 @@ function updateEnemyProjectiles() {
 
 // ── UPDATE: SHOOTING ──────────────────────────────────────────
 function shoot() {
-    if (state.won || state.power === POWER.NONE || state.room === ROOM.VOID) return;
+    if (state.won || state.levelComplete || state.power === POWER.NONE || state.room === ROOM.VOID) return;
+    if (state.ammoReloading || state.ammo <= 0) return;
 
     const enemies = [];
-    if (state.room === ROOM.PARADISE) {
+    if (state.room === ROOM.PARADISE && state.lightCrystals < 3) {
         paradise.fireMonsters.filter(e => e.alive).forEach(e => enemies.push(e));
         paradise.ghosts.filter(e => e.alive).forEach(e => enemies.push(e));
     }
@@ -617,6 +780,22 @@ function shoot() {
     const color = state.power === POWER.ICE ? '#4488FF' : '#FF4422';
     projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a) * 9, dy: Math.sin(a) * 9,
         color, power: state.power, life: 90, r: 6 });
+
+    state.ammo--;
+    if (state.ammo <= 0) {
+        state.ammoReloading = true;
+        state.ammoReloadTimer = LEVEL_CONFIGS[state.level - 1].reloadFrames;
+    }
+}
+
+// ── UPDATE: AMMO RELOAD ───────────────────────────────────────
+function updateAmmo() {
+    if (!state.ammoReloading) return;
+    state.ammoReloadTimer--;
+    if (state.ammoReloadTimer <= 0) {
+        state.ammoReloading  = false;
+        state.ammo           = state.ammoMax;
+    }
 }
 
 // ── UPDATE: PROJECTILES & HITS ────────────────────────────────
@@ -662,7 +841,11 @@ function updateProjectiles() {
                         d.alive = false;
                         spawnParticles(d.x, d.y, '#880000', 20);
                         triggerShake(20);
-                        state.won = true;
+                        if (state.level < MAX_LEVELS) {
+                            state.levelComplete = true;
+                        } else {
+                            state.won = true;
+                        }
                     }
                 } else {
                     d.shieldFlash = 25;
@@ -679,7 +862,7 @@ function updateProjectiles() {
 
 // ── UPDATE: PICKUPS ───────────────────────────────────────────
 function checkPickups() {
-    if (state.won) return;
+    if (state.won || state.levelComplete) return;
 
     if (state.room === ROOM.HELL) {
         for (const c of hell.iceCrystals) {
@@ -692,6 +875,13 @@ function checkPickups() {
             if (!b.picked && Math.hypot(player.x - b.x, player.y - b.y) < 26) {
                 b.picked = true; state.power = POWER.BRIMSTONE;
                 state.playerFlash = 25; spawnParticles(b.x, b.y, '#FF4422');
+            }
+        }
+        // Coins in Hell
+        for (const coin of hell.coins) {
+            if (!coin.picked && Math.hypot(player.x - coin.x, player.y - coin.y) < 22) {
+                coin.picked = true;
+                collectCoin();
             }
         }
     }
@@ -712,18 +902,41 @@ function checkPickups() {
                 if (state.paradiseClearCount < 3) paradise.waveReset = true;
             }
         }
+        // Coins in Paradise
+        for (const coin of paradise.coins) {
+            if (!coin.picked && Math.hypot(player.x - coin.x, player.y - coin.y) < 22) {
+                coin.picked = true;
+                collectCoin();
+            }
+        }
     }
+
+    if (state.room === ROOM.VOID) {
+        // Coins in Void
+        for (const coin of voidRoom.coins) {
+            if (!coin.picked && Math.hypot(player.x - coin.x, player.y - coin.y) < 22) {
+                coin.picked = true;
+                collectCoin();
+            }
+        }
+    }
+}
+
+function collectCoin() {
+    state.coins++;
+    spawnParticles(player.x, player.y, '#FFD700', 5);
 }
 
 // ── UPDATE: VOID HEALING ──────────────────────────────────────
 function updateVoidHealing() {
-    if (state.room !== ROOM.VOID || state.playerHp >= 3) {
+    const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+    if (state.room !== ROOM.VOID || state.playerHp >= maxHp) {
         state.voidHealTimer = 0;
         return;
     }
     state.voidHealTimer++;
     if (state.voidHealTimer >= 300) {   // 300 frames ≈ 5 seconds at 60 fps
-        state.playerHp = Math.min(3, state.playerHp + 1);
+        state.playerHp = Math.min(maxHp, state.playerHp + 1);
         state.voidHealTimer = 0;
         state.playerFlash = 25;
         spawnParticles(player.x, player.y, '#FFD700', 8);
@@ -759,6 +972,25 @@ function drawStar(x, y, r, color) {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
+}
+
+function drawCoins(coinList) {
+    const t = Date.now() / 300;
+    for (const c of coinList) {
+        if (c.picked) continue;
+        ctx.save();
+        ctx.fillStyle   = '#FFD700';
+        ctx.shadowColor = '#FFAA00';
+        ctx.shadowBlur  = 8 + Math.sin(t + c.x) * 4;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y + Math.sin(t + c.x * 0.1) * 3, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#FFF8';
+        ctx.beginPath();
+        ctx.arc(c.x - 2, c.y - 2 + Math.sin(t + c.x * 0.1) * 3, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
 }
 
 // ── DRAW: INTRO SCREEN ────────────────────────────────────────
@@ -888,6 +1120,16 @@ function drawVoid() {
         }
         ctx.restore();
     }
+
+    // Coins
+    drawCoins(voidRoom.coins);
+
+    // Shop hint
+    if (state.coins > 0) {
+        ctx.fillStyle = 'rgba(255,215,0,0.55)';
+        ctx.font = '12px Arial'; ctx.textAlign = 'center';
+        ctx.fillText('Press E to open the Shop', 400, 410);
+    }
 }
 
 // ── DRAW: HELL ────────────────────────────────────────────────
@@ -995,47 +1237,70 @@ function drawHell() {
             ctx.fillText('NEED ALL LIGHT CRYSTALS!', d.x, d.y - d.r - 14);
         }
     }
+
+    // Coins
+    drawCoins(hell.coins);
+
+    // Cave timer warning
+    if (isPlayerPhysicallyInCave() && state.caveTimer > 0) {
+        const frac = state.caveTimer / CAVE_MAX_FRAMES;
+        const secsLeft = Math.max(0, Math.ceil((CAVE_MAX_FRAMES - state.caveTimer) / 60));
+        if (frac >= 0.5) {
+            const flash = state.caveProtectionExpired ? (Math.floor(Date.now() / 200) % 2 === 0) : true;
+            ctx.fillStyle = state.caveProtectionExpired
+                ? `rgba(255,80,0,${flash ? 0.9 : 0.5})`
+                : `rgba(255,220,50,${0.5 + frac * 0.5})`;
+            ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center';
+            ctx.fillText(
+                state.caveProtectionExpired ? '⚠ CAVE EXPIRED — LEAVE NOW!' : `Cave protection: ${secsLeft}s left`,
+                400, 535
+            );
+        }
+    }
 }
 
 // ── DRAW: PARADISE ────────────────────────────────────────────
 function drawParadise() {
     const t = Date.now() / 400;
 
-    for (const e of paradise.fireMonsters) {
-        if (!e.alive) continue;
-        ctx.save();
-        ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
-        ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#FFAA00';
-        for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2 + t;
-            ctx.beginPath();
-            ctx.arc(e.x + Math.cos(a) * e.r * 0.9, e.y + Math.sin(a) * e.r * 0.9, 4, 0, Math.PI * 2);
-            ctx.fill();
+    // Only draw enemies before all 3 crystals are collected
+    if (state.lightCrystals < 3) {
+        for (const e of paradise.fireMonsters) {
+            if (!e.alive) continue;
+            ctx.save();
+            ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
+            ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#FFAA00';
+            for (let i = 0; i < 6; i++) {
+                const a = (i / 6) * Math.PI * 2 + t;
+                ctx.beginPath();
+                ctx.arc(e.x + Math.cos(a) * e.r * 0.9, e.y + Math.sin(a) * e.r * 0.9, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
         }
-        ctx.restore();
-    }
 
-    for (const e of paradise.ghosts) {
-        if (!e.alive) continue;
-        ctx.save();
-        ctx.globalAlpha = 0.78;
-        ctx.fillStyle = '#CC88FF'; ctx.shadowColor = '#AA44FF'; ctx.shadowBlur = 18;
-        ctx.beginPath();
-        ctx.arc(e.x, e.y, e.r, Math.PI, 0);
-        ctx.lineTo(e.x + e.r,       e.y + e.r * 0.7);
-        ctx.lineTo(e.x + e.r * 0.5, e.y + e.r * 0.25);
-        ctx.lineTo(e.x,             e.y + e.r * 0.7);
-        ctx.lineTo(e.x - e.r * 0.5, e.y + e.r * 0.25);
-        ctx.lineTo(e.x - e.r,       e.y + e.r * 0.7);
-        ctx.closePath(); ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = '#330055';
-        ctx.beginPath();
-        ctx.arc(e.x - 5, e.y - 3, 3.5, 0, Math.PI * 2);
-        ctx.arc(e.x + 5, e.y - 3, 3.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+        for (const e of paradise.ghosts) {
+            if (!e.alive) continue;
+            ctx.save();
+            ctx.globalAlpha = 0.78;
+            ctx.fillStyle = '#CC88FF'; ctx.shadowColor = '#AA44FF'; ctx.shadowBlur = 18;
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, e.r, Math.PI, 0);
+            ctx.lineTo(e.x + e.r,       e.y + e.r * 0.7);
+            ctx.lineTo(e.x + e.r * 0.5, e.y + e.r * 0.25);
+            ctx.lineTo(e.x,             e.y + e.r * 0.7);
+            ctx.lineTo(e.x - e.r * 0.5, e.y + e.r * 0.25);
+            ctx.lineTo(e.x - e.r,       e.y + e.r * 0.7);
+            ctx.closePath(); ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = '#330055';
+            ctx.beginPath();
+            ctx.arc(e.x - 5, e.y - 3, 3.5, 0, Math.PI * 2);
+            ctx.arc(e.x + 5, e.y - 3, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
     }
 
     for (const c of paradise.chests) {
@@ -1055,11 +1320,14 @@ function drawParadise() {
         ctx.restore();
     }
 
-    if (!allMonstersDefeated()) {
+    if (!allMonstersDefeated() && state.lightCrystals < 3) {
         ctx.fillStyle = 'rgba(255,255,255,0.4)';
         ctx.font = '13px Arial'; ctx.textAlign = 'center';
         ctx.fillText(`Wave ${state.paradiseClearCount + 1}/3 — Defeat all enemies to reveal a chest!`, 400, 544);
     }
+
+    // Coins
+    drawCoins(paradise.coins);
 }
 
 // ── DRAW: PLAYER ──────────────────────────────────────────────
@@ -1148,8 +1416,10 @@ function drawParticles() {
 
 // ── DRAW: HUD ─────────────────────────────────────────────────
 function drawHUD() {
+    // Taller HUD when ammo bar is shown
+    const hudH = (state.power !== POWER.NONE && state.room !== ROOM.VOID) ? 68 : 46;
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    ctx.fillRect(0, 0, 800, 46);
+    ctx.fillRect(0, 0, 800, hudH);
 
     // Light Crystals
     ctx.fillStyle = '#FFD700';
@@ -1163,21 +1433,57 @@ function drawHUD() {
     // HP hearts
     ctx.font = '18px Arial'; ctx.textAlign = 'center';
     let hearts = '';
-    for (let i = 0; i < 3; i++) hearts += i < state.playerHp ? '❤' : '♡';
+    const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+    for (let i = 0; i < maxHp; i++) hearts += i < state.playerHp ? '❤' : '♡';
     ctx.fillStyle = '#FF4444';
     ctx.fillText(hearts, 400, 20);
 
-    // Room name
+    // Room name + Level
     const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE CITY' };
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.font = '11px Arial';
-    ctx.fillText(names[state.room], 400, 38);
+    const cfg    = LEVEL_CONFIGS[state.level - 1];
+    const lvlLabel = cfg.isBoss ? `LEVEL ${state.level} — BOSS!` : `LEVEL ${state.level}`;
+    ctx.fillStyle = cfg.isBoss ? 'rgba(255,100,50,0.85)' : 'rgba(255,255,255,0.5)';
+    ctx.font = cfg.isBoss ? 'bold 11px Arial' : '11px Arial';
+    ctx.fillText(`${names[state.room]} · ${lvlLabel}`, 400, 38);
 
     // Power
     const pc = { None: '#888', Ice: '#4488FF', Brimstone: '#FF4422' };
     ctx.fillStyle = pc[state.power];
     ctx.font = 'bold 17px Arial'; ctx.textAlign = 'right';
     ctx.fillText(`Power: ${state.power}`, 786, 28);
+
+    // ── AMMO BAR ──────────────────────────────────────────────
+    if (state.power !== POWER.NONE && state.room !== ROOM.VOID) {
+        const bx = 14, by = 54, bh = 10, bw = 130;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+
+        if (state.ammoReloading) {
+            const pct = 1 - state.ammoReloadTimer / LEVEL_CONFIGS[state.level - 1].reloadFrames;
+            ctx.fillStyle = '#FF8800';
+            ctx.fillRect(bx, by, bw * pct, bh);
+            ctx.fillStyle = '#FFA500';
+            ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
+            const secsLeft = Math.ceil(state.ammoReloadTimer / 60);
+            ctx.fillText(`RELOADING… ${secsLeft}s`, bx + 2, by + bh - 1);
+        } else {
+            const bulletW = Math.floor(bw / state.ammoMax) - 2;
+            for (let i = 0; i < state.ammoMax; i++) {
+                ctx.fillStyle = i < state.ammo ? '#4FC3F7' : '#333';
+                ctx.fillRect(bx + i * (bulletW + 2), by, bulletW, bh);
+            }
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.font = '9px Arial'; ctx.textAlign = 'left';
+            ctx.fillText(`AMMO ${state.ammo}/${state.ammoMax}`, bx + 2, by + bh - 1);
+        }
+    }
+
+    // ── COINS ─────────────────────────────────────────────────
+    ctx.save();
+    ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFAA00'; ctx.shadowBlur = 6;
+    ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left';
+    ctx.fillText(`🪙 ${state.coins}`, 14, 46);
+    ctx.restore();
 }
 
 // ── DRAW: RAINBOW BACKGROUND ──────────────────────────────────
@@ -1193,6 +1499,60 @@ function drawRainbowBg() {
     ctx.fillRect(0, 0, 800, 600);
 }
 
+// ── DRAW: LEVEL COMPLETE ──────────────────────────────────────
+function drawLevelComplete() {
+    ctx.fillStyle = 'rgba(0,0,0,0.60)';
+    ctx.fillRect(0, 0, 800, 600);
+
+    const cfg = LEVEL_CONFIGS[state.level - 1];
+    ctx.save();
+    ctx.shadowColor = '#4FC3F7'; ctx.shadowBlur = 50;
+    ctx.fillStyle   = '#4FC3F7';
+    ctx.font = 'bold 52px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`LEVEL ${state.level} COMPLETE!`, 400, 195);
+    ctx.restore();
+
+    ctx.save();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '22px Arial'; ctx.textAlign = 'center';
+    const nextCfg = LEVEL_CONFIGS[state.level];   // next level config
+    const bossMsg  = nextCfg && nextCfg.isBoss ? '  ⚠ BOSS LEVEL NEXT!' : '';
+    ctx.fillText(`Get ready for Level ${state.level + 1}…${bossMsg}`, 400, 260);
+    ctx.restore();
+
+    // Difficulty preview
+    if (nextCfg) {
+        ctx.fillStyle = 'rgba(255,200,100,0.8)';
+        ctx.font = '15px Arial'; ctx.textAlign = 'center';
+        const hints = [];
+        if (nextCfg.ammoMax < cfg.ammoMax)           hints.push(`Ammo: ${nextCfg.ammoMax} bullets`);
+        if (nextCfg.reloadFrames > cfg.reloadFrames) hints.push(`Reload: ${(nextCfg.reloadFrames/60).toFixed(0)}s`);
+        if (nextCfg.devilHp > cfg.devilHp)           hints.push(`Boss HP: ${nextCfg.devilHp}`);
+        if (nextCfg.playerMaxHp < cfg.playerMaxHp)   hints.push(`Lives: ${nextCfg.playerMaxHp}`);
+        if (hints.length) ctx.fillText('Next level: ' + hints.join('  |  '), 400, 310);
+    }
+
+    // Orbiting stars
+    const t = Date.now() / 300;
+    for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 + t;
+        drawStar(400 + Math.cos(a) * 110, 370 + Math.sin(a) * 42,
+            14 + Math.sin(t + i) * 4, '#4FC3F7');
+    }
+
+    // Next Level button
+    ctx.save();
+    ctx.shadowColor = '#4FC3F7'; ctx.shadowBlur = 20;
+    ctx.fillStyle   = '#0a2840';
+    ctx.fillRect(300, 420, 200, 55);
+    ctx.strokeStyle = '#4FC3F7'; ctx.lineWidth = 2;
+    ctx.strokeRect(300, 420, 200, 55);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('Next Level  ▶', 400, 454);
+    ctx.restore();
+}
+
 // ── DRAW: WIN SCREEN ──────────────────────────────────────────
 function drawWin() {
     ctx.fillStyle = 'rgba(0,0,0,0.52)';
@@ -1202,21 +1562,25 @@ function drawWin() {
     ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 55;
     ctx.fillStyle   = '#FFD700';
     ctx.font = 'bold 54px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('PARADISE IS SAVED!', 400, 195);
+    ctx.fillText('PARADISE IS SAVED!', 400, 185);
     ctx.restore();
 
     ctx.save();
     ctx.shadowColor = '#FFFFFF'; ctx.shadowBlur = 22;
     ctx.fillStyle   = '#FFFFFF';
-    ctx.font = 'bold 32px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('YOU ARE A HERO!', 400, 255);
+    ctx.font = 'bold 28px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('YOU ARE A HERO!', 400, 240);
     ctx.restore();
+
+    ctx.fillStyle = 'rgba(255,215,0,0.75)';
+    ctx.font = '18px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`Coins collected: 🪙 ${state.coins}`, 400, 278);
 
     // Orbiting stars
     const t = Date.now() / 300;
     for (let i = 0; i < 5; i++) {
         const a = (i / 5) * Math.PI * 2 + t;
-        drawStar(400 + Math.cos(a) * 110, 355 + Math.sin(a) * 42,
+        drawStar(400 + Math.cos(a) * 110, 360 + Math.sin(a) * 42,
             14 + Math.sin(t + i) * 4, '#FFD700');
     }
 
@@ -1233,6 +1597,75 @@ function drawWin() {
     ctx.restore();
 }
 
+// ── DRAW: SHOP ────────────────────────────────────────────────
+function drawShop() {
+    if (!state.shopOpen) return;
+
+    const W = 360, H = 280, SX = (800 - W) / 2, SY = (600 - H) / 2;
+    ctx.save();
+    ctx.fillStyle   = 'rgba(10,5,25,0.93)';
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth   = 2;
+    ctx.fillRect(SX, SY, W, H);
+    ctx.strokeRect(SX, SY, W, H);
+
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('✦ AVATAR SHOP ✦', 400, SY + 30);
+
+    ctx.fillStyle = 'rgba(255,215,0,0.8)';
+    ctx.font = '14px Arial';
+    ctx.fillText(`Your coins: 🪙 ${state.coins}`, 400, SY + 52);
+
+    ctx.font = '12px Arial'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fillText('Press 1-5 to equip / unlock  |  E to close', 400, SY + 68);
+
+    for (let i = 0; i < AVATAR_COLORS.length; i++) {
+        const col = AVATAR_COLORS[i];
+        const name = AVATAR_NAMES[i];
+        const cost = AVATAR_UNLOCK_COST[i];
+        const unlocked = state.unlockedSkins[i];
+        const active   = state.activeSkin === i;
+
+        const ix = SX + 36 + i * 64;
+        const iy = SY + 130;
+
+        // Slot background
+        ctx.fillStyle = active ? 'rgba(255,215,0,0.25)' : 'rgba(255,255,255,0.06)';
+        ctx.strokeStyle = active ? '#FFD700' : (unlocked ? '#666' : '#333');
+        ctx.lineWidth = active ? 2 : 1;
+        ctx.fillRect(ix - 20, iy - 20, 40, 52);
+        ctx.strokeRect(ix - 20, iy - 20, 40, 52);
+
+        // Avatar preview
+        ctx.fillStyle = unlocked ? col : '#444';
+        ctx.fillRect(ix - 10, iy - 10, 20, 20);
+
+        // Key hint
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(`[${i + 1}]`, ix, iy + 18);
+
+        // Name
+        ctx.fillStyle = unlocked ? col : '#555';
+        ctx.font = '10px Arial';
+        ctx.fillText(name, ix, iy + 30);
+
+        // Cost or ✓
+        if (!unlocked) {
+            ctx.fillStyle = state.coins >= cost ? '#FFD700' : '#886';
+            ctx.font = 'bold 9px Arial';
+            ctx.fillText(`🪙${cost}`, ix, iy + 42);
+        } else if (active) {
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 11px Arial';
+            ctx.fillText('✓', ix, iy + 42);
+        }
+    }
+    ctx.restore();
+}
+
 // ── DRAW: CONTROLS ────────────────────────────────────────────
 function drawControls() {
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
@@ -1244,7 +1677,7 @@ function drawControls() {
 }
 
 function drawVirtualControls() {
-    if (!isTouchDevice || state.gamePhase === 'intro' || state.won) return;
+    if (!isTouchDevice || state.gamePhase === 'intro' || state.won || state.levelComplete) return;
     ctx.save();
 
     // Joystick base
@@ -1287,18 +1720,19 @@ function update() {
     if (state.gamePhase === 'intro') return;
 
     updatePlayer();
-    if (!state.won) {
+    if (!state.won && !state.levelComplete) {
         updateEnemies();
         updateProjectiles();
         updateEnemyProjectiles();
         checkPickups();
         updateVoidHealing();
+        updateAmmo();
     }
     updateParticles();
     if (state.screenShake > 0) state.screenShake--;
 
-    // Fire confetti once on win
-    if (state.won && !state.confettiSpawned) {
+    // Fire confetti once on win or level complete
+    if ((state.won || state.levelComplete) && !state.confettiSpawned) {
         state.confettiSpawned = true;
         spawnConfetti();
     }
@@ -1318,7 +1752,7 @@ function draw() {
     }
 
     // Background
-    if (state.won) {
+    if (state.won || state.levelComplete) {
         drawRainbowBg();
     } else {
         const bg = { void: voidBgColor, hell: '#1a0000', paradise: '#001a1a' };
@@ -1331,7 +1765,7 @@ function draw() {
     for (let x = 0; x <= 800; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 600); ctx.stroke(); }
     for (let y = 0; y <= 600; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(800, y); ctx.stroke(); }
 
-    if (!state.won) drawPortals();
+    if (!state.won && !state.levelComplete) drawPortals();
     if (state.room === ROOM.VOID)     drawVoid();
     if (state.room === ROOM.HELL)     drawHell();
     if (state.room === ROOM.PARADISE) drawParadise();
@@ -1342,7 +1776,9 @@ function draw() {
     drawHUD();
     drawControls();
     drawVirtualControls();
-    if (state.won) drawWin();
+    drawShop();
+    if (state.levelComplete) drawLevelComplete();
+    if (state.won)           drawWin();
 
     ctx.restore();
 }
