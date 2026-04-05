@@ -170,8 +170,12 @@ canvas.addEventListener('touchstart', e => {
     isTouchDevice = true;
     for (const t of e.changedTouches) {
         const p = canvasPos(t.clientX, t.clientY);
-        if (state.gamePhase === 'intro') { state.gamePhase = 'playing'; break; }
-        if (state.won && p.x >= 300 && p.x <= 500 && p.y >= 420 && p.y <= 475) { resetGame(); break; }
+        if (state.gamePhase === 'intro') {
+            state.gamePhase = 'playing';
+        }
+        if (state.won && p.x >= 300 && p.x <= 500 && p.y >= 420 && p.y <= 475) {
+            resetGame();
+        }
         if (vTouch.joyId === null && Math.hypot(p.x - VJOY.x, p.y - VJOY.y) < VJOY.baseR * TOUCH_AREA_MULTIPLIER) {
             vTouch.joyId = t.identifier; vTouch.joyOriX = p.x; vTouch.joyOriY = p.y;
             vTouch.joyDX = 0; vTouch.joyDY = 0;
