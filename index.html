@@ -107,26 +107,26 @@ const LEVEL_CONFIGS = [
         ammoMax: 5, reloadFrames: 180,
         devilHp: 5, devilR: 28, devilSpeed: 0.9, devilShootRate: 190, devilShotsPerFire: 1,
         extraFireMonsters: 0, extraGhosts: 0,
-        playerMaxHp: 3, caveMaxFrames: 180,
+        playerMaxHp: 3,
         coinCount: 6, isBoss: false,
     },
     { // Level 2 – Hard
         ammoMax: 4, reloadFrames: 240,
         devilHp: 10, devilR: 28, devilSpeed: 1.2, devilShootRate: 140, devilShotsPerFire: 1,
         extraFireMonsters: 1, extraGhosts: 1,
-        playerMaxHp: 3, caveMaxFrames: 180,
+        playerMaxHp: 3,
         coinCount: 8, isBoss: false,
     },
     { // Level 3 – BOSS
         ammoMax: 4, reloadFrames: 270,
         devilHp: 20, devilR: 52, devilSpeed: 1.4, devilShootRate: 100, devilShotsPerFire: 3,
         extraFireMonsters: 2, extraGhosts: 2,
-        playerMaxHp: 2, caveMaxFrames: 180,
+        playerMaxHp: 2,
         coinCount: 10, isBoss: true,
     },
 ];
 const MAX_LEVELS       = 3;
-const CAVE_MAX_FRAMES  = 180;   // 3 seconds at 60 fps
+const CAVE_MAX_FRAMES  = 180;   // 3 seconds at 60 fps — same for all levels
 
 // ── AVATAR SKINS ─────────────────────────────────────────────
 const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700'];
@@ -167,7 +167,7 @@ let state = {
     // Coins & shop
     coins:              0,
     shopOpen:           false,
-    unlockedSkins:      [true, false, false, false, false],
+    unlockedSkins:      [true, ...Array(AVATAR_COLORS.length - 1).fill(false)],
     activeSkin:         0,
 };
 
@@ -280,7 +280,7 @@ canvas.addEventListener('touchend',    e => { e.preventDefault(); for (const t o
 canvas.addEventListener('touchcancel', e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
 
 // ── ENTITY FACTORIES ─────────────────────────────────────────
-function makeLevelCoins(count) {
+function makeCoins(count) {
     const list = [];
     for (let i = 0; i < count; i++) {
         list.push({ x: 80 + Math.random() * 640, y: 80 + Math.random() * 440, picked: false });
@@ -309,7 +309,7 @@ function makeHell() {
             telegraphTimer: 0,
             isAboutToShoot: false,
         },
-        coins: makeLevelCoins(cfg.coinCount),
+        coins: makeCoins(cfg.coinCount),
     };
 }
 
@@ -340,14 +340,14 @@ function makeParadise() {
             { x: 600, y: 480, w: 30, h: 24, opened: false },
         ],
         waveReset: false,   // true → respawn enemies on next paradise entry
-        coins: makeLevelCoins(cfg.coinCount),
+        coins: makeCoins(cfg.coinCount),
     };
 }
 
 function makeVoidRoom() {
     return {
         enemies: [],
-        coins:   makeLevelCoins(4),
+        coins:   makeCoins(4),
     };
 }
 
@@ -464,7 +464,7 @@ function resetGame() {
         ammo: cfg.ammoMax, ammoMax: cfg.ammoMax, ammoReloading: false, ammoReloadTimer: 0,
         caveTimer: 0, caveProtectionExpired: false,
         coins: 0, shopOpen: false,
-        unlockedSkins: [true, false, false, false, false], activeSkin: 0,
+        unlockedSkins: [true, ...Array(AVATAR_COLORS.length - 1).fill(false)], activeSkin: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -925,13 +925,6 @@ function checkPickups() {
 function collectCoin() {
     state.coins++;
     spawnParticles(player.x, player.y, '#FFD700', 5);
-    // Auto-unlock skins when coin thresholds are reached
-    for (let i = 1; i < AVATAR_UNLOCK_COST.length; i++) {
-        if (!state.unlockedSkins[i] && state.coins >= AVATAR_UNLOCK_COST[i]) {
-            state.unlockedSkins[i] = true;
-            state.playerFlash = 30;
-        }
-    }
 }
 
 // ── UPDATE: VOID HEALING ──────────────────────────────────────
