@@ -120,6 +120,7 @@ let state = {
     playerInvincible:   0,
     confettiSpawned:    false,
     paradiseClearCount: 0,         // how many crystals collected (0–3)
+    voidHealTimer:      0,         // counts frames toward next +1 HP heal in Void
 };
 
 // ── PLAYER ───────────────────────────────────────────────────
@@ -354,7 +355,7 @@ function resetGame() {
         room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE,
         won: false, screenShake: 0, playerFlash: 0,
         gamePhase: 'intro', playerHp: 3, playerInvincible: 0,
-        confettiSpawned: false, paradiseClearCount: 0,
+        confettiSpawned: false, paradiseClearCount: 0, voidHealTimer: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -384,7 +385,12 @@ function changeRoom(dest) {
     projectiles      = [];
     enemyProjectiles = [];
     if (dest === ROOM.VOID)     { player.x = 400; player.y = 300; }
-    if (dest === ROOM.HELL)     { player.x = 100; player.y = 300; }
+    if (dest === ROOM.HELL)     {
+        player.x = 100; player.y = 300;
+        // Crystals reappear fresh each visit
+        hell.iceCrystals.forEach(c => { c.picked = false; });
+        hell.brimstones.forEach(b => { b.picked = false; });
+    }
     if (dest === ROOM.PARADISE) {
         player.x = 700; player.y = 300;
         if (paradise.waveReset) { respawnParadiseWave(); paradise.waveReset = false; }
@@ -513,12 +519,15 @@ function updateEnemies() {
             // Frozen while telegraphing
             d.telegraphTimer--;
             if (d.telegraphTimer === 0 && d.isAboutToShoot) {
-                const a = Math.atan2(player.y - d.y, player.x - d.x);
-                enemyProjectiles.push({
-                    x: d.x, y: d.y,
-                    dx: Math.cos(a) * 5, dy: Math.sin(a) * 5,
-                    color: '#FF6600', life: 130, r: 7,
-                });
+                // Only fire if the player is still visible (not hiding in a cave)
+                if (!isPlayerInCave()) {
+                    const a = Math.atan2(player.y - d.y, player.x - d.x);
+                    enemyProjectiles.push({
+                        x: d.x, y: d.y,
+                        dx: Math.cos(a) * 5, dy: Math.sin(a) * 5,
+                        color: '#FF6600', life: 130, r: 7,
+                    });
+                }
                 d.isAboutToShoot = false;
             }
         } else {
@@ -553,14 +562,14 @@ function updateEnemies() {
                     Math.hypot(d.x - player.x, d.y - player.y) < d.r + 16) {
                     damagePlayer();
                 }
-            }
 
-            // Periodic shooting (telegraph before firing)
-            d.shootTimer--;
-            if (d.shootTimer <= 0) {
-                d.shootTimer     = 190;
-                d.telegraphTimer = 30;
-                d.isAboutToShoot = true;
+                // Periodic shooting — only while player is visible (CHASE mode)
+                d.shootTimer--;
+                if (d.shootTimer <= 0) {
+                    d.shootTimer     = 190;
+                    d.telegraphTimer = 30;
+                    d.isAboutToShoot = true;
+                }
             }
         }
     }
@@ -706,6 +715,21 @@ function checkPickups() {
     }
 }
 
+// ── UPDATE: VOID HEALING ──────────────────────────────────────
+function updateVoidHealing() {
+    if (state.room !== ROOM.VOID || state.playerHp >= 3) {
+        state.voidHealTimer = 0;
+        return;
+    }
+    state.voidHealTimer++;
+    if (state.voidHealTimer >= 300) {   // 300 frames ≈ 5 seconds at 60 fps
+        state.playerHp = Math.min(3, state.playerHp + 1);
+        state.voidHealTimer = 0;
+        state.playerFlash = 25;
+        spawnParticles(player.x, player.y, '#FFD700', 8);
+    }
+}
+
 // ── UPDATE: PARTICLES ─────────────────────────────────────────
 function updateParticles() {
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -790,7 +814,7 @@ function drawIntro() {
     ctx.fillStyle   = `rgba(255,255,80,${pulse})`;
     ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 16 * pulse;
     ctx.font = 'bold 22px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('Press SPACE to Begin!', 400, 508);
+    ctx.fillText('Tap or Press SPACE to Begin!', 400, 508);
     ctx.restore();
 
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -1056,6 +1080,20 @@ function drawPlayer() {
         ctx.restore();
     }
 
+    // Void healing radiance (pulsing golden glow when HP is not full)
+    if (state.room === ROOM.VOID && state.playerHp < 3) {
+        const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 300);
+        const r = 28 + pulse * 10;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,215,0,${0.35 + pulse * 0.45})`;
+        ctx.lineWidth   = 3;
+        ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 18;
+        ctx.stroke();
+        ctx.restore();
+    }
+
     // Invincibility flicker
     if (state.playerInvincible > 0 && Math.floor(Date.now() / 80) % 2 === 0) return;
 
@@ -1254,6 +1292,7 @@ function update() {
         updateProjectiles();
         updateEnemyProjectiles();
         checkPickups();
+        updateVoidHealing();
     }
     updateParticles();
     if (state.screenShake > 0) state.screenShake--;
