@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>The Light of Paradise</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #000; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: Arial, sans-serif; overflow: hidden; }
-        canvas { display: block; border: 2px solid #333; cursor: pointer; }
+        canvas { display: block; border: 2px solid #333; cursor: pointer; max-width: 100%; touch-action: none; }
 
         #videoOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -36,7 +36,7 @@
 <body>
 <div id="videoOverlay">
     <video id="introVideo" src="Light of paradise opening.mp4" autoplay muted playsinline></video>
-    <div id="skipHint">Press SPACE or click to skip</div>
+    <div id="skipHint">Press SPACE, click, or tap to skip</div>
 </div>
 <canvas id="gameCanvas"></canvas>
 <script>
@@ -86,7 +86,8 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
     }
 
     video.addEventListener('ended',   dismiss);
-    overlay.addEventListener('click', dismiss);
+    overlay.addEventListener('click',      dismiss);
+    overlay.addEventListener('touchstart', e => { e.preventDefault(); dismiss(); }, { passive: false });
     document.addEventListener('keydown', function onKey(e) {
         if (e.code === 'Space') { e.preventDefault(); dismiss(); document.removeEventListener('keydown', onKey); }
     });
@@ -147,6 +148,59 @@ canvas.addEventListener('click', e => {
     const my = (e.clientY - rect.top)  * (600 / rect.height);
     if (mx >= 300 && mx <= 500 && my >= 420 && my <= 475) resetGame();
 });
+
+// ── VIRTUAL TOUCH CONTROLS ────────────────────────────────────
+let isTouchDevice = false;
+const VJOY   = { x: 100, y: 490, baseR: 55, maxDist: 40 };
+const VSHOOT = { x: 700, y: 490, r: 45 };
+const TOUCH_AREA_MULTIPLIER  = 1.5;  // expand tap hit area beyond visible radius
+const JOYSTICK_DEADZONE_RATIO = 0.2; // fraction of maxDist before movement starts
+const vTouch = { joyId: null, joyDX: 0, joyDY: 0, joyOriX: 0, joyOriY: 0, shootId: null };
+
+function canvasPos(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: (clientX - rect.left) * (canvas.width  / rect.width),
+        y: (clientY - rect.top)  * (canvas.height / rect.height),
+    };
+}
+
+canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    isTouchDevice = true;
+    for (const t of e.changedTouches) {
+        const p = canvasPos(t.clientX, t.clientY);
+        if (state.gamePhase === 'intro') { state.gamePhase = 'playing'; break; }
+        if (state.won && p.x >= 300 && p.x <= 500 && p.y >= 420 && p.y <= 475) { resetGame(); break; }
+        if (vTouch.joyId === null && Math.hypot(p.x - VJOY.x, p.y - VJOY.y) < VJOY.baseR * TOUCH_AREA_MULTIPLIER) {
+            vTouch.joyId = t.identifier; vTouch.joyOriX = p.x; vTouch.joyOriY = p.y;
+            vTouch.joyDX = 0; vTouch.joyDY = 0;
+        } else if (vTouch.shootId === null && Math.hypot(p.x - VSHOOT.x, p.y - VSHOOT.y) < VSHOOT.r * TOUCH_AREA_MULTIPLIER) {
+            vTouch.shootId = t.identifier;
+            shoot();
+        }
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+        if (t.identifier !== vTouch.joyId) continue;
+        const p = canvasPos(t.clientX, t.clientY);
+        const rawDX = p.x - vTouch.joyOriX, rawDY = p.y - vTouch.joyOriY;
+        const dist = Math.hypot(rawDX, rawDY);
+        const clamped = Math.min(dist, VJOY.maxDist);
+        vTouch.joyDX = dist > 0 ? (rawDX / dist) * clamped : 0;
+        vTouch.joyDY = dist > 0 ? (rawDY / dist) * clamped : 0;
+    }
+}, { passive: false });
+
+function clearTouchId(id) {
+    if (id === vTouch.joyId)   { vTouch.joyId = null; vTouch.joyDX = 0; vTouch.joyDY = 0; }
+    if (id === vTouch.shootId) { vTouch.shootId = null; }
+}
+canvas.addEventListener('touchend',    e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
+canvas.addEventListener('touchcancel', e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
 
 // ── ENTITY FACTORIES ─────────────────────────────────────────
 function makeHell() {
@@ -343,6 +397,12 @@ function updatePlayer() {
     if (keys['ArrowRight'] || keys['KeyD']) dx += spd;
     if (keys['ArrowUp']    || keys['KeyW']) dy -= spd;
     if (keys['ArrowDown']  || keys['KeyS']) dy += spd;
+    // Virtual joystick
+    const deadzone = VJOY.maxDist * JOYSTICK_DEADZONE_RATIO;
+    if (vTouch.joyDX < -deadzone) dx -= spd;
+    if (vTouch.joyDX >  deadzone) dx += spd;
+    if (vTouch.joyDY < -deadzone) dy -= spd;
+    if (vTouch.joyDY >  deadzone) dy += spd;
     if (dx && dy) { dx *= 0.707; dy *= 0.707; }
 
     player.x = Math.max(18, Math.min(canvas.width  - 18, player.x + dx));
@@ -1135,7 +1195,49 @@ function drawWin() {
 function drawControls() {
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
-    ctx.fillText('Move: WASD / Arrows  |  Shoot: Spacebar', 792, 592);
+    const hint = isTouchDevice
+        ? 'Move: joystick  |  Shoot: button'
+        : 'Move: WASD / Arrows  |  Shoot: Spacebar';
+    ctx.fillText(hint, 792, 592);
+}
+
+function drawVirtualControls() {
+    if (!isTouchDevice || state.gamePhase === 'intro' || state.won) return;
+    ctx.save();
+
+    // Joystick base
+    ctx.beginPath();
+    ctx.arc(VJOY.x, VJOY.y, VJOY.baseR, 0, Math.PI * 2);
+    ctx.fillStyle   = 'rgba(255,255,255,0.10)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+
+    // Joystick stick
+    ctx.beginPath();
+    ctx.arc(VJOY.x + vTouch.joyDX, VJOY.y + vTouch.joyDY, 22, 0, Math.PI * 2);
+    ctx.fillStyle   = 'rgba(255,255,255,0.28)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.60)';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+
+    // Shoot button
+    ctx.beginPath();
+    ctx.arc(VSHOOT.x, VSHOOT.y, VSHOOT.r, 0, Math.PI * 2);
+    ctx.fillStyle   = vTouch.shootId !== null ? 'rgba(255,220,50,0.40)' : 'rgba(255,220,50,0.15)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,220,50,0.70)';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+    ctx.fillStyle   = 'rgba(255,255,255,0.80)';
+    ctx.font        = 'bold 13px Arial';
+    ctx.textAlign   = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('SHOOT', VSHOOT.x, VSHOOT.y);
+
+    ctx.restore();
 }
 
 // ── MAIN LOOP ─────────────────────────────────────────────────
@@ -1196,6 +1298,7 @@ function draw() {
     drawParticles();
     drawHUD();
     drawControls();
+    drawVirtualControls();
     if (state.won) drawWin();
 
     ctx.restore();
