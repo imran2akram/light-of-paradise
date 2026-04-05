@@ -166,7 +166,7 @@ document.addEventListener('keydown', e => {
         } else if (state.gamePhase === 'leveldone') {
             advanceLevel();
         } else if (state.gamePhase === 'skinunlock') {
-            const newIdx = Math.floor(state.currentLevel / 5);
+            const newIdx = getUnlockedSkinIndex();
             state.selectedPlayerSkin = newIdx;
             advanceToNextLevel();
         } else {
@@ -224,7 +224,7 @@ canvas.addEventListener('click', e => {
     }
 
     if (state.gamePhase === 'skinunlock') {
-        const newIdx = Math.floor(state.currentLevel / 5);
+        const newIdx = getUnlockedSkinIndex();
         // EQUIP NEW SKIN button: x=230, y=450, w=160, h=46
         if (mx >= 230 && mx <= 390 && my >= 450 && my <= 496) {
             state.selectedPlayerSkin = newIdx;
@@ -282,7 +282,7 @@ canvas.addEventListener('touchstart', e => {
                 advanceLevel();
             }
         } else if (state.gamePhase === 'skinunlock') {
-            const newIdx = Math.floor(state.currentLevel / 5);
+            const newIdx = getUnlockedSkinIndex();
             if (p.x >= 230 && p.x <= 390 && p.y >= 450 && p.y <= 496) {
                 state.selectedPlayerSkin = newIdx;
                 advanceToNextLevel();
@@ -884,10 +884,14 @@ function checkLevelComplete() {
     state.gamePhase = 'leveldone';
 }
 
+function getUnlockedSkinIndex() {
+    return Math.floor(state.currentLevel / 5);
+}
+
 function advanceLevel() {
     if (state.currentLevel % 5 === 0) {
         // Unlock new skin
-        const newSkinIdx = Math.floor(state.currentLevel / 5);
+        const newSkinIdx = getUnlockedSkinIndex();
         if (!state.unlockedPlayerSkins.includes(newSkinIdx)) {
             state.unlockedPlayerSkins.push(newSkinIdx);
         }
@@ -1316,12 +1320,12 @@ function drawPlayer() {
     ctx.fillStyle = skin.eyeColor;
     ctx.fillRect(player.x - 9, player.y - 7, 5, 5);
     ctx.fillRect(player.x + 4, player.y - 7, 5, 5);
-    // Show skin badge for unlocked skins
+    // Show skin badge for unlocked skins (each skin beyond index 0 gets a ★ badge)
     if (state.selectedPlayerSkin > 0) {
-        const badges = ['', '★', '◆', '✦', '✦✦'];
+        const badge = '★'.repeat(state.selectedPlayerSkin);
         ctx.fillStyle = skin.glowColor;
         ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(badges[state.selectedPlayerSkin], player.x, player.y + player.h / 2 + 11);
+        ctx.fillText(badge, player.x, player.y + player.h / 2 + 11);
     }
     ctx.restore();
 }
@@ -1568,12 +1572,12 @@ function drawSkinUnlock() {
         const sx = ((i * 181 + 40) % 720) + 40;
         const sy = ((i * 113 + 60) % 480) + 60;
         const al = 0.15 + 0.5 * Math.abs(Math.sin(t5 * 1.8 + i));
-        const c  = i % 3 === 0 ? '#FFD700' : (i % 3 === 1 ? '#FF88FF' : '#88DDFF');
-        ctx.fillStyle = `rgba(${c.startsWith('#FF') ? '255,200,50' : (c === '#FF88FF' ? '255,136,255' : '136,221,255')},${al})`;
+        const sparkleColors = ['255,200,50', '255,136,255', '136,221,255'];
+        ctx.fillStyle = `rgba(${sparkleColors[i % 3]},${al})`;
         ctx.fillRect(sx, sy, 2, 2);
     }
 
-    const unlockedIdx = Math.floor(state.currentLevel / 5);  // which skin was just unlocked (1-4)
+    const unlockedIdx = getUnlockedSkinIndex();  // which skin was just unlocked (1-4)
     const newSkin = PLAYER_SKINS[unlockedIdx];
 
     ctx.save();
