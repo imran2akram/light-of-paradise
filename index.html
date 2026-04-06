@@ -127,7 +127,9 @@ const LEVEL_CONFIGS = [
 const CAVE_MAX_FRAMES = 180;   // 3 seconds at 60 fps — same for all levels
 
 function getLevelCfg() {
-    return LEVEL_CONFIGS[Math.min(state.currentLevel - 1, LEVEL_CONFIGS.length - 1)];
+    if (state.currentLevel <= 6)  return LEVEL_CONFIGS[0];
+    if (state.currentLevel <= 13) return LEVEL_CONFIGS[1];
+    return LEVEL_CONFIGS[2];
 }
 
 // ── AVATAR SKINS ─────────────────────────────────────────────
@@ -1946,7 +1948,7 @@ function drawHUD() {
     const lvlLabel = cfg.isBoss ? `LEVEL ${state.currentLevel} — BOSS!` : `LEVEL ${state.currentLevel}`;
     ctx.fillStyle = cfg.isBoss ? 'rgba(255,100,50,0.85)' : 'rgba(255,255,255,0.5)';
     ctx.font = cfg.isBoss ? 'bold 11px Arial' : '11px Arial';
-    ctx.fillText(names[state.room], 400, 38);
+    ctx.fillText(`${names[state.room]}  ·  ${lvlLabel}`, 400, 38);
 
     // Power
     const pc = { None: '#888', Ice: '#4488FF', Brimstone: '#FF4422' };
@@ -2017,7 +2019,12 @@ function drawLevelComplete() {
     ctx.save();
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '22px Arial'; ctx.textAlign = 'center';
-    const nextCfg = LEVEL_CONFIGS[Math.min(state.currentLevel, LEVEL_CONFIGS.length - 1)];   // next level config
+    const nextCfg = (() => {
+        const nl = state.currentLevel + 1;
+        if (nl <= 6) return LEVEL_CONFIGS[0];
+        if (nl <= 13) return LEVEL_CONFIGS[1];
+        return LEVEL_CONFIGS[2];
+    })();   // next level config
     const bossMsg  = nextCfg && nextCfg.isBoss ? '  ⚠ BOSS LEVEL NEXT!' : '';
     ctx.fillText(`Get ready for Level ${state.currentLevel + 1}…${bossMsg}`, 400, 260);
     ctx.restore();
@@ -2030,7 +2037,6 @@ function drawLevelComplete() {
         if (nextCfg.ammoMax < cfg.ammoMax)           hints.push(`Ammo: ${nextCfg.ammoMax} bullets`);
         if (nextCfg.reloadFrames > cfg.reloadFrames) hints.push(`Reload: ${(nextCfg.reloadFrames/60).toFixed(0)}s`);
         if (nextCfg.devilHp > cfg.devilHp)           hints.push(`Boss HP: ${nextCfg.devilHp}`);
-        if (nextCfg.playerMaxHp < cfg.playerMaxHp)   hints.push(`Lives: ${nextCfg.playerMaxHp}`);
         if (hints.length) ctx.fillText('Next level: ' + hints.join('  |  '), 400, 310);
     }
 
