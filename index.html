@@ -1942,13 +1942,15 @@ function drawHUD() {
     ctx.fillStyle = '#FF4444';
     ctx.fillText(hearts, 400, 20);
 
-    // Room name
-    const names = { void: 'THE VOID', hell: 'HELL', paradise: `PARADISE  ·  LEVEL ${state.currentLevel}` };
-    const cfg    = getLevelCfg();
+    // Room name + level label
+    const cfg      = getLevelCfg();
     const lvlLabel = cfg.isBoss ? `LEVEL ${state.currentLevel} — BOSS!` : `LEVEL ${state.currentLevel}`;
+    const roomName = state.room === ROOM.PARADISE
+        ? `PARADISE  ·  ${lvlLabel}`
+        : (state.room === ROOM.HELL ? 'HELL' : 'THE VOID');
     ctx.fillStyle = cfg.isBoss ? 'rgba(255,100,50,0.85)' : 'rgba(255,255,255,0.5)';
     ctx.font = cfg.isBoss ? 'bold 11px Arial' : '11px Arial';
-    ctx.fillText(`${names[state.room]}  ·  ${lvlLabel}`, 400, 38);
+    ctx.fillText(roomName, 400, 38);
 
     // Power
     const pc = { None: '#888', Ice: '#4488FF', Brimstone: '#FF4422' };
@@ -2019,18 +2021,23 @@ function drawLevelComplete() {
     ctx.save();
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '22px Arial'; ctx.textAlign = 'center';
-    const nextCfg = (() => {
+    const bossMsg  = state.currentLevel < MAX_LEVELS && (() => {
         const nl = state.currentLevel + 1;
         if (nl <= 6) return LEVEL_CONFIGS[0];
         if (nl <= 13) return LEVEL_CONFIGS[1];
         return LEVEL_CONFIGS[2];
-    })();   // next level config
-    const bossMsg  = nextCfg && nextCfg.isBoss ? '  ⚠ BOSS LEVEL NEXT!' : '';
+    })().isBoss ? '  ⚠ BOSS LEVEL NEXT!' : '';
     ctx.fillText(`Get ready for Level ${state.currentLevel + 1}…${bossMsg}`, 400, 260);
     ctx.restore();
 
-    // Difficulty preview
-    if (nextCfg) {
+    // Difficulty preview (only if a next level exists)
+    if (state.currentLevel < MAX_LEVELS) {
+        const nextCfg = (() => {
+            const nl = state.currentLevel + 1;
+            if (nl <= 6) return LEVEL_CONFIGS[0];
+            if (nl <= 13) return LEVEL_CONFIGS[1];
+            return LEVEL_CONFIGS[2];
+        })();
         ctx.fillStyle = 'rgba(255,200,100,0.8)';
         ctx.font = '15px Arial'; ctx.textAlign = 'center';
         const hints = [];
