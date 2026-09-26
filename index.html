@@ -152,9 +152,11 @@ const DEVIL_BULLET_SPEED = 7.5;   // px/frame (player moves 4)
 const CAVE_MAX_FRAMES  = 3600;  // 1 minute at 60 fps — same for all levels
 
 // ── AVATAR SKINS ─────────────────────────────────────────────
-const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700'];
-const AVATAR_NAMES       = ['White', 'Blue', 'Green', 'Red', 'Gold'];
-const AVATAR_UNLOCK_COST = [0, 5, 10, 15, 20];  // coins needed to unlock each skin
+const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700', '#2A2A2A', '#B8C4CC', '#44BB55'];
+const AVATAR_NAMES       = ['White', 'Blue', 'Green', 'Red', 'Gold', 'Ninja', 'Robot', 'Dragon'];
+const AVATAR_STYLES      = ['plain', 'plain', 'plain', 'plain', 'plain', 'ninja', 'robot', 'dragon'];
+const AVATAR_UNLOCK_COST = [0, 5, 10, 15, 20, 25, 30, 40];  // coins needed to unlock each skin
+const BUBBLE_COST        = 5;                               // Shield Bubble (shop key 9)
 
 // ── HELL CAVES (player can hide here; devil switches to WANDER) ──
 const HELL_CAVES = [
@@ -204,6 +206,10 @@ let state = {
     shopOpen:           false,
     unlockedSkins:      [true, ...Array(AVATAR_COLORS.length - 1).fill(false)],
     activeSkin:         0,
+    bubble:             false,     // Shield Bubble from the shop — blocks one hit
+    // Score
+    score:              0,
+    newBest:            false,     // beat the high score this game
 };
 
 // ── PLAYER ───────────────────────────────────────────────────
@@ -212,7 +218,9 @@ const player = { x: 400, y: 300, w: 32, h: 32 };
 // ── INPUT ────────────────────────────────────────────────────
 const keys = {};
 document.addEventListener('keydown', e => {
+    initAudio();
     keys[e.code] = true;
+    if (e.code === 'KeyM') toggleMute();
     if (e.code === 'Space') {
         e.preventDefault();
         if (state.gamePhase === 'intro') {
@@ -228,8 +236,13 @@ document.addEventListener('keydown', e => {
         && state.room === ROOM.VOID && !state.won && !state.levelComplete) {
         state.shopOpen = !state.shopOpen;
     }
-    // Number keys 1-5: equip / unlock skins in shop
-    const skinKey = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4 };
+    // Number keys 1-8: equip / unlock skins in shop · 9: Shield Bubble
+    if (e.code === 'Digit9' && state.shopOpen && !state.bubble && state.coins >= BUBBLE_COST) {
+        state.coins -= BUBBLE_COST;
+        state.bubble = true;
+        sfx('buy');
+    }
+    const skinKey = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4, Digit6: 5, Digit7: 6, Digit8: 7 };
     if (e.code in skinKey && state.shopOpen) {
         const idx = skinKey[e.code];
         if (state.unlockedSkins[idx]) {
@@ -239,6 +252,7 @@ document.addEventListener('keydown', e => {
             state.unlockedSkins[idx] = true;
             state.activeSkin = idx;
             spawnParticles(player.x, player.y, AVATAR_COLORS[idx], 8);
+            sfx('buy');
         }
     }
 });
@@ -246,10 +260,12 @@ document.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // Play Again / Next Level click
 canvas.addEventListener('click', e => {
-    if (!state.won && !state.levelComplete) return;
+    initAudio();
     const rect = canvas.getBoundingClientRect();
     const mx = (e.clientX - rect.left) * (800 / rect.width);
     const my = (e.clientY - rect.top)  * (600 / rect.height);
+    if (Math.hypot(mx - MUTE_BTN.x, my - MUTE_BTN.y) < MUTE_BTN.r * 1.4) { toggleMute(); return; }
+    if (!state.won && !state.levelComplete) return;
     if (mx >= 300 && mx <= 500 && my >= 420 && my <= 475) {
         if (state.levelComplete) advanceLevel();
         else resetGame();
@@ -275,8 +291,10 @@ function canvasPos(clientX, clientY) {
 canvas.addEventListener('touchstart', e => {
     e.preventDefault();
     isTouchDevice = true;
+    initAudio();
     for (const t of e.changedTouches) {
         const p = canvasPos(t.clientX, t.clientY);
+        if (Math.hypot(p.x - MUTE_BTN.x, p.y - MUTE_BTN.y) < MUTE_BTN.r * 1.6) { toggleMute(); continue; }
         if (state.gamePhase === 'intro') {
             state.gamePhase = 'playing';
         }
@@ -435,6 +453,129 @@ let projectiles      = [];
 let enemyProjectiles = [];
 let particles        = [];
 let floatTexts       = [];   // "-3 SUPER HIT!" numbers that float up
+let lastDevilLaugh   = 0;    // Date.now() of the Devil's last laugh
+
+// ── SOUND & MUSIC ─────────────────────────────────────────────
+// Everything is made with the Web Audio API — no sound files needed.
+// Browsers only allow sound after a key press / tap, so initAudio() runs on input.
+let audioCtx = null, masterGain = null, musicGain = null, sfxGain = null, noiseBuf = null;
+let muted = false;
+try { muted = localStorage.getItem('lop_muted') === '1'; } catch (e) {}
+const MUTE_BTN = { x: 26, y: 574, r: 16 };
+
+function initAudio() {
+    if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx   = new AC();
+    masterGain = audioCtx.createGain(); masterGain.gain.value = muted ? 0 : 1;
+    masterGain.connect(audioCtx.destination);
+    musicGain  = audioCtx.createGain(); musicGain.gain.value = 0.35; musicGain.connect(masterGain);
+    sfxGain    = audioCtx.createGain(); sfxGain.gain.value   = 0.6;  sfxGain.connect(masterGain);
+    noiseBuf   = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.5, audioCtx.sampleRate);
+    const data = noiseBuf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+}
+
+function toggleMute() {
+    muted = !muted;
+    try { localStorage.setItem('lop_muted', muted ? '1' : '0'); } catch (e) {}
+    if (masterGain) masterGain.gain.value = muted ? 0 : 1;
+}
+
+// One beep: frequency (Hz), length (s), wave shape, volume, optional slide to another pitch
+function tone(freq, dur, type = 'square', vol = 0.2, slideTo = null, delay = 0, dest = sfxGain) {
+    if (!audioCtx) return;
+    const t0 = audioCtx.currentTime + Math.max(0, delay);
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    o.connect(g); g.connect(dest);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+}
+
+// A burst of static (for crunches and explosions)
+function noise(dur, vol = 0.2, filterFreq = 1200) {
+    if (!audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    const src = audioCtx.createBufferSource(), f = audioCtx.createBiquadFilter(), g = audioCtx.createGain();
+    src.buffer = noiseBuf; f.type = 'lowpass'; f.frequency.value = filterFreq;
+    g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    src.connect(f); f.connect(g); g.connect(sfxGain);
+    src.start(t0); src.stop(t0 + dur);
+}
+
+const SFX = {
+    shoot:    () => tone(900, 0.09, 'square', 0.1, 300),
+    hit:      () => tone(220, 0.07, 'triangle', 0.25, 110),
+    superHit: () => { tone(600, 0.1, 'square', 0.12, 1200); tone(900, 0.12, 'triangle', 0.15, 1800, 0.05); },
+    defeat:   () => { noise(0.25, 0.3); tone(400, 0.25, 'sawtooth', 0.1, 60); },
+    dig:      () => { noise(0.1, 0.35, 500); tone(90, 0.12, 'sine', 0.35, 50); },
+    found:    () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.15, 'square', 0.1, null, i * 0.08)),
+    coin:     () => { tone(988, 0.06, 'square', 0.08); tone(1319, 0.2, 'square', 0.08, null, 0.06); },
+    hurt:     () => tone(300, 0.3, 'sawtooth', 0.18, 80),
+    boing:    () => tone(160, 0.2, 'sine', 0.18, 520),
+    portal:   () => { tone(200, 0.5, 'sine', 0.2, 1200); tone(300, 0.5, 'triangle', 0.08, 1800); },
+    pop:      () => { tone(1400, 0.1, 'sine', 0.25, 300); noise(0.05, 0.15, 3000); },
+    buy:      () => [784, 988, 1175].forEach((f, i) => tone(f, 0.12, 'triangle', 0.15, null, i * 0.07)),
+    // "HA HA HA HA" — the Devil's scary laugh
+    laugh:    () => { for (let i = 0; i < 4; i++) { tone(240 - i * 20, 0.14, 'sawtooth', 0.16, 150 - i * 15, i * 0.18);
+                                                   tone(120 - i * 10, 0.14, 'square',   0.08, 80,            i * 0.18); } },
+    win:      () => [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, 0.25, 'square', 0.12, null, i * 0.15)),
+};
+function sfx(name) { if (audioCtx && !muted) SFX[name](); }
+
+// Background music — one little looping song per room (MIDI note numbers, 0 = rest, 8th notes)
+const SONGS = {
+    void: { bpm: 84, lead: 'triangle',
+        melody: [72, 0, 76, 0, 79, 0, 76, 0, 74, 0, 77, 0, 76, 0, 72, 0,  72, 0, 76, 0, 79, 0, 84, 0, 83, 0, 79, 0, 76, 0, 0, 0],
+        bass:   [48, 0, 0, 0, 55, 0, 0, 0, 53, 0, 0, 0, 55, 0, 0, 0,  48, 0, 0, 0, 55, 0, 0, 0, 52, 0, 0, 0, 55, 0, 0, 0] },
+    hell: { bpm: 132, lead: 'square',   // spooky minor key with a creepy tritone
+        melody: [69, 0, 72, 69, 75, 0, 74, 72, 69, 0, 72, 0, 68, 0, 0, 0,  69, 0, 72, 69, 75, 0, 77, 75, 74, 72, 71, 0, 68, 0, 0, 0],
+        bass:   [45, 45, 0, 45, 44, 0, 45, 0, 45, 45, 0, 45, 41, 0, 40, 0,  45, 45, 0, 45, 44, 0, 45, 0, 41, 41, 0, 41, 40, 0, 40, 0] },
+    paradise: { bpm: 120, lead: 'square', // happy major key
+        melody: [67, 71, 74, 71, 76, 74, 71, 74, 72, 76, 79, 76, 74, 71, 67, 0,  67, 71, 74, 79, 78, 76, 74, 71, 72, 74, 76, 74, 71, 0, 67, 0],
+        bass:   [43, 0, 50, 0, 48, 0, 50, 0, 45, 0, 52, 0, 50, 0, 43, 0,  43, 0, 50, 0, 47, 0, 50, 0, 48, 0, 50, 0, 50, 0, 43, 0] },
+};
+let musicStep = 0, nextNoteTime = 0, musicRoom = null;
+
+function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+// Schedules the next few notes a little ahead of time so the music never stutters
+function musicTick() {
+    if (!audioCtx || muted) return;
+    const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
+    const song = playing ? SONGS[state.room] : null;
+    if (!song) { musicRoom = null; return; }
+    const now = audioCtx.currentTime;
+    if (state.room !== musicRoom || nextNoteTime < now - 0.1) {
+        musicRoom = state.room; musicStep = 0; nextNoteTime = now + 0.05;
+    }
+    const stepDur = 60 / song.bpm / 2;
+    while (nextNoteTime < now + 0.2) {
+        const i = musicStep % song.melody.length, delay = nextNoteTime - now;
+        if (song.melody[i]) tone(midiToFreq(song.melody[i]), stepDur * 0.9, song.lead, 0.07, null, delay, musicGain);
+        if (song.bass[i])   tone(midiToFreq(song.bass[i]),   stepDur * 1.8, 'triangle', 0.16, null, delay, musicGain);
+        nextNoteTime += stepDur; musicStep++;
+    }
+}
+setInterval(musicTick, 50);
+
+// ── SCORE ─────────────────────────────────────────────────────
+let highScore = 0;
+try { highScore = parseInt(localStorage.getItem('lop_highscore'), 10) || 0; } catch (e) {}
+
+function addScore(points) {
+    state.score += points;
+    if (state.score > highScore) {
+        highScore = state.score;
+        state.newBest = true;
+        try { localStorage.setItem('lop_highscore', String(highScore)); } catch (e) {}
+    }
+}
 
 // ── HELPERS ───────────────────────────────────────────────────
 function triggerShake(amount = 12) { state.screenShake = amount; }
@@ -507,6 +648,16 @@ function getPlayerColor() {
 
 function damagePlayer() {
     if (state.playerInvincible > 0) return;
+    if (state.bubble) {
+        // Shield Bubble pops instead of losing a heart
+        state.bubble = false;
+        state.playerInvincible = 60;
+        spawnParticles(player.x, player.y, '#AEE8FF', 12);
+        spawnFloatText(player.x, player.y - 30, 'POP!', '#AEE8FF');
+        sfx('pop');
+        return;
+    }
+    sfx('hurt');
     state.playerHp--;
     state.playerInvincible = 90;
     triggerShake(14);
@@ -535,6 +686,7 @@ function resetGame() {
         caveTimer: 0, caveProtectionExpired: false,
         coins: 0, shopOpen: false,
         unlockedSkins: [true, ...Array(AVATAR_COLORS.length - 1).fill(false)], activeSkin: 0,
+        bubble: false, score: 0, newBest: false,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -584,6 +736,7 @@ function respawnParadiseWave() {
 }
 
 function changeRoom(dest) {
+    if (state.gamePhase === 'playing') sfx('portal');
     state.room = dest;
     state.shopOpen = false;   // close shop when changing rooms
     projectiles      = [];
@@ -681,9 +834,11 @@ function hitEnemy(e, power) {
     spawnFloatText(e.x, e.y - e.r - 8, dmg === DAMAGE_STRONG ? `-${dmg} SUPER HIT!` : `-${dmg}`,
                    dmg === DAMAGE_STRONG ? '#FFEE44' : '#FFFFFF');
     spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, dmg === DAMAGE_STRONG ? 10 : 4);
-    if (e.hp > 0) return false;
+    if (e.hp > 0) { sfx(dmg === DAMAGE_STRONG ? 'superHit' : 'hit'); return false; }
     spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, 16);
     triggerShake();
+    sfx('defeat');
+    addScore(e.type === 'mole' ? 15 : 10);
     return true;
 }
 
@@ -703,6 +858,7 @@ function moveEnemy(e) {
         // Sits still, then hops toward the player
         if (--e.hopTimer <= 0) {
             e.hopTimer = 70;
+            sfx('boing');
             const a = Math.atan2(player.y - e.y, player.x - e.x);
             e.dx = Math.cos(a) * 4; e.dy = Math.sin(a) * 4;
         }
@@ -788,6 +944,8 @@ function updateEnemies() {
                             color: '#FF6600', life: 130, r: cfg.isBoss ? 9 : 7,
                         });
                     }
+                    // Scary laugh — not every shot, or it gets annoying
+                    if (Date.now() - lastDevilLaugh > 6000) { lastDevilLaugh = Date.now(); sfx('laugh'); }
                 }
                 d.isAboutToShoot = false;
             }
@@ -887,6 +1045,7 @@ function shoot() {
             color, power: state.power, life: 90, r: w.size });
     }
 
+    sfx('shoot');
     state.ammo--;
     if (state.ammo <= 0) {
         state.ammoReloading = true;
@@ -942,11 +1101,15 @@ function updateProjectiles() {
             if (d.alive && Math.hypot(p.x - d.x, p.y - d.y) < d.r + p.r) {
                 if (state.lightCrystals >= 3) {
                     d.hp--;
+                    sfx('hit');
+                    addScore(5);
                     d.shieldFlash = 15;
                     spawnParticles(d.x, d.y, '#FF4400', 8);
                     triggerShake(8);
                     if (d.hp <= 0) {
                         d.alive = false;
+                        sfx('defeat');
+                        addScore(100);
                         spawnParticles(d.x, d.y, '#880000', 20);
                         triggerShake(20);
                         if (state.level < MAX_LEVELS) {
@@ -957,6 +1120,7 @@ function updateProjectiles() {
                     }
                 } else {
                     d.shieldFlash = 25;
+                    sfx('hit');
                     spawnParticles(d.x, d.y, '#FFFFFF', 6);
                     triggerShake(6);
                 }
@@ -1005,6 +1169,7 @@ function tryDig() {
     const s = nearbyDigSpot();
     if (!s || !canDig()) return false;
     s.hits++;
+    sfx('dig');
     spawnParticles(s.x, s.y, '#8B5A2B', 6);
     triggerShake(3);
     if (s.hits < DIG_HITS_PER_LAYER[s.depth]) return true;
@@ -1027,6 +1192,8 @@ function tryDig() {
     }
     spawnParticles(s.x, s.y, color, 10 + tier * 6);
     triggerShake(6 + tier * 2);
+    sfx('found');
+    addScore(5 * tier);
 
     let sub = s.depth < DIG_MAX_DEPTH ? 'Keep digging for something rarer…' : '';
     if (Math.random() < DIG_MOLE_CHANCE[s.depth - 1]) {
@@ -1080,6 +1247,8 @@ function checkPickups() {
             if (!c.opened && c.visible &&
                 Math.abs(player.x - c.x) < 28 && Math.abs(player.y - c.y) < 28) {
                 c.opened = true;
+                sfx('found');
+                addScore(50);
                 state.lightCrystals++;
                 state.paradiseClearCount++;
                 state.playerFlash = 35;
@@ -1111,6 +1280,8 @@ function checkPickups() {
 
 function collectCoin() {
     state.coins++;
+    sfx('coin');
+    addScore(1);
     spawnParticles(player.x, player.y, '#FFD700', 5);
 }
 
@@ -1760,12 +1931,81 @@ function drawPlayer() {
     const color = getPlayerColor();
     ctx.save();
     ctx.shadowColor = color; ctx.shadowBlur = 14;
-    ctx.fillStyle   = color;
-    ctx.fillRect(player.x - player.w / 2, player.y - player.h / 2, player.w, player.h);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(player.x - 9, player.y - 7, 5, 5);
-    ctx.fillRect(player.x + 4, player.y - 7, 5, 5);
+    drawAvatar(player.x, player.y, player.w, color, AVATAR_STYLES[state.activeSkin]);
     ctx.restore();
+
+    // Shield Bubble
+    if (state.bubble) {
+        const wob = Math.sin(Date.now() / 200) * 2;
+        ctx.save();
+        ctx.beginPath(); ctx.arc(player.x, player.y, 27 + wob, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(170,230,255,0.15)'; ctx.fill();
+        ctx.strokeStyle = 'rgba(200,240,255,0.8)'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.arc(player.x - 9, player.y - 11, 5, 0, Math.PI * 2);   // shine
+        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fill();
+        ctx.restore();
+    }
+}
+
+// Draws the player's square with the chosen skin style (also used for shop previews)
+function drawAvatar(x, y, size, color, style) {
+    const h = size / 2, k = size / 32;
+    if (style === 'dragon') {
+        // Little wings behind the body
+        const flap = Math.sin(Date.now() / 150) * 4 * k;
+        ctx.fillStyle = '#2E8B3E';
+        for (const side of [-1, 1]) {
+            ctx.beginPath();
+            ctx.moveTo(x + side * h, y - 6 * k);
+            ctx.lineTo(x + side * (h + 12 * k), y - 14 * k - flap);
+            ctx.lineTo(x + side * (h + 8 * k), y + 6 * k);
+            ctx.closePath(); ctx.fill();
+        }
+    }
+    ctx.fillStyle = color;
+    ctx.fillRect(x - h, y - h, size, size);
+    ctx.shadowBlur = 0;
+    if (style === 'ninja') {
+        ctx.fillStyle = '#DD2222';                                   // headband + tails
+        ctx.fillRect(x - h, y - 12 * k, size, 5 * k);
+        ctx.beginPath();
+        ctx.moveTo(x + h, y - 11 * k); ctx.lineTo(x + h + 9 * k, y - 16 * k); ctx.lineTo(x + h + 7 * k, y - 8 * k);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#FFFFFF';                                   // eyes through the mask slit
+        ctx.fillRect(x - 10 * k, y - 4 * k, 6 * k, 3 * k);
+        ctx.fillRect(x + 4 * k,  y - 4 * k, 6 * k, 3 * k);
+    } else if (style === 'robot') {
+        ctx.strokeStyle = '#666'; ctx.lineWidth = 2 * k;             // antenna
+        ctx.beginPath(); ctx.moveTo(x, y - h); ctx.lineTo(x, y - h - 8 * k); ctx.stroke();
+        ctx.fillStyle = Math.floor(Date.now() / 400) % 2 ? '#FF3333' : '#FFAAAA';
+        ctx.beginPath(); ctx.arc(x, y - h - 9 * k, 3 * k, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#113';                                      // visor
+        ctx.fillRect(x - 12 * k, y - 10 * k, 24 * k, 9 * k);
+        ctx.fillStyle = '#33EEFF';
+        ctx.fillRect(x - 9 * k, y - 8 * k, 5 * k, 5 * k);
+        ctx.fillRect(x + 4 * k, y - 8 * k, 5 * k, 5 * k);
+        ctx.fillStyle = '#555';                                      // mouth grill
+        for (let i = -1; i <= 1; i++) ctx.fillRect(x + i * 5 * k - 1.5 * k, y + 5 * k, 3 * k, 6 * k);
+    } else if (style === 'dragon') {
+        ctx.fillStyle = '#FFAA22';                                   // head spikes
+        for (let i = -1; i <= 1; i++) {
+            ctx.beginPath();
+            ctx.moveTo(x + i * 9 * k - 4 * k, y - h); ctx.lineTo(x + i * 9 * k, y - h - 8 * k); ctx.lineTo(x + i * 9 * k + 4 * k, y - h);
+            ctx.closePath(); ctx.fill();
+        }
+        ctx.fillStyle = '#FFEE33';                                   // eyes with slit pupils
+        ctx.fillRect(x - 10 * k, y - 8 * k, 6 * k, 6 * k);
+        ctx.fillRect(x + 4 * k,  y - 8 * k, 6 * k, 6 * k);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(x - 8 * k, y - 8 * k, 2 * k, 6 * k);
+        ctx.fillRect(x + 6 * k, y - 8 * k, 2 * k, 6 * k);
+        ctx.fillRect(x - 5 * k, y + 6 * k, 2 * k, 2 * k);            // nostrils
+        ctx.fillRect(x + 3 * k, y + 6 * k, 2 * k, 2 * k);
+    } else {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(x - 9 * k, y - 7 * k, 5 * k, 5 * k);
+        ctx.fillRect(x + 4 * k, y - 7 * k, 5 * k, 5 * k);
+    }
 }
 
 // ── DRAW: PROJECTILES ─────────────────────────────────────────
@@ -1887,6 +2127,21 @@ function drawHUD() {
     ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left';
     ctx.fillText(`🪙 ${state.coins}`, 14, 46);
     ctx.restore();
+
+    // ── SCORE ─────────────────────────────────────────────────
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.font = 'bold 12px Arial'; ctx.textAlign = 'right';
+    ctx.fillText(`Score ${state.score}   ·   Best 🏆 ${highScore}`, 786, 46);
+
+    // ── MUTE BUTTON (M) ───────────────────────────────────────
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.arc(MUTE_BTN.x, MUTE_BTN.y, MUTE_BTN.r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
+    ctx.font = '15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#FFF';
+    ctx.fillText(muted ? '🔇' : '🔊', MUTE_BTN.x, MUTE_BTN.y + 1);
+    ctx.restore();
 }
 
 // ── DRAW: RAINBOW BACKGROUND ──────────────────────────────────
@@ -1902,6 +2157,19 @@ function drawRainbowBg() {
     ctx.fillRect(0, 0, 800, 600);
 }
 
+function drawScoreLine(y) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 18px Arial';
+    ctx.fillText(`Score: ${state.score}    Best: ${highScore}`, 400, y);
+    if (state.newBest && Math.floor(Date.now() / 300) % 2 === 0) {
+        ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 12;
+        ctx.font = 'bold 15px Arial';
+        ctx.fillText('🏆 NEW HIGH SCORE! 🏆', 400, y + 20);
+    }
+    ctx.restore();
+}
+
 // ── DRAW: LEVEL COMPLETE ──────────────────────────────────────
 function drawLevelComplete() {
     ctx.fillStyle = 'rgba(0,0,0,0.60)';
@@ -1914,13 +2182,14 @@ function drawLevelComplete() {
     ctx.font = 'bold 52px Arial'; ctx.textAlign = 'center';
     ctx.fillText(`LEVEL ${state.level} COMPLETE!`, 400, 195);
     ctx.restore();
+    drawScoreLine(228);
 
     ctx.save();
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '22px Arial'; ctx.textAlign = 'center';
     const nextCfg = LEVEL_CONFIGS[state.level];   // next level config
     const bossMsg  = nextCfg && nextCfg.isBoss ? '  ⚠ BOSS LEVEL NEXT!' : '';
-    ctx.fillText(`Get ready for Level ${state.level + 1}…${bossMsg}`, 400, 260);
+    ctx.fillText(`Get ready for Level ${state.level + 1}…${bossMsg}`, 400, 282);
     ctx.restore();
 
     // Difficulty preview
@@ -1932,7 +2201,7 @@ function drawLevelComplete() {
         if (nextCfg.reloadFrames > cfg.reloadFrames) hints.push(`Reload: ${(nextCfg.reloadFrames/60).toFixed(0)}s`);
         if (nextCfg.devilHp > cfg.devilHp)           hints.push(`Boss HP: ${nextCfg.devilHp}`);
         if (nextCfg.playerMaxHp < cfg.playerMaxHp)   hints.push(`Lives: ${nextCfg.playerMaxHp}`);
-        if (hints.length) ctx.fillText('Next level: ' + hints.join('  |  '), 400, 310);
+        if (hints.length) ctx.fillText('Next level: ' + hints.join('  |  '), 400, 312);
     }
 
     // Orbiting stars
@@ -1977,7 +2246,8 @@ function drawWin() {
 
     ctx.fillStyle = 'rgba(255,215,0,0.75)';
     ctx.font = '18px Arial'; ctx.textAlign = 'center';
-    ctx.fillText(`Coins collected: 🪙 ${state.coins}`, 400, 278);
+    ctx.fillText(`Coins collected: 🪙 ${state.coins}`, 400, 272);
+    drawScoreLine(298);
 
     // Orbiting stars
     const t = Date.now() / 300;
@@ -2004,7 +2274,7 @@ function drawWin() {
 function drawShop() {
     if (!state.shopOpen) return;
 
-    const W = 360, H = 280, SX = (800 - W) / 2, SY = (600 - H) / 2;
+    const W = 580, H = 300, SX = (800 - W) / 2, SY = (600 - H) / 2;
     ctx.save();
     ctx.fillStyle   = 'rgba(10,5,25,0.93)';
     ctx.strokeStyle = '#FFD700';
@@ -2014,7 +2284,7 @@ function drawShop() {
 
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('✦ AVATAR SHOP ✦', 400, SY + 30);
+    ctx.fillText('✦ SHOP ✦', 400, SY + 30);
 
     ctx.fillStyle = 'rgba(255,215,0,0.8)';
     ctx.font = '14px Arial';
@@ -2022,7 +2292,7 @@ function drawShop() {
 
     ctx.font = '12px Arial'; ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText('Press 1-5 to equip / unlock  |  E to close', 400, SY + 68);
+    ctx.fillText('Press 1-8 to equip / unlock a skin  |  9 for a Shield Bubble  |  E to close', 400, SY + 68);
 
     for (let i = 0; i < AVATAR_COLORS.length; i++) {
         const col = AVATAR_COLORS[i];
@@ -2031,41 +2301,58 @@ function drawShop() {
         const unlocked = state.unlockedSkins[i];
         const active   = state.activeSkin === i;
 
-        const ix = SX + 36 + i * 64;
-        const iy = SY + 130;
+        const ix = SX + 46 + i * 70;
+        const iy = SY + 118;
 
         // Slot background
         ctx.fillStyle = active ? 'rgba(255,215,0,0.25)' : 'rgba(255,255,255,0.06)';
         ctx.strokeStyle = active ? '#FFD700' : (unlocked ? '#666' : '#333');
         ctx.lineWidth = active ? 2 : 1;
-        ctx.fillRect(ix - 20, iy - 20, 40, 52);
-        ctx.strokeRect(ix - 20, iy - 20, 40, 52);
+        ctx.fillRect(ix - 26, iy - 26, 52, 70);
+        ctx.strokeRect(ix - 26, iy - 26, 52, 70);
 
-        // Avatar preview
-        ctx.fillStyle = unlocked ? col : '#444';
-        ctx.fillRect(ix - 10, iy - 10, 20, 20);
+        // Avatar preview (locked skins still show their shape, greyed out)
+        ctx.save();
+        ctx.globalAlpha = unlocked ? 1 : 0.35;
+        drawAvatar(ix, iy - 6, 20, col, AVATAR_STYLES[i]);
+        ctx.restore();
 
         // Key hint
         ctx.fillStyle = 'rgba(255,255,255,0.55)';
         ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(`[${i + 1}]`, ix, iy + 18);
+        ctx.fillText(`[${i + 1}]`, ix, iy + 16);
 
         // Name
-        ctx.fillStyle = unlocked ? col : '#555';
+        ctx.fillStyle = unlocked ? (col === '#2A2A2A' ? '#BBB' : col) : '#555';
         ctx.font = '10px Arial';
-        ctx.fillText(name, ix, iy + 30);
+        ctx.fillText(name, ix, iy + 27);
 
         // Cost or ✓
         if (!unlocked) {
             ctx.fillStyle = state.coins >= cost ? '#FFD700' : '#886';
             ctx.font = 'bold 9px Arial';
-            ctx.fillText(`🪙${cost}`, ix, iy + 42);
+            ctx.fillText(`🪙${cost}`, ix, iy + 39);
         } else if (active) {
             ctx.fillStyle = '#FFD700';
             ctx.font = 'bold 11px Arial';
-            ctx.fillText('✓', ix, iy + 42);
+            ctx.fillText('✓', ix, iy + 39);
         }
     }
+
+    // Items
+    const bx = 400, by = SY + 215;
+    ctx.fillStyle = state.bubble ? 'rgba(170,230,255,0.2)' : 'rgba(255,255,255,0.06)';
+    ctx.strokeStyle = state.bubble ? '#AEE8FF' : '#666'; ctx.lineWidth = 1;
+    ctx.fillRect(bx - 120, by - 24, 240, 58);
+    ctx.strokeRect(bx - 120, by - 24, 240, 58);
+    ctx.beginPath(); ctx.arc(bx - 90, by + 5, 16, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(170,230,255,0.25)'; ctx.fill();
+    ctx.strokeStyle = '#CCF0FF'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#AEE8FF'; ctx.font = 'bold 13px Arial';
+    ctx.fillText('[9] Shield Bubble', bx - 64, by);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '11px Arial';
+    ctx.fillText(state.bubble ? '✓ You have one! It blocks 1 hit.' : `Blocks 1 hit  ·  🪙${BUBBLE_COST}`, bx - 64, by + 18);
     ctx.restore();
 }
 
@@ -2075,7 +2362,7 @@ function drawControls() {
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
     const hint = isTouchDevice
         ? 'Move: joystick  |  Shoot / Dig: button'
-        : 'Move: WASD / Arrows  |  Shoot / Dig: Spacebar';
+        : 'Move: WASD / Arrows  |  Shoot / Dig: Spacebar  |  Sound: M';
     ctx.fillText(hint, 792, 592);
 }
 
@@ -2139,6 +2426,7 @@ function update() {
     if ((state.won || state.levelComplete) && !state.confettiSpawned) {
         state.confettiSpawned = true;
         spawnConfetti();
+        sfx('win');
     }
 }
 
