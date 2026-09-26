@@ -139,6 +139,14 @@ const HELL_CAVES = [
     { x: 570, y: 400, w: 175, h: 130 },
 ];
 
+// ── DIG SPOTS (weapons are buried underground inside the caves) ──
+const DIG_SPOTS = [
+    { x: 105, y: 125 }, { x: 180, y: 125 },   // top-left cave
+    { x: 620, y: 480 }, { x: 695, y: 480 },   // bottom-right cave
+];
+const DIG_HITS_NEEDED = 3;    // presses of Space / DIG to dig up a weapon
+const DIG_RANGE       = 24;   // how close the player must stand to a dig spot
+
 // ── STATE ────────────────────────────────────────────────────
 let state = {
     room:               ROOM.VOID,
@@ -184,7 +192,7 @@ document.addEventListener('keydown', e => {
             state.gamePhase = 'playing';
         } else if (state.levelComplete) {
             advanceLevel();
-        } else {
+        } else if (!tryDig()) {
             shoot();
         }
     }
@@ -254,7 +262,7 @@ canvas.addEventListener('touchstart', e => {
             vTouch.joyDX = 0; vTouch.joyDY = 0;
         } else if (vTouch.shootId === null && Math.hypot(p.x - VSHOOT.x, p.y - VSHOOT.y) < VSHOOT.r * TOUCH_AREA_MULTIPLIER) {
             vTouch.shootId = t.identifier;
-            shoot();
+            if (!tryDig()) shoot();
         }
     }
 }, { passive: false });
@@ -288,17 +296,21 @@ function makeCoins(count) {
     return list;
 }
 
+function makeDigSpots() {
+    // Two ICE and two FIRE weapons, shuffled so every visit is a surprise
+    const loot = [POWER.ICE, POWER.ICE, POWER.BRIMSTONE, POWER.BRIMSTONE];
+    for (let i = loot.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [loot[i], loot[j]] = [loot[j], loot[i]];
+    }
+    return DIG_SPOTS.map((s, i) => ({ x: s.x, y: s.y, hits: 0, dug: false, weapon: loot[i] }));
+}
+
 function makeHell() {
     const cfg = LEVEL_CONFIGS[state.level - 1];
     return {
-        iceCrystals: [
-            { x: 150, y: 200, picked: false },
-            { x: 300, y: 450, picked: false },
-        ],
-        brimstones: [
-            { x: 580, y: 150, picked: false },
-            { x: 480, y: 370, picked: false },
-        ],
+        digSpots: makeDigSpots(),
+        foundMsg: null,   // { text, color, x, y, timer } — floats up after digging
         devil: {
             x: 660, y: 300, r: cfg.devilR, alive: true, shieldFlash: 0,
             hp: cfg.devilHp, maxHp: cfg.devilHp,
@@ -525,9 +537,9 @@ function changeRoom(dest) {
     if (dest === ROOM.VOID)     { player.x = 400; player.y = 300; }
     if (dest === ROOM.HELL)     {
         player.x = 100; player.y = 300;
-        // Crystals reappear fresh each visit
-        hell.iceCrystals.forEach(c => { c.picked = false; });
-        hell.brimstones.forEach(b => { b.picked = false; });
+        // Weapons are buried again (in new places) each visit
+        hell.digSpots = makeDigSpots();
+        hell.foundMsg = null;
     }
     if (dest === ROOM.PARADISE) {
         player.x = 700; player.y = 300;
@@ -860,23 +872,44 @@ function updateProjectiles() {
     }
 }
 
+// ── UPDATE: DIGGING ───────────────────────────────────────────
+function nearbyDigSpot() {
+    if (state.room !== ROOM.HELL) return null;
+    return hell.digSpots.find(s =>
+        !s.dug && Math.hypot(player.x - s.x, player.y - s.y) < DIG_RANGE
+    ) || null;
+}
+
+// Returns true if the player dug (so Space / the button doesn't also shoot)
+function tryDig() {
+    if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return false;
+    const s = nearbyDigSpot();
+    if (!s) return false;
+    s.hits++;
+    spawnParticles(s.x, s.y, '#8B5A2B', 6);
+    triggerShake(3);
+    if (s.hits >= DIG_HITS_NEEDED) {
+        s.dug = true;
+        state.power = s.weapon;
+        state.playerFlash = 25;
+        const isIce = s.weapon === POWER.ICE;
+        const color = isIce ? '#4488FF' : '#FF4422';
+        spawnParticles(s.x, s.y, color, 16);
+        triggerShake(8);
+        hell.foundMsg = { text: isIce ? 'You found ICE!' : 'You found FIRE!', color, x: s.x, y: s.y - 20, timer: 90 };
+    }
+    return true;
+}
+
+function updateDigging() {
+    if (hell.foundMsg && --hell.foundMsg.timer <= 0) hell.foundMsg = null;
+}
+
 // ── UPDATE: PICKUPS ───────────────────────────────────────────
 function checkPickups() {
     if (state.won || state.levelComplete) return;
 
     if (state.room === ROOM.HELL) {
-        for (const c of hell.iceCrystals) {
-            if (!c.picked && Math.hypot(player.x - c.x, player.y - c.y) < 26) {
-                c.picked = true; state.power = POWER.ICE;
-                state.playerFlash = 25; spawnParticles(c.x, c.y, '#4488FF');
-            }
-        }
-        for (const b of hell.brimstones) {
-            if (!b.picked && Math.hypot(player.x - b.x, player.y - b.y) < 26) {
-                b.picked = true; state.power = POWER.BRIMSTONE;
-                state.playerFlash = 25; spawnParticles(b.x, b.y, '#FF4422');
-            }
-        }
         // Coins in Hell
         for (const coin of hell.coins) {
             if (!coin.picked && Math.hypot(player.x - coin.x, player.y - coin.y) < 22) {
@@ -1021,7 +1054,7 @@ function drawIntro() {
         'The Devil stole the Golden Light',
         'and hid it in Paradise City!',
         '',
-        'Go to Hell to get Magic Power.',
+        'Dig in the caves of Hell for Magic Power.',
         'Use the Power to clear the City',
         'and find 3 Light Crystals.',
         '',
@@ -1038,7 +1071,7 @@ function drawIntro() {
     // Hint: Caves
     ctx.fillStyle = 'rgba(180,120,60,0.7)';
     ctx.font = '13px Arial';
-    ctx.fillText('Tip: Hide inside Caves in Hell — the Devil will lose track of you!', 400, 460);
+    ctx.fillText('Tip: Caves in Hell hide you from the Devil — and have weapons buried inside!', 400, 460);
 
     // Pulsing Press Space
     const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 400);
@@ -1153,24 +1186,47 @@ function drawHell() {
         ctx.fill(); ctx.stroke();
         ctx.fillStyle   = 'rgba(120,70,30,0.55)';
         ctx.font        = 'bold 11px Arial'; ctx.textAlign = 'center';
-        ctx.fillText('CAVE  (hide here!)', c.x + c.w / 2, c.y + c.h / 2 + 4);
+        ctx.fillText('CAVE  (hide & dig here!)', c.x + c.w / 2, c.y + 20);
         ctx.restore();
     }
 
-    // Ice Crystals
-    for (const c of hell.iceCrystals) {
-        if (c.picked) continue;
-        drawStar(c.x, c.y + Math.sin(t + c.x) * 3, 12, '#4488FF');
-        ctx.fillStyle = '#88BBFF'; ctx.font = '10px Arial'; ctx.textAlign = 'center';
-        ctx.fillText('ICE', c.x, c.y + 30);
+    // Dig spots — dirt piles with buried weapons
+    for (const s of hell.digSpots) {
+        ctx.save();
+        if (s.dug) {
+            // Empty hole
+            ctx.fillStyle = 'rgba(0,0,0,0.75)';
+            ctx.beginPath(); ctx.ellipse(s.x, s.y + 6, 15, 6, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+            continue;
+        }
+        // Pile shrinks a little with each dig
+        const size = 1 - (s.hits / DIG_HITS_NEEDED) * 0.45;
+        ctx.fillStyle = '#6B3E1E';
+        ctx.beginPath(); ctx.ellipse(s.x, s.y + 4, 18 * size, 10 * size, 0, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = '#8B5A2B';
+        ctx.beginPath(); ctx.ellipse(s.x - 3, s.y + 1, 9 * size, 5 * size, 0, Math.PI, 0); ctx.fill();
+        // Twinkle so kids can spot the treasure
+        if (Math.sin(t * 2 + s.x) > 0.7) drawStar(s.x + 8 * size, s.y - 6 * size, 3, '#FFFFAA');
+        ctx.restore();
     }
 
-    // Brimstones
-    for (const b of hell.brimstones) {
-        if (b.picked) continue;
-        drawStar(b.x, b.y + Math.sin(t + b.x) * 3, 12, '#FF4422');
-        ctx.fillStyle = '#FF8866'; ctx.font = '10px Arial'; ctx.textAlign = 'center';
-        ctx.fillText('FIRE', b.x, b.y + 30);
+    // "Dig here!" prompt when standing on a pile
+    const digSpot = nearbyDigSpot();
+    if (digSpot) {
+        ctx.fillStyle = '#FFE08A'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(isTouchDevice ? 'Tap DIG!' : 'Press SPACE to dig!', digSpot.x, digSpot.y - 22);
+    }
+
+    // "You found ICE / FIRE!" message floating up
+    if (hell.foundMsg) {
+        const m = hell.foundMsg;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, m.timer / 30);
+        ctx.fillStyle = m.color; ctx.shadowColor = m.color; ctx.shadowBlur = 12;
+        ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(m.text, m.x, m.y - (90 - m.timer) * 0.4);
+        ctx.restore();
     }
 
     // Devil
@@ -1671,8 +1727,8 @@ function drawControls() {
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
     const hint = isTouchDevice
-        ? 'Move: joystick  |  Shoot: button'
-        : 'Move: WASD / Arrows  |  Shoot: Spacebar';
+        ? 'Move: joystick  |  Shoot / Dig: button'
+        : 'Move: WASD / Arrows  |  Shoot / Dig: Spacebar';
     ctx.fillText(hint, 792, 592);
 }
 
@@ -1710,7 +1766,7 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('SHOOT', VSHOOT.x, VSHOOT.y);
+    ctx.fillText(nearbyDigSpot() ? 'DIG' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
 }
@@ -1725,6 +1781,7 @@ function update() {
         updateProjectiles();
         updateEnemyProjectiles();
         checkPickups();
+        updateDigging();
         updateVoidHealing();
         updateAmmo();
     }

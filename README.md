@@ -14,8 +14,8 @@ You are a wandering soul navigating the **Void**, **Hell**, and **Paradise**. Co
 ### Rooms
 | Room | Background | Goal |
 |------|-----------|------|
-| **Void** | Grey | Starting area; pick up Ice/Brimstone powers in Hell first |
-| **Hell** | Dark red | Collect Ice Crystals and Brimstone power-ups; fight the Devil |
+| **Void** | Grey | Starting area; go to Hell first to dig up Ice/Brimstone powers |
+| **Hell** | Dark red | Dig up Ice and Brimstone weapons buried in the caves (press Shoot 3× on a dirt pile); fight the Devil |
 | **Paradise** | Dark teal | Defeat Fire Monsters and Ghosts to unlock Light Chests |
 
 ### Controls
