@@ -57,7 +57,7 @@ light-of-paradise/
 ├── Light of paradise opening.mp4 # Intro cinematic
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml            # Auto-deploy to GitHub Pages on push to main
+│       └── deploy.yml            # Auto-deploy to GitHub Pages on push to master
 └── README.md
 ```
 
@@ -103,7 +103,7 @@ All game code lives in one `<script>` block. Sections are separated by banner co
 - **Collision** — distance-based (`Math.hypot`) for pickups/projectiles; AABB rectangle overlap for portals.
 - **Input** — `keys` map for keyboard; `vTouch` object for virtual touch controls. Both are read in `updatePlayer()` each frame.
 - **State** — a single `state` object holds all mutable game state; `resetGame()` rebuilds everything to initial values.
-- **Deployment** — GitHub Actions workflow auto-deploys the repository root to GitHub Pages on every push to `main`.
+- **Deployment** — GitHub Actions workflow auto-deploys the repository root to GitHub Pages on every push to `master`.
 
 ---
 
@@ -123,4 +123,4 @@ Movement uses a 20% deadzone (`JOYSTICK_DEADZONE_RATIO`) to filter thumb rest no
 
 ## Deployment
 
-Pushes to the `main` branch trigger the `.github/workflows/deploy.yml` workflow which uploads the repository root as a GitHub Pages artifact and deploys it. No build step is executed.
+Pushes to the `master` branch trigger the `.github/workflows/deploy.yml` workflow which uploads the repository root as a GitHub Pages artifact and deploys it. No build step is executed.

@@ -17,7 +17,7 @@ The deployed game is at: `https://imran2akram.github.io/light-of-paradise/`
 ```
 index.html                    ← everything (HTML + CSS + JS, ~1 300 lines)
 Light of paradise opening.mp4 ← intro cinematic (referenced in index.html)
-.github/workflows/deploy.yml  ← auto-deploy to GitHub Pages on push to main
+.github/workflows/deploy.yml  ← auto-deploy to GitHub Pages on push to master
 README.md                     ← player/developer documentation
 AGENTS.md                     ← this file
 ```
