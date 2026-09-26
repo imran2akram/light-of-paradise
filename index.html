@@ -196,11 +196,16 @@ const BUBBLE_COST        = 5;                               // Shield Bubble (sh
 // ── PETS ─────────────────────────────────────────────────────
 // Buy pets in the shop. Your pet follows you everywhere and fights with its own special power.
 const PETS = [
-    { id: 'puppy',  name: 'Puppy',       cost: 15, power: 'Fetches coins, bites', range: 170, speed: 3.5, cooldown: 45  },
-    { id: 'kitten', name: 'Kitten',      cost: 20, power: 'Super-fast scratches', range: 170, speed: 4.5, cooldown: 18  },
-    { id: 'owl',    name: 'Owl',         cost: 25, power: 'Heals you, zaps',      range: 260, speed: 3,   cooldown: 110 },
-    { id: 'dragon', name: 'Baby Dragon', cost: 35, power: 'Shoots fireballs',     range: 260, speed: 3,   cooldown: 80  },
+    { id: 'puppy',   name: 'Puppy',       cost: 15, power: 'Fetch + bite', range: 170, speed: 3.5, cooldown: 45  },
+    { id: 'kitten',  name: 'Kitten',      cost: 20, power: 'Fast claws',   range: 170, speed: 4.5, cooldown: 18  },
+    { id: 'owl',     name: 'Owl',         cost: 25, power: 'Heal + zap',   range: 260, speed: 3,   cooldown: 110 },
+    { id: 'dragon',  name: 'Baby Dragon', cost: 35, power: 'Fireballs',    range: 260, speed: 3,   cooldown: 80  },
+    { id: 'penguin', name: 'Penguin',     cost: 30, power: 'Snowballs',    range: 240, speed: 2.8, cooldown: 70  },
+    { id: 'unicorn', name: 'Unicorn',     cost: 40, power: 'Big heals',    range: 260, speed: 3.8, cooldown: 140 },
+    { id: 'trex',    name: 'T-Rex',       cost: 45, power: 'STOMP!',       range: 180, speed: 3.2, cooldown: 100 },
 ];
+const PET_XP_LEVELS  = [0, 20, 60, 120, 200];   // XP needed for levels 1-5
+const UNICORN_HEAL_FRAMES = 720;                // the Unicorn heals 1 heart every 12 s
 const OWL_HEAL_FRAMES = 1200;   // the Owl heals 1 heart every 20 s
 
 // ── GADGETS (bought at the Blacksmith's Forge, used with Q / B / the ⚙ button) ──
@@ -346,6 +351,7 @@ let state = {
     // Pets
     ownedPets:          PETS.map(() => false),
     activePet:          -1,        // index into PETS, -1 = no pet
+    petXp:              PETS.map(() => 0),   // pets get stronger as they fight
     // Forge
     ownedGadgets:       {},        // e.g. { bomb: true }
     gadget:             null,      // id of the gadget you're holding
@@ -386,7 +392,7 @@ const keys = {};
 
 // Shop layout (shared by drawing and by tap / click hit-testing)
 const SHOP       = { X: 110, Y: 150, W: 580, H: 300 };
-const SHOP_SLOTS = 13;                                       // 0-7 skins, 8 Shield Bubble, 9-12 pets
+const SHOP_SLOTS = 16;                                       // 0-7 skins, 8 Shield Bubble, 9-15 pets
 const SHOP_CLOSE = { x: SHOP.X + SHOP.W - 20, y: SHOP.Y + 20, r: 13 };
 const SHOP_BTN   = { x: 270, y: 392, w: 120, h: 32 };        // on-screen SHOP button in the Void
 const AWARDS_BTN = { x: 410, y: 392, w: 120, h: 32 };        // …and the AWARDS button next to it
@@ -399,17 +405,17 @@ function shopSlotRect(i) {
         const cx = SHOP.X + 46 + i * 70, cy = SHOP.Y + 118;
         return { x: cx - 26, y: cy - 26, w: 52, h: 70, cx, cy };
     }
-    const j = i - 8, x = SHOP.X + 22 + j * 108;
-    return { x, y: SHOP.Y + 180, w: 100, h: 106, cx: x + 50, cy: SHOP.Y + 212 };
+    const j = i - 8, x = SHOP.X + 14 + j * 70;
+    return { x, y: SHOP.Y + 180, w: 66, h: 106, cx: x + 33, cy: SHOP.Y + 212 };
 }
 
 // Arrow keys / D-pad in the shop: left-right along a row, up-down between rows
 function moveShopCursor(dx, dy) {
     let c = state.shopCursor;
     const top = c < 8;
-    if (dx) c = top ? (c + dx + 8) % 8 : 8 + ((c - 8 + dx + 5) % 5);
-    if (dy > 0 && top)  c = 8 + Math.round(c * 4 / 7);
-    if (dy < 0 && !top) c = Math.round((c - 8) * 7 / 4);
+    if (dx) c = top ? (c + dx + 8) % 8 : 8 + ((c - 8 + dx + 8) % 8);   // both rows have 8 things
+    if (dy > 0 && top)  c += 8;
+    if (dy < 0 && !top) c -= 8;
     state.shopCursor = c;
 }
 
@@ -494,6 +500,8 @@ function spend(cost) {
 // The main button: Space, A on a controller, or the on-screen SHOOT / DIG button
 function pressAction() {
     if (menu) return;
+    if (race) { raceTap(); return; }
+    if (nearRaceMaster() && state.gamePhase === 'playing') { startRace(); return; }
     if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
         const { cx, cy } = buildTargetCell();
         buildAt(cx, cy, player.x + state.faceX * 30, player.y + 5 + state.faceY * 30);
@@ -519,6 +527,7 @@ function handleTap(x, y) {
         else startFromIntro();
         return true;
     }
+    if (race) { raceTap(); return true; }
     if (state.awardsOpen) { state.awardsOpen = false; return true; }
     if (menu) {
         const list = menu.items();
@@ -1402,6 +1411,8 @@ const AWARDS = [
     { id: 'student',     icon: '🎓', name: 'Top of the Class', desc: 'Learn a lesson at School' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
+    { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
+    { id: 'race',        icon: '🏁', name: 'Champion!',        desc: 'Win a pet race' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -1432,7 +1443,7 @@ const SAVE_KEY    = 'lop_save';
 const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'powerTier', 'playerHp', 'coins',
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
-                     'furniture', 'garden', 'lessons', 'hats', 'hat'];
+                     'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -1458,6 +1469,9 @@ function startFromIntro(fresh = false) {
     resetGame();
     Object.assign(state, JSON.parse(JSON.stringify(data)));
     state.gamePhase = 'playing';
+    while (state.ownedPets.length < PETS.length) state.ownedPets.push(false);   // pets added since you saved
+    state.petXp = state.petXp || [];
+    while (state.petXp.length < PETS.length) state.petXp.push(0);
     const cfg = LEVEL_CONFIGS[state.level - 1];
     state.ammoMax = cfg.ammoMax + state.ammoBonus;
     state.ammo    = state.ammoMax;
@@ -2038,7 +2052,7 @@ function resetGame() {
         unlockedSkins: [true, ...Array(AVATAR_COLORS.length - 1).fill(false)], activeSkin: 0,
         bubble: false, score: 0, newBest: false,
         job: null, housesOwned: {}, ammoBonus: 0,
-        ownedPets: PETS.map(() => false), activePet: -1,
+        ownedPets: PETS.map(() => false), activePet: -1, petXp: PETS.map(() => 0),
         ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
         buildMode: false, hotbar: 0, inv: {}, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null,
@@ -2795,7 +2809,8 @@ function updateProjectiles() {
 
         for (const e of targetableEnemies()) {
             if (Math.hypot(p.x - e.x, p.y - e.y) >= e.r + p.r) continue;
-            damageEnemy(e, p.power, false, p.fromPet ? 0 : state.weaponLevel - 1);
+            if (p.fromPet) petHit(e, p.power);
+            else damageEnemy(e, p.power, false, state.weaponLevel - 1);
             hit = true; break;
         }
 
@@ -2947,6 +2962,34 @@ function updateDigging() {
 // ── UPDATE: PET ───────────────────────────────────────────────
 const pet = { x: 370, y: 320, cooldown: 0, healTimer: 0, face: 1 };
 
+function petLevel(j = state.activePet) {
+    const xp = (state.petXp || [])[j] || 0;
+    let lv = 1;
+    PET_XP_LEVELS.forEach((need, i) => { if (xp >= need) lv = i + 1; });
+    return lv;
+}
+
+// Your pet learns from every fight
+function petGainXp(n) {
+    if (state.activePet < 0) return;
+    const before = petLevel();
+    state.petXp[state.activePet] = (state.petXp[state.activePet] || 0) + n;
+    const after = petLevel();
+    if (after > before) {
+        showToast(`⭐ Your ${PETS[state.activePet].name} reached LEVEL ${after}!`, '#FFE066', 180);
+        spawnParticles(pet.x, pet.y, '#FFE066', 16);
+        sfx('found');
+        if (after >= 5) giveAward('petMaster');
+    }
+}
+
+// A pet hit a bad guy (and learns something)
+function petHit(e, power) {
+    const lv = petLevel();
+    damageEnemy(e, power, false, lv >= 5 ? 2 : lv >= 3 ? 1 : 0);
+    petGainXp(e.alive ? 2 : 10);
+}
+
 function placePetBesidePlayer() {
     pet.x = player.x - 28; pet.y = player.y + 16; pet.cooldown = 30;
 }
@@ -2989,7 +3032,7 @@ function updatePet() {
             goal = coin;
             if (Math.hypot(coin.x - pet.x, coin.y - pet.y) < 16) { coin.picked = true; collectCoin(); }
         } else if (target) goal = target;
-    } else if (info.id === 'kitten' && target) {
+    } else if ((info.id === 'kitten' || info.id === 'trex') && target) {
         goal = target;
     }
 
@@ -3002,34 +3045,48 @@ function updatePet() {
     pet.x = Math.max(12, Math.min(788, pet.x));
     pet.y = Math.max(56, Math.min(588, pet.y));
 
-    // Attacks — every pet does a little damage (1), except its own element's strong hits
+    // Attacks — every pet does a little damage (1), except its own element's strong hits.
+    // Higher-level pets attack faster and harder.
+    const cooldown = Math.round(info.cooldown * (1 - (petLevel() - 1) * 0.1));
     if (target && pet.cooldown === 0) {
         if (info.id === 'puppy' || info.id === 'kitten') {
             if (Math.hypot(target.x - pet.x, target.y - pet.y) < target.r + 12) {
-                pet.cooldown = info.cooldown;
+                pet.cooldown = cooldown;
                 spawnParticles(target.x, target.y, '#FFFFFF', 4);
                 sfx(info.id === 'puppy' ? 'bark' : 'meow');
-                damageEnemy(target, POWER.NONE);
+                petHit(target, POWER.NONE);
+            }
+        } else if (info.id === 'trex') {
+            // Runs over and STOMPS — hurts everything nearby
+            if (Math.hypot(target.x - pet.x, target.y - pet.y) < 60) {
+                pet.cooldown = cooldown;
+                for (const e of targetableEnemies()) if (Math.hypot(e.x - pet.x, e.y - pet.y) < 75) petHit(e, POWER.NONE);
+                spawnParticles(pet.x, pet.y + 8, '#8A6A4A', 16);
+                triggerShake(10);
+                sfx('boom');
+                pet.stomp = 15;
             }
         } else {
-            // Owl zaps with lightning feathers, Dragon breathes fireballs
-            pet.cooldown = info.cooldown;
-            const power = info.id === 'owl' ? POWER.LIGHTNING : POWER.BRIMSTONE;
+            // Owl: lightning feathers · Dragon: fireballs · Penguin: snowballs · Unicorn: rainbows
+            pet.cooldown = cooldown;
+            const power = { owl: POWER.LIGHTNING, dragon: POWER.BRIMSTONE, penguin: POWER.ICE, unicorn: POWER.RAINBOW }[info.id];
             const a = Math.atan2(target.y - pet.y, target.x - pet.x);
+            const color = info.id === 'penguin' ? '#FFFFFF' : info.id === 'unicorn' ? `hsl(${Math.random() * 360}, 100%, 65%)` : WEAPON_INFO[power].color;
             projectiles.push({ x: pet.x, y: pet.y, dx: Math.cos(a) * 8, dy: Math.sin(a) * 8,
-                               color: WEAPON_INFO[power].color, power, life: 60, r: 5, fromPet: true });
-            sfx(info.id === 'owl' ? 'hoot' : 'shoot');
+                               color, power, life: 60, r: 5, fromPet: true });
+            sfx(info.id === 'owl' ? 'hoot' : info.id === 'penguin' ? 'whoosh' : info.id === 'unicorn' ? 'magic' : 'shoot');
         }
     }
+    if (pet.stomp > 0) pet.stomp--;
 
-    // The Owl heals you now and then
-    if (info.id === 'owl') {
-        const maxHp = fullHearts();
-        if (state.playerHp < maxHp && ++pet.healTimer >= OWL_HEAL_FRAMES) {
+    // The Owl and the Unicorn heal you now and then (faster at higher levels)
+    if (info.id === 'owl' || info.id === 'unicorn') {
+        const every = (info.id === 'owl' ? OWL_HEAL_FRAMES : UNICORN_HEAL_FRAMES) * (1 - (petLevel() - 1) * 0.12);
+        if (state.playerHp < fullHearts() && ++pet.healTimer >= every) {
             pet.healTimer = 0;
             state.playerHp++;
-            spawnFloatText(player.x, player.y - 30, '+1 ❤ from Owl!', '#FF88AA', 70);
-            spawnParticles(player.x, player.y, '#FF88AA', 10);
+            spawnFloatText(player.x, player.y - 30, `+1 ❤ from your ${info.name}!`, '#FF88AA', 70);
+            spawnParticles(player.x, player.y, info.id === 'unicorn' ? '#FFAAFF' : '#FF88AA', 12);
             sfx('buy');
         }
     }
@@ -3240,6 +3297,87 @@ function drawGadgetHud() {
         if (lastInput !== 'touch') { ctx.font = 'bold 8px Arial'; ctx.fillText(sl.key, x + 12, y - 12); }
         ctx.restore();
     });
+}
+
+// ── PET RACES (talk to the Race Master in the Void) ──────────
+const RACE_MASTER  = { x: 700, y: 470 };
+const RACE_FINISH  = 700;
+let race = null;   // { lanes: [{ pet, x, you }], countdown, winner, doneTimer }
+
+function nearRaceMaster() {
+    return state.room === ROOM.VOID && !state.shopOpen && Math.hypot(player.x - RACE_MASTER.x, player.y - RACE_MASTER.y) < 44;
+}
+
+function startRace() {
+    if (state.activePet < 0) { showToast('🏁 You need a pet to race! Buy one in the Shop.', '#FFCC88', 150); return; }
+    const others = PETS.map((p, i) => i).filter(i => i !== state.activePet).sort(() => Math.random() - 0.5).slice(0, 3);
+    race = { lanes: [{ pet: state.activePet, x: 90, you: true }, ...others.map(i => ({ pet: i, x: 90, speed: 1.2 + Math.random() * 0.6 }))],
+             countdown: 180, winner: null, doneTimer: 0, boost: 0 };
+    sfx('bite');
+}
+
+// Pressing the button during a race makes your pet run faster
+function raceTap() {
+    if (!race) return;
+    if (race.countdown > 0 || race.winner) return;
+    race.boost = Math.min(4, race.boost + 0.9);
+    spawnParticles(race.lanes[0].x - 10, 170, '#FFE066', 2);
+}
+
+function updateRace() {
+    if (race.countdown > 0) {
+        if (race.countdown % 60 === 0) tone(race.countdown === 60 ? 880 : 440, 0.15, 'square', 0.15);
+        race.countdown--;
+        return;
+    }
+    if (race.winner) {
+        if (++race.doneTimer > 200) race = null;
+        return;
+    }
+    race.boost *= 0.95;
+    for (const l of race.lanes) {
+        l.x += l.you ? 0.9 + race.boost : l.speed + Math.sin(Date.now() / 300 + l.pet) * 0.3;
+        if (l.x >= RACE_FINISH && !race.winner) race.winner = l;
+    }
+    if (race.winner) {
+        const won = race.winner.you;
+        if (won) { petGainXp(50); addScore(100); giveAward('race'); showToast(`🏆 Your ${PETS[state.activePet].name} WON the race!`, '#FFD700', 220); sfx('win'); }
+        else     { petGainXp(10); showToast(`The ${PETS[race.winner.pet].name} won… try again!`, '#FFCC88', 180); }
+    }
+}
+
+function drawRace() {
+    if (!race) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,30,10,0.96)'; ctx.fillRect(40, 90, 720, 420);
+    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(40, 90, 720, 420);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 22px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('🏁 PET RACE 🏁', 400, 122);
+    race.lanes.forEach((l, i) => {
+        const y = 170 + i * 80;
+        ctx.fillStyle = i % 2 ? '#3A7A2A' : '#4A8A3A'; ctx.fillRect(60, y - 30, 680, 64);   // grass lanes
+        for (let k = 0; k < 8; k++) {                                                            // checkered finish line
+            ctx.fillStyle = k % 2 ? '#FFF' : '#111';
+            ctx.fillRect(RACE_FINISH + 10, y - 30 + k * 8, 8, 8); ctx.fillStyle = k % 2 ? '#111' : '#FFF'; ctx.fillRect(RACE_FINISH + 18, y - 30 + k * 8, 8, 8);
+        }
+        const bounce = race.countdown > 0 ? 0 : Math.abs(Math.sin(Date.now() / 90 + i)) * 6;
+        drawPetShape(PETS[l.pet].id, l.x, y - bounce, 1.6, -1);
+        ctx.fillStyle = l.you ? '#FFE066' : '#FFFFFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'left';
+        ctx.fillText(l.you ? `⭐ YOUR ${PETS[l.pet].name.toUpperCase()}` : PETS[l.pet].name, 66, y + 28);
+    });
+    ctx.textAlign = 'center';
+    if (race.countdown > 0) {
+        ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 60px Arial';
+        ctx.fillText(String(Math.ceil(race.countdown / 60)), 400, 330);
+    } else if (!race.winner) {
+        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'TAP' : 'SPACE';
+        ctx.fillStyle = Math.floor(Date.now() / 200) % 2 ? '#FFE066' : '#FFFFFF'; ctx.font = 'bold 18px Arial';
+        ctx.fillText(`Press ${verb} as fast as you can to cheer your pet on!`, 400, 496);
+    } else {
+        ctx.fillStyle = '#FFD700'; ctx.font = 'bold 26px Arial';
+        ctx.fillText(race.winner.you ? '🏆 YOU WIN! +50 pet XP' : `${PETS[race.winner.pet].name} wins!`, 400, 496);
+    }
+    ctx.restore();
 }
 
 // ── UPDATE: WEATHER ───────────────────────────────────────────
@@ -4069,7 +4207,25 @@ function drawPortals() {
 }
 
 // ── DRAW: VOID ────────────────────────────────────────────────
+function drawRaceMaster() {
+    const { x, y } = RACE_MASTER;
+    drawGroundShadow(x, y + 16, 11, 4);
+    drawHuman(x, y, 1, { shirt: '#222', pants: '#DDD', hair: '#AA3322', hairStyle: 'short' });
+    ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x + 11, y - 26, 2, 32);                      // flag pole
+    for (let k = 0; k < 4; k++) for (let m = 0; m < 3; m++) {                             // checkered flag
+        ctx.fillStyle = (k + m) % 2 ? '#FFF' : '#111';
+        ctx.fillRect(x + 13 + k * 4, y - 26 + m * 4 + Math.sin(Date.now() / 150 + k) * 1.5, 4, 4);
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('🏁 Race Master', x, y + 30);
+    if (nearRaceMaster()) {
+        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        drawSpeech({ x, y }, `${verb}: Start a pet race! 🏁`);
+    }
+}
+
 function drawVoid() {
+    drawRaceMaster();
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.font      = 'bold 26px Arial'; ctx.textAlign = 'center';
     ctx.fillText('~ THE VOID ~', 400, 295);
@@ -5829,6 +5985,39 @@ function drawPetShape(id, x, y, s = 1, face = 1) {
         ctx.beginPath(); ctx.arc(-4, -4, 2, 0, Math.PI * 2); ctx.arc(4, -4, 2, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#FFAA22';
         ctx.beginPath(); ctx.moveTo(-2, 0); ctx.lineTo(2, 0); ctx.lineTo(0, 4); ctx.fill();   // beak
+    } else if (id === 'penguin') {
+        const waddle = Math.sin(t / 120) * 0.15;
+        ctx.rotate(waddle);
+        ctx.fillStyle = '#FF9922'; ctx.fillRect(-6, 8, 5, 3); ctx.fillRect(1, 8, 5, 3);                        // feet
+        ctx.fillStyle = '#1A1A2A'; ctx.beginPath(); ctx.ellipse(0, 0, 9, 11, 0, 0, Math.PI * 2); ctx.fill();   // body
+        ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.ellipse(0, 2, 6, 8, 0, 0, Math.PI * 2); ctx.fill();    // tummy
+        ctx.fillStyle = '#1A1A2A'; ctx.beginPath(); ctx.ellipse(-9, 1, 3, 7, 0.3, 0, Math.PI * 2); ctx.ellipse(9, 1, 3, 7, -0.3, 0, Math.PI * 2); ctx.fill();   // flippers
+        ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(-3, -6, 2, 0, Math.PI * 2); ctx.arc(3, -6, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(-3, -6, 1, 0, Math.PI * 2); ctx.arc(3, -6, 1, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FF9922'; ctx.beginPath(); ctx.moveTo(-2, -3); ctx.lineTo(2, -3); ctx.lineTo(0, 0); ctx.fill();   // beak
+    } else if (id === 'unicorn') {
+        const gallop = Math.sin(t / 80) * 2;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(-7, 3, 3, 8 + gallop); ctx.fillRect(5, 3, 3, 8 - gallop);                              // legs
+        ctx.beginPath(); ctx.ellipse(1, 0, 11, 7, 0, 0, Math.PI * 2); ctx.fill();                          // body
+        ctx.beginPath(); ctx.ellipse(-11, -7, 5, 6, -0.4, 0, Math.PI * 2); ctx.fill();                     // head
+        ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.moveTo(-13, -12); ctx.lineTo(-17, -22); ctx.lineTo(-10, -13); ctx.fill();   // golden horn
+        ['#FF4466', '#FFAA22', '#FFEE33', '#44DD66', '#44AAFF', '#AA66FF'].forEach((c, i) => {           // rainbow mane + tail
+            ctx.fillStyle = c; ctx.beginPath(); ctx.arc(-7 + i * 1.2, -10 + i * 2, 2.4, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(12 + i * 0.8, -2 + i * 1.6 + Math.sin(t / 150 + i) * 1.5, 2.2, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(-12, -8, 1.3, 0, Math.PI * 2); ctx.fill();
+    } else if (id === 'trex') {
+        const stomp = Math.sin(t / 100) * 2;
+        ctx.strokeStyle = '#4A8A3A'; ctx.lineWidth = 6; ctx.lineCap = 'round';                              // tail
+        ctx.beginPath(); ctx.moveTo(8, 2); ctx.quadraticCurveTo(18, 4, 22, -4); ctx.stroke();
+        ctx.fillStyle = '#3A7A2A'; ctx.fillRect(-4, 6, 4, 7 + stomp); ctx.fillRect(4, 6, 4, 7 - stomp);    // big legs
+        ctx.fillStyle = '#5AAA4A'; ctx.beginPath(); ctx.ellipse(2, 0, 10, 9, 0, 0, Math.PI * 2); ctx.fill();   // body
+        ctx.beginPath(); ctx.ellipse(-9, -10, 9, 7, -0.2, 0, Math.PI * 2); ctx.fill();                     // huge head
+        ctx.fillStyle = '#3A7A2A'; ctx.fillRect(-6, 0, 4, 2); ctx.fillRect(-6, 3, 3, 2);                     // tiny arms!
+        ctx.fillStyle = '#FFF'; for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.moveTo(-16 + k * 3, -6); ctx.lineTo(-15 + k * 3, -3); ctx.lineTo(-14 + k * 3, -6); ctx.fill(); }   // teeth
+        ctx.fillStyle = '#FFEE33'; ctx.beginPath(); ctx.arc(-9, -13, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#000'; ctx.fillRect(-9.5, -14, 1, 2.5);
     } else if (id === 'dragon') {
         const flap = Math.sin(t / 100) * 4;
         ctx.fillStyle = '#2E8B3E';
@@ -5855,8 +6044,10 @@ function drawPet() {
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
     ctx.beginPath(); ctx.ellipse(pet.x, pet.y + 10, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
-    const hop = state.danceTimer > 0 ? Math.abs(Math.sin(state.danceTimer / 4)) * 8 : 0;   // pets dance too!
+    const hop = state.danceTimer > 0 ? Math.abs(Math.sin(state.danceTimer / 4)) * 8 : pet.stomp > 0 ? Math.sin(pet.stomp / 15 * Math.PI) * 12 : 0;
     drawPetShape(PETS[state.activePet].id, pet.x, pet.y - hop, 1, pet.face);
+    const lv = petLevel();
+    if (lv > 1) { ctx.fillStyle = '#FFE066'; ctx.font = 'bold 8px Arial'; ctx.textAlign = 'center'; ctx.fillText('★'.repeat(lv - 1), pet.x, pet.y - 22 - hop); }
 }
 
 // ── DRAW: PROJECTILES ─────────────────────────────────────────
@@ -6332,7 +6523,7 @@ function drawShop() {
 
     // Bottom row: Shield Bubble, then pets
     ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'left';
-    ctx.fillText('ITEMS & PETS — pets follow you and fight with their own powers!', SX + 22, SY + 174);
+    ctx.fillText('ITEMS & PETS — pets follow you, fight with their own powers and LEVEL UP!', SX + 14, SY + 174);
     for (let i = 8; i < SHOP_SLOTS; i++) {
         const r = shopSlotRect(i);
         const isPet = i >= 9, j = i - 9;
@@ -6343,21 +6534,23 @@ function drawShop() {
         ctx.fillRect(r.x, r.y, r.w, r.h);
         ctx.strokeRect(r.x, r.y, r.w, r.h);
         if (isPet) {
-            drawPetShape(PETS[j].id, r.cx, r.cy, 1.6, 1);
+            drawPetShape(PETS[j].id, r.cx, r.cy, 1.3, 1);
+            if (owned) { ctx.fillStyle = '#FFE066'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'right'; ctx.fillText(`Lv${petLevel(j)}`, r.x + r.w - 3, r.y + 11); }
         } else {
             ctx.beginPath(); ctx.arc(r.cx, r.cy, 16, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(170,230,255,0.25)'; ctx.fill();
             ctx.strokeStyle = '#CCF0FF'; ctx.lineWidth = 2; ctx.stroke();
         }
         ctx.textAlign = 'center';
-        ctx.fillStyle = isPet ? '#FFE8B0' : '#AEE8FF'; ctx.font = 'bold 11px Arial';
-        ctx.fillText(isPet ? PETS[j].name : 'Shield Bubble', r.cx, r.y + 66);
-        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '9px Arial';
-        ctx.fillText(isPet ? PETS[j].power : (lastInput === 'keyboard' ? 'Blocks 1 hit (key 9)' : 'Blocks 1 hit'), r.cx, r.y + 80);
+        ctx.fillStyle = isPet ? '#FFE8B0' : '#AEE8FF'; ctx.font = 'bold 10px Arial';
+        ctx.fillText(isPet ? PETS[j].name : 'Bubble', r.cx, r.y + 66);
+        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '8px Arial';
+        ctx.fillText(isPet ? PETS[j].power : (lastInput === 'keyboard' ? 'Block 1 hit (9)' : 'Block 1 hit'), r.cx, r.y + 80);
         const cost = isPet ? PETS[j].cost : BUBBLE_COST;
         ctx.font = 'bold 10px Arial';
         ctx.fillStyle = active ? '#FFD700' : owned ? '#AEE8FF' : state.coins >= cost ? '#FFD700' : '#886';
-        ctx.fillText(active ? '✓ WITH YOU' : owned ? (isPet ? 'OWNED — choose' : '✓ HAVE ONE') : `🪙${cost}`, r.cx, r.y + 97);
+        ctx.font = 'bold 9px Arial';
+        ctx.fillText(active ? '✓ WITH YOU' : owned ? (isPet ? 'OWNED' : '✓ HAVE') : `🪙${cost}`, r.cx, r.y + 97);
     }
     ctx.restore();
 }
@@ -6427,6 +6620,7 @@ function drawVirtualControls() {
 // ── MAIN LOOP ─────────────────────────────────────────────────
 function update() {
     if (state.gamePhase === 'intro') return;
+    if (race) { updateRace(); updateParticles(); return; }   // everything waits while you race
 
     updatePlayer();
     if (!state.won && !state.levelComplete) {
@@ -6515,6 +6709,7 @@ function draw() {
     drawAwards();
     drawMenu();
     drawToast();
+    drawRace();
     if (state.levelComplete) drawLevelComplete();
     if (state.won)           drawWin();
 
