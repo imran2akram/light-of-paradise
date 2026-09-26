@@ -118,7 +118,9 @@ const ENEMY_TYPES = {
     bat:   { name: 'Bat',          hp: 3, weakTo: POWER.LIGHTNING, color: '#9966CC' },
     slime: { name: 'Slime',        hp: 3, weakTo: POWER.WATER,     color: '#66DD44' },
     mole:  { name: 'Mole Monster', hp: 3, weakTo: POWER.WATER,     color: '#C08040' },
+    king:  { name: 'King Slime',   hp: 15, weakTo: POWER.WATER,    color: '#44CC22' },   // Monster Night 3 boss
 };
+const KING_MAX_MINIS = 6;   // little slimes the King Slime can have out at once
 const DAMAGE_STRONG = 3;   // right weapon for this bad guy
 const DAMAGE_WEAK   = 1;   // any other weapon still does a little
 const FREEZE_FRAMES       = 120;   // ICE freezes bad guys solid for 2 s
@@ -126,6 +128,7 @@ const DEVIL_FREEZE_FRAMES = 30;    // …and the Devil for half a second
 const CHAIN_JUMPS         = 2;     // LIGHTNING jumps to this many more bad guys
 const CHAIN_RANGE         = 160;   // …if they're this close
 const HEART_DROP_CHANCE   = 0.2;   // defeated bad guys sometimes drop a heart
+const COINS_PER_KILL      = 2;     // beating bad guys is the only way to find coins
 const BASE_SPEED = 4;
 
 // ── LEVEL CONFIGURATIONS ─────────────────────────────────────
@@ -135,21 +138,21 @@ const LEVEL_CONFIGS = [
         devilHp: 5, devilR: 28, devilSpeed: 0.9, devilShootRate: 110, devilShotsPerFire: 1,
         extraFireMonsters: 0, extraGhosts: 0,
         playerMaxHp: 3,
-        coinCount: 6, isBoss: false,
+        isBoss: false,
     },
     { // Level 2 – Hard
         ammoMax: 4, reloadFrames: 240,
         devilHp: 10, devilR: 28, devilSpeed: 1.2, devilShootRate: 80,  devilShotsPerFire: 1,
         extraFireMonsters: 1, extraGhosts: 1,
         playerMaxHp: 3,
-        coinCount: 8, isBoss: false,
+        isBoss: false,
     },
     { // Level 3 – BOSS
         ammoMax: 4, reloadFrames: 270,
         devilHp: 20, devilR: 52, devilSpeed: 1.4, devilShootRate: 55,  devilShotsPerFire: 3,
         extraFireMonsters: 2, extraGhosts: 2,
         playerMaxHp: 2,
-        coinCount: 10, isBoss: true,
+        isBoss: true,
     },
 ];
 const MAX_LEVELS       = 3;
@@ -179,6 +182,35 @@ const DIG_HITS_PER_LAYER  = [3, 4, 5];         // Space / DIG presses per layer 
 const DIG_MOLE_CHANCE     = [0.3, 0.6, 1.0];   // chance a mole monster pops out of each layer
 const DIG_RANGE           = 24;                // how close the player must stand to a dig spot
 // Layer 1: Ice / Fire / Lightning / Water · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (strong vs everything)
+
+// ── PARADISE ISLAND TOWN ─────────────────────────────────────
+// Daytime is peaceful: talk to the townspeople, do jobs, buy a house.
+// Then MONSTER NIGHT comes — beat the Paradise-only monsters to win a Light Crystal.
+const DAY_FRAMES        = 1800;           // 30 s of daytime (only counts while you're in town)
+const DUSK_FRAMES       = 180;            // 3 s "Monster Night is coming!" warning
+const HEAL_COST         = 3;              // Doctor
+const HOUSE_COST        = 30;             // House Seller
+const AMMO_UPGRADE_COST = [10, 15, 20];   // Blacksmith: +1 ammo each
+const TALK_RANGE        = 40;
+const BUILDINGS = [
+    { id: 'clinic', x: 150, y: 190, name: 'CLINIC',     roof: '#D04848', wall: '#F4EEE0' },
+    { id: 'forge',  x: 400, y: 190, name: 'BLACKSMITH', roof: '#4A4A4A', wall: '#A87850' },
+    { id: 'hall',   x: 650, y: 190, name: 'TOWN HALL',  roof: '#3366AA', wall: '#E8E0C8' },
+    { id: 'house',  x: 560, y: 370, name: 'HOUSE',      roof: '#AA6633', wall: '#F0D8A8' },
+];
+const NPCS = [
+    { id: 'doctor', name: 'Doctor',       x: 150, y: 245, coat: '#FFFFFF', hat: 'doctor' },
+    { id: 'smith',  name: 'Blacksmith',   x: 400, y: 245, coat: '#6B4A2B', hat: 'smith'  },
+    { id: 'mayor',  name: 'Mayor',        x: 650, y: 245, coat: '#2A4A88', hat: 'mayor'  },
+    { id: 'seller', name: 'House Seller', x: 625, y: 410, coat: '#3A9A5A', hat: 'seller' },
+    { id: 'home',   name: 'Your House',   x: 560, y: 405 },   // the front door, once you own it
+];
+const JOBS = [
+    { kind: 'deliver', to: 'doctor', item: '🍞', text: 'Take this bread to the Doctor',        pay: 6  },
+    { kind: 'deliver', to: 'smith',  item: '📦', text: 'Take this package to the Blacksmith',  pay: 6  },
+    { kind: 'deliver', to: 'seller', item: '💌', text: 'Take this letter to the House Seller', pay: 6  },
+    { kind: 'apples',  count: 5,     item: '🍎', text: 'Pick 5 apples for the Mayor',          pay: 10 },
+];
 
 // ── STATE ────────────────────────────────────────────────────
 let state = {
@@ -213,6 +245,10 @@ let state = {
     unlockedSkins:      [true, ...Array(AVATAR_COLORS.length - 1).fill(false)],
     activeSkin:         0,
     bubble:             false,     // Shield Bubble from the shop — blocks one hit
+    // Paradise Island town
+    job:                null,      // current job from the Mayor (a copy of a JOBS entry + progress)
+    houseOwned:         false,
+    ammoBonus:          0,         // extra ammo from the Blacksmith
     // Score
     score:              0,
     newBest:            false,     // beat the high score this game
@@ -276,7 +312,7 @@ function shopSelect(i) {
 function pressAction() {
     if (state.gamePhase === 'intro') state.gamePhase = 'playing';
     else if (state.levelComplete)   advanceLevel();
-    else if (!tryDig())             shoot();
+    else if (!tryDig() && !tryTalk()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
@@ -436,14 +472,6 @@ canvas.addEventListener('touchend',    e => { e.preventDefault(); for (const t o
 canvas.addEventListener('touchcancel', e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
 
 // ── ENTITY FACTORIES ─────────────────────────────────────────
-function makeCoins(count) {
-    const list = [];
-    for (let i = 0; i < count; i++) {
-        list.push({ x: 80 + Math.random() * 640, y: 80 + Math.random() * 440, picked: false });
-    }
-    return list;
-}
-
 function makeDigSpots() {
     // One of each weapon, shuffled so every visit is a surprise
     const loot = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER];
@@ -470,7 +498,7 @@ function makeHell() {
             telegraphTimer: 0,
             isAboutToShoot: false,
         },
-        coins: makeCoins(cfg.coinCount),
+        coins: [],   // coins only come from beating bad guys
     };
 }
 
@@ -500,6 +528,10 @@ function makeParadise() {
         enemies.push(makeEnemy('ghost', 450 + i * 150, 150 + i * 100, -0.8 - i * 0.2, 1.0 + i * 0.2));
         enemies.push(makeEnemy('slime', 200 + i * 250, 300 + i * 50, 0, 0));
     }
+    // The King Slime only comes on Monster Night 3
+    const king = makeEnemy('king', 400, 330, 0, 0);
+    Object.assign(king, { r: 40, minNight: 3, coinDrop: 15 });
+    enemies.push(king);
     return {
         enemies,
         chests: [
@@ -507,15 +539,18 @@ function makeParadise() {
             { x: 400, y: 480, w: 30, h: 24, opened: false },
             { x: 600, y: 480, w: 30, h: 24, opened: false },
         ],
-        waveReset: false,   // true → respawn enemies on next paradise entry
-        coins: makeCoins(cfg.coinCount),
+        coins:  [],           // coins only come from beating monsters
+        phase:  'day',        // 'day' → 'dusk' → 'night' → (chest opened) → 'day'
+        timer:  DAY_FRAMES,
+        apples: [],           // for the Mayor's apple-picking job
+        speech: null,         // { npc, text, timer } — speech bubble over a townsperson
     };
 }
 
 function makeVoidRoom() {
     return {
         enemies: [],
-        coins:   makeCoins(4),
+        coins:   [],
     };
 }
 
@@ -628,6 +663,8 @@ const SFX = {
     buy:      () => [784, 988, 1175].forEach((f, i) => tone(f, 0.12, 'triangle', 0.15, null, i * 0.07)),
     freeze:   () => { tone(2000, 0.25, 'sine', 0.12, 800); tone(2600, 0.2, 'triangle', 0.08, 1200, 0.05); },
     zap:      () => { noise(0.15, 0.25, 6000); tone(1500, 0.12, 'sawtooth', 0.1, 300); },
+    bigBoing: () => tone(80, 0.35, 'sine', 0.3, 260),
+    nightfall:() => [392, 370, 349, 330, 311].forEach((f, i) => tone(f, 0.4, 'triangle', 0.15, null, i * 0.3)),
     // "HA HA HA HA" — the Devil's scary laugh
     laugh:    () => { for (let i = 0; i < 4; i++) { tone(240 - i * 20, 0.14, 'sawtooth', 0.16, 150 - i * 15, i * 0.18);
                                                    tone(120 - i * 10, 0.14, 'square',   0.08, 80,            i * 0.18); } },
@@ -643,6 +680,9 @@ const SONGS = {
     hell: { bpm: 132, lead: 'square',   // spooky minor key with a creepy tritone
         melody: [69, 0, 72, 69, 75, 0, 74, 72, 69, 0, 72, 0, 68, 0, 0, 0,  69, 0, 72, 69, 75, 0, 77, 75, 74, 72, 71, 0, 68, 0, 0, 0],
         bass:   [45, 45, 0, 45, 44, 0, 45, 0, 45, 45, 0, 45, 41, 0, 40, 0,  45, 45, 0, 45, 44, 0, 45, 0, 41, 41, 0, 41, 40, 0, 40, 0] },
+    night: { bpm: 140, lead: 'sawtooth',   // Monster Night in Paradise — fast and spooky
+        melody: [62, 0, 65, 62, 69, 0, 68, 0, 62, 0, 65, 0, 61, 0, 0, 0,  62, 0, 65, 62, 70, 69, 68, 0, 65, 64, 61, 0, 62, 0, 0, 0],
+        bass:   [38, 38, 0, 38, 37, 0, 38, 0, 38, 38, 0, 38, 34, 0, 33, 0,  38, 38, 0, 38, 37, 0, 38, 0, 34, 34, 0, 34, 33, 0, 37, 0] },
     paradise: { bpm: 120, lead: 'square', // happy major key
         melody: [67, 71, 74, 71, 76, 74, 71, 74, 72, 76, 79, 76, 74, 71, 67, 0,  67, 71, 74, 79, 78, 76, 74, 71, 72, 74, 76, 74, 71, 0, 67, 0],
         bass:   [43, 0, 50, 0, 48, 0, 50, 0, 45, 0, 52, 0, 50, 0, 43, 0,  43, 0, 50, 0, 47, 0, 50, 0, 48, 0, 50, 0, 50, 0, 43, 0] },
@@ -655,11 +695,12 @@ function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 function musicTick() {
     if (!audioCtx || muted) return;
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
-    const song = playing ? SONGS[state.room] : null;
+    const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room;
+    const song = playing ? SONGS[songKey] : null;
     if (!song) { musicRoom = null; return; }
     const now = audioCtx.currentTime;
-    if (state.room !== musicRoom || nextNoteTime < now - 0.1) {
-        musicRoom = state.room; musicStep = 0; nextNoteTime = now + 0.05;
+    if (songKey !== musicRoom || nextNoteTime < now - 0.1) {
+        musicRoom = songKey; musicStep = 0; nextNoteTime = now + 0.05;
     }
     const stepDur = 60 / song.bpm / 2;
     while (nextNoteTime < now + 0.2) {
@@ -702,6 +743,15 @@ function spawnParticles(x, y, color, count = 8) {
 
 function spawnFloatText(x, y, text, color, life = 45) {
     floatTexts.push({ x, y, text, color, life });
+}
+
+function spawnConfettiAt(x, y) {
+    const colors = ['#FF4444', '#FFFF00', '#44FF44', '#4488FF', '#FF44CC'];
+    for (let i = 0; i < 30; i++) {
+        particles.push({ x, y, dx: (Math.random() - 0.5) * 8, dy: -Math.random() * 7, life: 70, maxLife: 70,
+            color: colors[i % colors.length], r: 0, confetti: true, rotation: Math.random() * 6,
+            rotSpeed: (Math.random() - 0.5) * 0.2, cw: 6, ch: 4 });
+    }
 }
 
 function spawnConfetti() {
@@ -794,6 +844,7 @@ function resetGame() {
         coins: 0, shopOpen: false,
         unlockedSkins: [true, ...Array(AVATAR_COLORS.length - 1).fill(false)], activeSkin: 0,
         bubble: false, score: 0, newBest: false,
+        job: null, houseOwned: false, ammoBonus: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -822,9 +873,9 @@ function advanceLevel() {
         won: false, levelComplete: false, screenShake: 0, playerFlash: 0,
         gamePhase: 'playing', playerHp: cfg.playerMaxHp, playerInvincible: 0,
         confettiSpawned: false, paradiseClearCount: 0, voidHealTimer: 0,
-        ammo: cfg.ammoMax, ammoMax: cfg.ammoMax, ammoReloading: false, ammoReloadTimer: 0,
+        ammo: cfg.ammoMax + state.ammoBonus, ammoMax: cfg.ammoMax + state.ammoBonus, ammoReloading: false, ammoReloadTimer: 0,
         caveTimer: 0, caveProtectionExpired: false,
-        shopOpen: false,
+        shopOpen: false, job: null,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -840,8 +891,10 @@ function advanceLevel() {
 
 // ── ROOM CHANGE ───────────────────────────────────────────────
 function respawnParadiseWave() {
+    const night = state.paradiseClearCount + 1;
+    paradise.enemies = paradise.enemies.filter(e => !e.temp);   // King Slime's little slimes
     for (const e of paradise.enemies) {
-        Object.assign(e, { alive: true, hp: e.maxHp, hitFlash: 0, hopTimer: 0, frozen: 0,
+        Object.assign(e, { alive: (e.minNight || 1) <= night, hp: e.maxHp, hitFlash: 0, hopTimer: 0, frozen: 0,
                            x: e.home.x, y: e.home.y, dx: e.home.dx, dy: e.home.dy });
     }
 }
@@ -864,7 +917,6 @@ function changeRoom(dest) {
     }
     if (dest === ROOM.PARADISE) {
         player.x = 700; player.y = 300;
-        if (paradise.waveReset) { respawnParadiseWave(); paradise.waveReset = false; }
     }
 }
 
@@ -963,7 +1015,7 @@ function hitEnemy(e, power) {
 
 // The bad guys in the room you're in
 function roomEnemies() {
-    if (state.room === ROOM.PARADISE) return state.lightCrystals < 3 ? paradise.enemies : [];
+    if (state.room === ROOM.PARADISE) return paradise.phase === 'night' && state.lightCrystals < 3 ? paradise.enemies : [];
     if (state.room === ROOM.HELL)     return hell.enemies;
     return [];
 }
@@ -981,7 +1033,7 @@ function roomCoins() {
 
 // Reward for beating a bad guy: a coin, and sometimes a heart
 function dropLoot(e) {
-    const count = e.coinDrop || 1;
+    const count = e.coinDrop || COINS_PER_KILL;
     for (let i = 0; i < count; i++) {
         roomCoins().push({
             x: Math.max(30, Math.min(770, e.x + (Math.random() - 0.5) * 16 * count)),
@@ -990,6 +1042,17 @@ function dropLoot(e) {
         });
     }
     if (Math.random() < HEART_DROP_CHANCE) heartPickups.push({ x: e.x + 12, y: e.y, life: 600 });
+}
+
+// Every hit knocks little slimes off the King Slime
+function kingSplit(k, count) {
+    for (let i = 0; i < count; i++) {
+        if (paradise.enemies.filter(e => e.temp && e.alive).length >= KING_MAX_MINIS) return;
+        const a = Math.random() * Math.PI * 2;
+        const m = makeEnemy('slime', k.x + Math.cos(a) * k.r, k.y + Math.sin(a) * k.r, Math.cos(a) * 4, Math.sin(a) * 4);
+        Object.assign(m, { r: 10, hp: 1, maxHp: 1, temp: true, hopTimer: 40, coinDrop: 1 });
+        paradise.enemies.push(m);
+    }
 }
 
 // Hit a bad guy with a weapon: damage, freeze (ICE), chain (LIGHTNING), loot when defeated
@@ -1009,6 +1072,8 @@ function damageEnemy(e, power, chained = false) {
         if (!e.frozen) sfx('freeze');
         e.frozen = FREEZE_FRAMES;
     }
+
+    if (e.type === 'king') kingSplit(e, e.alive ? 1 : 3);
 
     let from = e;
     for (const o of jumps) {
@@ -1057,13 +1122,14 @@ function moveEnemy(e) {
         // Fast and flappy — zig-zags up and down
         e.x += e.dx;
         e.y += e.dy + Math.sin(Date.now() / 120 + e.home.x) * 1.8;
-    } else if (e.type === 'slime') {
-        // Sits still, then hops toward the player
+    } else if (e.type === 'slime' || e.type === 'king') {
+        // Sits still, then hops toward the player (the King is slower and heavier)
         if (--e.hopTimer <= 0) {
-            e.hopTimer = 70;
-            sfx('boing');
+            const king = e.type === 'king';
+            e.hopTimer = king ? 100 : 70;
+            sfx(king ? 'bigBoing' : 'boing');
             const a = Math.atan2(player.y - e.y, player.x - e.x);
-            e.dx = Math.cos(a) * 4; e.dy = Math.sin(a) * 4;
+            e.dx = Math.cos(a) * (king ? 3 : 4); e.dy = Math.sin(a) * (king ? 3 : 4);
         }
         e.x += e.dx; e.y += e.dy;
         e.dx *= 0.92; e.dy *= 0.92;
@@ -1108,8 +1174,8 @@ function updateEnemies() {
         // After all 3 crystals are collected paradise is peaceful — no more enemies
         if (state.lightCrystals >= 3) return;
 
-        // Show only the current wave's chest once all enemies are cleared
-        if (allMonstersDefeated() && state.paradiseClearCount < 3) {
+        // Show only the current night's chest once all the monsters are beaten
+        if (paradise.phase === 'night' && allMonstersDefeated() && state.paradiseClearCount < 3) {
             paradise.chests[state.paradiseClearCount].visible = true;
         }
     }
@@ -1384,6 +1450,143 @@ function updateDigging() {
     if (hell.foundMsg && --hell.foundMsg.timer <= 0) hell.foundMsg = null;
 }
 
+// ── UPDATE: PARADISE TOWN ─────────────────────────────────────
+function townNpcs() {
+    return NPCS.filter(n => n.id === 'home' ? state.houseOwned : n.id === 'seller' ? !state.houseOwned : true);
+}
+
+// The townsperson you're standing next to (only in the daytime — at night they hide indoors)
+function nearbyNpc() {
+    if (state.room !== ROOM.PARADISE || paradise.phase !== 'day') return null;
+    return townNpcs().find(n => Math.hypot(player.x - n.x, player.y - n.y) < TALK_RANGE) || null;
+}
+
+// What pressing the button will do, shown above the townsperson
+function talkLabel(n) {
+    const job = state.job, maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+    if (job && job.kind === 'deliver' && job.to === n.id) return `Deliver ${job.item}`;
+    if (n.id === 'doctor') return state.playerHp < maxHp ? `Heal (🪙${HEAL_COST})` : 'Talk';
+    if (n.id === 'smith')  return state.ammoBonus < AMMO_UPGRADE_COST.length ? `+1 Ammo (🪙${AMMO_UPGRADE_COST[state.ammoBonus]})` : 'Talk';
+    if (n.id === 'mayor')  return !job ? 'Get a job' : (job.kind === 'apples' && job.got >= job.count) ? 'Get paid!' : 'Talk';
+    if (n.id === 'seller') return `Buy house (🪙${HOUSE_COST})`;
+    return 'Rest (free heal)';
+}
+
+function say(n, text) {
+    paradise.speech = { npc: n, text, timer: 170 };
+}
+
+function payJob(n) {
+    const job = state.job;
+    state.coins += job.pay;
+    addScore(job.pay * 2);
+    spawnFloatText(player.x, player.y - 30, `+🪙${job.pay}`, '#FFD700', 70);
+    say(n, `Thank you! Here's 🪙${job.pay}!`);
+    state.job = null;
+    sfx('buy');
+}
+
+function talkTo(n) {
+    const job = state.job, maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+    if (job && job.kind === 'deliver' && job.to === n.id) { payJob(n); return; }
+
+    if (n.id === 'doctor') {
+        if (state.playerHp >= maxHp)       say(n, 'You look healthy to me!');
+        else if (state.coins < HEAL_COST)  say(n, `Healing costs 🪙${HEAL_COST}. Come back soon!`);
+        else {
+            state.coins -= HEAL_COST;
+            state.playerHp = maxHp;
+            spawnParticles(player.x, player.y, '#FF6688', 12);
+            say(n, 'All better! ❤');
+            sfx('buy');
+        }
+    } else if (n.id === 'smith') {
+        const cost = AMMO_UPGRADE_COST[state.ammoBonus];
+        if (cost === undefined)       say(n, 'Your ammo bag is the biggest there is!');
+        else if (state.coins < cost)  say(n, `A bigger ammo bag costs 🪙${cost}.`);
+        else {
+            state.coins -= cost;
+            state.ammoBonus++;
+            state.ammoMax++;
+            state.ammo = state.ammoMax;
+            spawnParticles(player.x, player.y, '#FFAA33', 12);
+            say(n, `CLANG! +1 AMMO — now you carry ${state.ammoMax}!`);
+            sfx('found');
+        }
+    } else if (n.id === 'mayor') {
+        if (!job) {
+            const choices = JOBS.filter(j => !(j.to === 'seller' && state.houseOwned));
+            state.job = { ...choices[Math.floor(Math.random() * choices.length)], got: 0 };
+            if (state.job.kind === 'apples') {
+                paradise.apples = [];
+                for (let i = 0; i < state.job.count; i++) {
+                    paradise.apples.push({ x: 80 + Math.random() * 640, y: 300 + Math.random() * 150 });
+                }
+            }
+            say(n, `Job: ${state.job.text}! I'll pay 🪙${state.job.pay}.`);
+            sfx('coin');
+        } else if (job.kind === 'apples' && job.got >= job.count) {
+            payJob(n);
+        } else {
+            say(n, job.kind === 'apples' ? `Apples: ${job.got}/${job.count}. Keep looking!` : `Don't forget: ${job.text}!`);
+        }
+    } else if (n.id === 'seller') {
+        if (state.coins < HOUSE_COST) say(n, `This lovely house costs 🪙${HOUSE_COST}!`);
+        else {
+            state.coins -= HOUSE_COST;
+            state.houseOwned = true;
+            addScore(100);
+            spawnConfettiAt(560, 360);
+            say(NPCS.find(m => m.id === 'home'), 'It\'s YOUR house now! 🏠 Rest here any time.');
+            sfx('win');
+        }
+    } else if (n.id === 'home') {
+        state.playerHp = maxHp;
+        spawnParticles(player.x, player.y, '#FF6688', 12);
+        say(n, 'Zzz… all rested! ❤');
+        sfx('buy');
+    }
+}
+
+// Returns true if the player talked to someone (so the button doesn't also shoot)
+function tryTalk() {
+    if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return false;
+    const n = nearbyNpc();
+    if (!n) return false;
+    talkTo(n);
+    return true;
+}
+
+function updateTown() {
+    const P = paradise;
+    if (P.speech && --P.speech.timer <= 0) P.speech = null;
+    if (state.room !== ROOM.PARADISE) return;
+
+    // Apple picking
+    if (P.phase === 'day' && state.job && state.job.kind === 'apples') {
+        for (let i = P.apples.length - 1; i >= 0; i--) {
+            const a = P.apples[i];
+            if (Math.hypot(player.x - a.x, player.y - a.y) > 22) continue;
+            P.apples.splice(i, 1);
+            state.job.got++;
+            spawnFloatText(a.x, a.y - 16, `🍎 ${state.job.got}/${state.job.count}`, '#FF6666');
+            sfx('coin');
+        }
+    }
+
+    // Day → dusk → Monster Night (after all 3 crystals, Paradise stays peaceful)
+    if (state.lightCrystals >= 3) return;
+    if (P.phase === 'day' && --P.timer <= 0) {
+        P.phase = 'dusk'; P.timer = DUSK_FRAMES;
+        P.speech = null;
+        sfx('nightfall');
+    } else if (P.phase === 'dusk' && --P.timer <= 0) {
+        P.phase = 'night';
+        respawnParadiseWave();
+        sfx('laugh');
+    }
+}
+
 // ── UPDATE: PICKUPS ───────────────────────────────────────────
 function checkPickups() {
     if (state.won || state.levelComplete) return;
@@ -1424,8 +1627,9 @@ function checkPickups() {
                 state.playerFlash = 35;
                 triggerShake(14);
                 spawnParticles(c.x, c.y, '#FFD700', 14);
-                // Queue enemies to respawn next time player enters paradise
-                if (state.paradiseClearCount < 3) paradise.waveReset = true;
+                // Morning comes!
+                paradise.phase = 'day';
+                paradise.timer = DAY_FRAMES;
             }
         }
         // Coins in Paradise
@@ -1557,11 +1761,11 @@ function drawIntro() {
     // Story text
     const lines = [
         'The Devil stole the Golden Light',
-        'and hid it in Paradise City!',
+        'and hid it on Paradise Island!',
         '',
         'Dig in the caves of Hell for Magic Power.',
-        'Use the Power to clear the City',
-        'and find 3 Light Crystals.',
+        'Use it to survive Monster Night',
+        'on Paradise Island and win 3 Light Crystals.',
         '',
         'Collect them all to defeat the Devil',
         'and save the world!',
@@ -1997,7 +2201,7 @@ function drawEnemy(e, t) {
                 ctx.stroke();
             }
         }
-    } else if (e.type === 'slime') {
+    } else if (e.type === 'slime' || e.type === 'king') {
         // Squishes flat while resting, stretches tall mid-hop
         const speed   = Math.hypot(e.dx, e.dy);
         const stretch = Math.min(1, speed / 4);
@@ -2008,9 +2212,22 @@ function drawEnemy(e, t) {
         ctx.beginPath(); ctx.ellipse(e.x - w * 0.4, e.y + e.r - h * 1.5, w * 0.2, h * 0.15, -0.5, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#113311';
         ctx.beginPath();
-        ctx.arc(e.x - 5, e.y + e.r - h * 1.1, 3, 0, Math.PI * 2);
-        ctx.arc(e.x + 5, e.y + e.r - h * 1.1, 3, 0, Math.PI * 2);
+        const eyeGap = e.r * 0.32, eyeR = Math.max(2, e.r * 0.18);
+        ctx.arc(e.x - eyeGap, e.y + e.r - h * 1.1, eyeR, 0, Math.PI * 2);
+        ctx.arc(e.x + eyeGap, e.y + e.r - h * 1.1, eyeR, 0, Math.PI * 2);
         ctx.fill();
+        if (e.type === 'king') {
+            // Golden crown
+            const top = e.y + e.r - h * 2, cw = e.r * 0.9;
+            ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.moveTo(e.x - cw / 2, top + 4);
+            for (let k = 0; k <= 4; k++) ctx.lineTo(e.x - cw / 2 + (cw / 4) * k, k % 2 ? top - 4 : top - 16);
+            ctx.lineTo(e.x + cw / 2, top + 4);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#FF3355';
+            ctx.beginPath(); ctx.arc(e.x, top - 2, 3, 0, Math.PI * 2); ctx.fill();
+        }
     }
     ctx.restore();
     if (e.frozen > 0) drawIceBlock(e.x, e.y, e.r, e.frozen);
@@ -2051,19 +2268,131 @@ function drawEnemyHp(e) {
 }
 
 // ── DRAW: PARADISE ────────────────────────────────────────────
+// Sky tint for Paradise: darkens at dusk, deep blue at Monster Night (drawn before everything else)
+function drawParadiseSky() {
+    const P = paradise;
+    const dark = P.phase === 'night' ? 1 : P.phase === 'dusk' ? 1 - P.timer / DUSK_FRAMES : 0;
+    if (dark === 0) {
+        ctx.fillStyle = 'rgba(120,200,160,0.18)';   // bright daytime
+        ctx.fillRect(0, 0, 800, 600);
+        return;
+    }
+    ctx.fillStyle = `rgba(5,5,40,${0.6 * dark})`;
+    ctx.fillRect(0, 0, 800, 600);
+    ctx.save();
+    ctx.globalAlpha = dark;
+    ctx.fillStyle = '#FFFBE0'; ctx.shadowColor = '#FFFBE0'; ctx.shadowBlur = 30;   // moon
+    ctx.beginPath(); ctx.arc(740, 110, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(5,5,40,1)';
+    ctx.beginPath(); ctx.arc(750, 104, 18, 0, Math.PI * 2); ctx.fill();
+    for (let i = 0; i < 25; i++) {   // twinkling stars
+        const sx = (i * 137) % 800, sy = 75 + (i * 71) % 90;
+        if (Math.sin(Date.now() / 400 + i) > -0.3) drawStar(sx, sy, 2, '#FFFFFF');
+    }
+    ctx.restore();
+}
+
+function drawBuilding(b, night) {
+    const w = 90, h = 55, x = b.x - w / 2, y = b.y - h / 2;
+    ctx.save();
+    ctx.fillStyle = b.wall;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = b.roof;
+    ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(b.x, y - 32); ctx.lineTo(x + w + 8, y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#6B3E1E';                                  // door
+    ctx.fillRect(b.x - 9, y + h - 26, 18, 26);
+    ctx.fillStyle = night ? '#FFE070' : '#AADDFF';              // windows glow at night
+    if (night) { ctx.shadowColor = '#FFE070'; ctx.shadowBlur = 12; }
+    ctx.fillRect(x + 10, y + 12, 16, 14);
+    ctx.fillRect(x + w - 26, y + 12, 16, 14);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#222'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+    const label = b.id === 'house' ? (state.houseOwned ? 'YOUR HOUSE ❤' : 'FOR SALE') : b.name;
+    ctx.fillText(label, b.x, y + 8);
+    if (b.id === 'house' && !state.houseOwned) {                // price sign on a post
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x - 22, y + 20, 3, 35);
+        ctx.fillStyle = '#FFF'; ctx.fillRect(x - 40, y + 10, 38, 18);
+        ctx.fillStyle = '#C00'; ctx.font = 'bold 9px Arial';
+        ctx.fillText(`🪙${HOUSE_COST}`, x - 21, y + 23);
+    }
+    ctx.restore();
+}
+
+function drawNpc(n) {
+    if (!n.coat) return;   // "home" is just the front door
+    const bob = Math.sin(Date.now() / 350 + n.x) * 1.5, x = n.x, y = n.y + bob;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';                                         // shadow
+    ctx.beginPath(); ctx.ellipse(x, n.y + 14, 11, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = n.coat;                                                     // body
+    ctx.fillRect(x - 9, y - 6, 18, 20);
+    ctx.fillStyle = '#F2C49B';                                                  // head
+    ctx.beginPath(); ctx.arc(x, y - 14, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x - 4, y - 16, 2, 2); ctx.fillRect(x + 2, y - 16, 2, 2);        // eyes
+    ctx.fillRect(x - 2, y - 11, 4, 1);                                           // smile
+    if (n.hat === 'doctor') {
+        ctx.fillStyle = '#FFFFFF'; ctx.fillRect(x - 7, y - 25, 14, 5);
+        ctx.fillStyle = '#E03030'; ctx.fillRect(x - 1, y - 25, 2, 5); ctx.fillRect(x - 3, y - 23, 6, 2);
+        ctx.fillStyle = '#E03030'; ctx.fillRect(x - 1, y - 2, 2, 8); ctx.fillRect(x - 4, y + 1, 8, 2);   // red cross
+    } else if (n.hat === 'smith') {
+        ctx.fillStyle = '#333'; ctx.fillRect(x - 8, y - 23, 16, 4);              // bandana
+        ctx.fillStyle = '#888'; ctx.fillRect(x + 10, y - 4, 8, 5);               // hammer head
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x + 13, y + 1, 2, 9);            // hammer handle
+    } else if (n.hat === 'mayor') {
+        ctx.fillStyle = '#111'; ctx.fillRect(x - 6, y - 32, 12, 11); ctx.fillRect(x - 9, y - 22, 18, 2);   // top hat
+        ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(x, y + 4, 2.5, 0, Math.PI * 2); ctx.fill();    // medal
+    } else if (n.hat === 'seller') {
+        ctx.fillStyle = '#AA6633'; ctx.fillRect(x - 8, y - 23, 16, 4); ctx.fillRect(x - 2, y - 21, 12, 2); // cap
+        ctx.fillStyle = '#C00'; ctx.fillRect(x - 1, y - 5, 2, 9);                                          // tie
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(n.name, x, n.y + 26);
+    ctx.restore();
+}
+
+function drawSpeech(n, text) {
+    ctx.save();
+    ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+    const w = ctx.measureText(text).width + 18;
+    const bx = Math.max(8, Math.min(792 - w, n.x - w / 2)), by = n.y - 62;
+    ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5;
+    ctx.fillRect(bx, by, w, 24); ctx.strokeRect(bx, by, w, 24);
+    ctx.beginPath(); ctx.moveTo(n.x - 6, by + 24); ctx.lineTo(n.x, by + 32); ctx.lineTo(n.x + 6, by + 24); ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.fillText(text, bx + w / 2, by + 16);
+    ctx.restore();
+}
+
 function drawParadise() {
     const t = Date.now() / 400;
+    const P = paradise, night = P.phase !== 'day';
 
-    // Only draw enemies before all 3 crystals are collected
-    if (state.lightCrystals < 3) {
-        for (const e of paradise.enemies) {
-            if (!e.alive) continue;
-            drawEnemy(e, t);
-            drawEnemyHp(e);
+    for (const b of BUILDINGS) drawBuilding(b, night);
+
+    if (!night) {
+        // Townspeople, apples, speech and "talk" prompts (everyone hides indoors at night)
+        for (const n of townNpcs()) drawNpc(n);
+        for (const a of P.apples) {
+            ctx.fillStyle = '#E02020';
+            ctx.beginPath(); ctx.arc(a.x, a.y, 7, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#33AA33'; ctx.fillRect(a.x - 1, a.y - 11, 4, 5);
         }
+        const n = nearbyNpc();
+        if (n && !(P.speech && P.speech.npc === n)) {
+            const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap TALK' : 'SPACE';
+            drawSpeech(n, `${verb}: ${talkLabel(n)}`);
+        }
+        if (P.speech) drawSpeech(P.speech.npc, P.speech.text);
     }
 
-    for (const c of paradise.chests) {
+    for (const e of roomEnemies()) {
+        if (!e.alive) continue;
+        drawEnemy(e, t);
+        drawEnemyHp(e);
+    }
+
+    for (const c of P.chests) {
         if (!c.visible) continue;
         ctx.save();
         if (!c.opened) { ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 16; }
@@ -2080,14 +2409,26 @@ function drawParadise() {
         ctx.restore();
     }
 
-    if (!allMonstersDefeated() && state.lightCrystals < 3) {
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.font = '13px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(`Wave ${state.paradiseClearCount + 1}/3 — Defeat all enemies to reveal a chest!`, 400, 544);
+    // Status line: time of day / what to do
+    const nightNum = state.paradiseClearCount + 1;
+    let status, color = 'rgba(255,255,255,0.75)';
+    if (state.lightCrystals >= 3)       status = '☀ Paradise Island is safe! Now go and beat the Devil!';
+    else if (P.phase === 'day')         status = `☀ Daytime — Monster Night ${nightNum}/3 comes in ${Math.ceil(P.timer / 60)}s`;
+    else if (P.phase === 'dusk')      { status = '🌙 MONSTER NIGHT IS COMING! Get ready!'; color = Math.floor(Date.now() / 200) % 2 ? '#FF6666' : '#FFFFFF'; }
+    else if (allMonstersDefeated())   { status = '⭐ You did it! Open the chest to win a Light Crystal!'; color = '#FFD700'; }
+    else { status = `🌙 MONSTER NIGHT ${nightNum}/3${nightNum === 3 ? ' — THE KING SLIME IS HERE!' : ''} — beat every monster!`; color = '#AABBFF'; }
+    ctx.fillStyle = color; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(status, 400, 544);
+
+    // Current job
+    if (state.job) {
+        const j = state.job;
+        ctx.fillStyle = 'rgba(255,230,150,0.85)'; ctx.font = '12px Arial';
+        ctx.fillText(`📋 Job: ${j.text}${j.kind === 'apples' ? ` (${j.got}/${j.count})` : ''} — pays 🪙${j.pay}`, 400, 564);
     }
 
     // Coins
-    drawCoins(paradise.coins);
+    drawCoins(P.coins);
 }
 
 // ── DRAW: PLAYER ──────────────────────────────────────────────
@@ -2130,6 +2471,13 @@ function drawPlayer() {
     ctx.shadowColor = color; ctx.shadowBlur = 14;
     drawAvatar(player.x, player.y, player.w, color, AVATAR_STYLES[state.activeSkin]);
     ctx.restore();
+
+    // Carrying something for a delivery job
+    if (state.job && state.job.kind === 'deliver') {
+        ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(state.job.item, player.x, player.y - 30 + Math.sin(Date.now() / 200) * 2);
+        ctx.textBaseline = 'alphabetic';
+    }
 
     // Shield Bubble
     if (state.bubble) {
@@ -2309,7 +2657,7 @@ function drawHUD() {
     ctx.fillText(hearts, 400, 20);
 
     // Room name + Level
-    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE CITY' };
+    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND' };
     const cfg    = LEVEL_CONFIGS[state.level - 1];
     const lvlLabel = cfg.isBoss ? `LEVEL ${state.level} — BOSS!` : `LEVEL ${state.level}`;
     ctx.fillStyle = cfg.isBoss ? 'rgba(255,100,50,0.85)' : 'rgba(255,255,255,0.5)';
@@ -2652,7 +3000,7 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(nearbyDigSpot() && canDig() ? 'DIG' : 'SHOOT', VSHOOT.x, VSHOOT.y);
+    ctx.fillText(nearbyDigSpot() && canDig() ? 'DIG' : nearbyNpc() ? 'TALK' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
 }
@@ -2669,6 +3017,7 @@ function update() {
         updateEnemyProjectiles();
         checkPickups();
         updateDigging();
+        updateTown();
         updateVoidHealing();
         updateAmmo();
     }
@@ -2710,6 +3059,7 @@ function draw() {
     for (let x = 0; x <= 800; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 600); ctx.stroke(); }
     for (let y = 0; y <= 600; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(800, y); ctx.stroke(); }
 
+    if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawParadiseSky();
     if (!state.won && !state.levelComplete) drawPortals();
     if (state.room === ROOM.VOID)     drawVoid();
     if (state.room === ROOM.HELL)     drawHell();
