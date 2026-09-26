@@ -104,7 +104,7 @@ const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE];   // where mystery por
 // A super-rare golden portal sometimes appears → the Secret Golden Room.
 // Dig all the way to the bottom of a dig spot → a tunnel to the Underground Caves.
 const SECRET_PORTAL_CHANCE = 0.15;
-const GOLDEN_PORTAL_SPOTS  = { void: { x: 400, y: 205 }, hell: { x: 250, y: 450 }, paradise: { x: 290, y: 330 } };
+const GOLDEN_PORTAL_SPOTS  = { void: { x: 400, y: 205 }, hell: { x: 250, y: 450 }, paradise: { x: 250, y: 275 } };
 const GEM_HITS             = 3;    // presses to mine a gem in the Underground Caves
 const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', LIGHTNING: 'Lightning', WATER: 'Water', RAINBOW: 'Rainbow' };
 
@@ -209,33 +209,46 @@ const DIG_RANGE           = 24;                // how close the player must stan
 // Layer 1: Ice / Fire / Lightning / Water · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (strong vs everything)
 
 // ── PARADISE ISLAND TOWN ─────────────────────────────────────
-// Daytime is peaceful: talk to the townspeople, do jobs, buy a house.
+// Daytime is peaceful: talk to the townspeople, do jobs, buy houses.
 // Then MONSTER NIGHT comes — beat the Paradise-only monsters to win a Light Crystal.
 const DAY_FRAMES        = 1800;           // 30 s of daytime (only counts while you're in town)
 const DUSK_FRAMES       = 180;            // 3 s "Monster Night is coming!" warning
 const HEAL_COST         = 3;              // Doctor
-const HOUSE_COST        = 30;             // House Seller
 const AMMO_UPGRADE_COST = [10, 15, 20];   // Blacksmith: +1 ammo each
-const TALK_RANGE        = 40;
+const TALK_RANGE        = 36;
 const BUILDINGS = [
-    { id: 'clinic', x: 150, y: 190, name: 'CLINIC',     roof: '#D04848', wall: '#F4EEE0' },
-    { id: 'forge',  x: 400, y: 190, name: 'BLACKSMITH', roof: '#4A4A4A', wall: '#A87850' },
-    { id: 'hall',   x: 650, y: 190, name: 'TOWN HALL',  roof: '#3366AA', wall: '#E8E0C8' },
-    { id: 'house',  x: 560, y: 370, name: 'HOUSE',      roof: '#AA6633', wall: '#F0D8A8' },
+    { id: 'clinic',   x: 190, y: 172, w: 84,  name: 'CLINIC',     roof: '#D04848', wall: '#F4EEE0' },
+    { id: 'bakery',   x: 320, y: 172, w: 84,  name: 'BAKERY',     roof: '#E09A3A', wall: '#FFF1DC' },
+    { id: 'forge',    x: 450, y: 172, w: 84,  name: 'BLACKSMITH', roof: '#4A4A4A', wall: '#A87850' },
+    { id: 'hall',     x: 580, y: 172, w: 84,  name: 'TOWN HALL',  roof: '#3366AA', wall: '#E8E0C8' },
+    { id: 'mansion',  x: 712, y: 212, w: 108, name: 'MANSION',    roof: '#2A6A4A', wall: '#FFFFFF', cost: 100 },
+    { id: 'cottage',  x: 170, y: 350, w: 80,  name: 'COTTAGE',    roof: '#AA6633', wall: '#F0D8A8', cost: 30  },
+    { id: 'bighouse', x: 610, y: 350, w: 100, name: 'BIG HOUSE',  roof: '#7A3A8A', wall: '#F3E6F5', cost: 60  },
 ];
-const NPCS = [
-    { id: 'doctor', name: 'Doctor',       x: 150, y: 245, coat: '#FFFFFF', hat: 'doctor' },
-    { id: 'smith',  name: 'Blacksmith',   x: 400, y: 245, coat: '#6B4A2B', hat: 'smith'  },
-    { id: 'mayor',  name: 'Mayor',        x: 650, y: 245, coat: '#2A4A88', hat: 'mayor'  },
-    { id: 'seller', name: 'House Seller', x: 625, y: 410, coat: '#3A9A5A', hat: 'seller' },
-    { id: 'home',   name: 'Your House',   x: 560, y: 405 },   // the front door, once you own it
+// People with jobs (the ones with a job to give you are marked giver: true)
+const WORKERS = [
+    { id: 'doctor', name: 'Doctor',     x: 190, y: 226, coat: '#FFFFFF', hat: 'doctor' },
+    { id: 'baker',  name: 'Baker',      x: 320, y: 226, coat: '#FFFFFF', hat: 'baker',  giver: true },
+    { id: 'smith',  name: 'Blacksmith', x: 450, y: 226, coat: '#6B4A2B', hat: 'smith'  },
+    { id: 'mayor',  name: 'Mayor',      x: 580, y: 226, coat: '#2A4A88', hat: 'mayor',  giver: true },
+    { id: 'farmer', name: 'Farmer',     x: 278, y: 455, coat: '#4A7A2A', hat: 'farmer', giver: true },
+    { id: 'fisher', name: 'Fisher',     x: 592, y: 548, coat: '#2A6A8A', hat: 'fisher', giver: true },
 ];
-const JOBS = [
-    { kind: 'deliver', to: 'doctor', item: '🍞', text: 'Take this bread to the Doctor',        pay: 6  },
-    { kind: 'deliver', to: 'smith',  item: '📦', text: 'Take this package to the Blacksmith',  pay: 6  },
-    { kind: 'deliver', to: 'seller', item: '💌', text: 'Take this letter to the House Seller', pay: 6  },
-    { kind: 'apples',  count: 5,     item: '🍎', text: 'Pick 5 apples for the Mayor',          pay: 10 },
+// Villagers stroll around the town square
+const VILLAGERS = [
+    { id: 'rose', name: 'Grandma Rose', coat: '#C080C0', hair: '#DDDDDD', x: 300, y: 300 },
+    { id: 'sam',  name: 'Little Sam',   coat: '#FF8844', hair: '#442200', x: 480, y: 290, small: true },
+    { id: 'lily', name: 'Lily',         coat: '#44AADD', hair: '#AA6622', x: 360, y: 410 },
+    { id: 'tom',  name: 'Old Tom',      coat: '#777755', hair: '#EEEEEE', x: 500, y: 410 },
 ];
+const VILLAGER_CHAT = [
+    'What a lovely day!', 'Watch out for Monster Night!', 'Have you been to the Underground Caves?',
+    'I heard there\'s a SECRET golden room…', 'The Doctor can heal you for 3 coins.', 'Pets are the best!',
+    'The King Slime is SO big!', 'Ask the Baker, Farmer, Fisher or Mayor for a job!', 'Ice beats Fire Monsters!',
+];
+const FARM       = { x: 40, y: 440, w: 200, h: 92 };
+const FARM_CROPS = [70, 118, 166, 214].flatMap(x => [{ x, y: 468 }, { x, y: 508 }]);
+const FISH_SPOT  = { x: 640, y: 574 };   // the end of the pier
 
 // ── STATE ────────────────────────────────────────────────────
 let state = {
@@ -271,8 +284,8 @@ let state = {
     activeSkin:         0,
     bubble:             false,     // Shield Bubble from the shop — blocks one hit
     // Paradise Island town
-    job:                null,      // current job from the Mayor (a copy of a JOBS entry + progress)
-    houseOwned:         false,
+    job:                null,      // current job from a job giver (see makeJob)
+    housesOwned:        {},        // e.g. { cottage: true }
     ammoBonus:          0,         // extra ammo from the Blacksmith
     // Pets
     ownedPets:          PETS.map(() => false),
@@ -365,7 +378,7 @@ function shopSelect(i) {
 function pressAction() {
     if (state.gamePhase === 'intro') state.gamePhase = 'playing';
     else if (state.levelComplete)   advanceLevel();
-    else if (!tryDig() && !tryTalk()) shoot();
+    else if (!tryDig() && !tryTalk() && !tryTownAction()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
@@ -611,10 +624,13 @@ function makeParadise() {
     return {
         enemies,
         chests: [
-            { x: 200, y: 480, w: 30, h: 24, opened: false },
-            { x: 400, y: 480, w: 30, h: 24, opened: false },
-            { x: 600, y: 480, w: 30, h: 24, opened: false },
+            { x: 330, y: 478, w: 30, h: 24, opened: false },
+            { x: 400, y: 478, w: 30, h: 24, opened: false },
+            { x: 470, y: 478, w: 30, h: 24, opened: false },
         ],
+        villagers: VILLAGERS.map(v => ({ ...v, tx: v.x, ty: v.y, walk: 0, face: 1 })),
+        crops:     FARM_CROPS.map(c => ({ ...c, thirsty: false })),
+        fishing:   { stage: 'idle', timer: 0 },   // 'idle' → 'waiting' → 'bite'
         coins:  [],           // coins only come from beating monsters
         phase:  'day',        // 'day' → 'dusk' → 'night' → (chest opened) → 'day'
         timer:  DAY_FRAMES,
@@ -693,8 +709,8 @@ const PORTALS = {
     ],
     paradise: [
         { x: 60,  y: 300, shape: 'hexagon'  },
-        { x: 260, y: 95,  shape: 'diamond'  },
-        { x: 560, y: 95,  shape: 'triangle' },
+        { x: 60,  y: 100, shape: 'diamond'  },
+        { x: 760, y: 95,  shape: 'triangle' },
     ],
 };
 
@@ -786,6 +802,8 @@ const SFX = {
     meow:     () => tone(700, 0.25, 'sine', 0.14, 1100),
     hoot:     () => { tone(420, 0.15, 'sine', 0.15, 380); tone(380, 0.25, 'sine', 0.15, 340, 0.2); },
     nightfall:() => [392, 370, 349, 330, 311].forEach((f, i) => tone(f, 0.4, 'triangle', 0.15, null, i * 0.3)),
+    splash:   () => { noise(0.25, 0.2, 1800); tone(900, 0.15, 'sine', 0.08, 400); },
+    bite:     () => { tone(1200, 0.08, 'square', 0.15); tone(1500, 0.1, 'square', 0.15, null, 0.1); },
     // "HA HA HA HA" — the Devil's scary laugh
     laugh:    () => { for (let i = 0; i < 4; i++) { tone(240 - i * 20, 0.14, 'sawtooth', 0.16, 150 - i * 15, i * 0.18);
                                                    tone(120 - i * 10, 0.14, 'square',   0.08, 80,            i * 0.18); } },
@@ -971,7 +989,7 @@ function resetGame() {
         coins: 0, shopOpen: false,
         unlockedSkins: [true, ...Array(AVATAR_COLORS.length - 1).fill(false)], activeSkin: 0,
         bubble: false, score: 0, newBest: false,
-        job: null, houseOwned: false, ammoBonus: 0,
+        job: null, housesOwned: {}, ammoBonus: 0,
         ownedPets: PETS.map(() => false), activePet: -1,
     });
     player.x = 400; player.y = 300;
@@ -1045,7 +1063,8 @@ function changeRoom(dest) {
         hell.summonTimer = IMP_SUMMON_FRAMES;
     }
     if (dest === ROOM.PARADISE) {
-        player.x = 700; player.y = 300;
+        player.x = 400; player.y = 290;   // the town square
+        paradise.fishing.stage = 'idle';
     }
     if (dest === ROOM.SECRET)      { player.x = 400; player.y = 420; secretRoom = makeSecretRoom(); }
     if (dest === ROOM.UNDERGROUND) { player.x = 100; player.y = 300; underground = makeUnderground(); }
@@ -1524,6 +1543,7 @@ function updateProjectiles() {
         const p = projectiles[i];
         p.x += p.dx; p.y += p.dy;
         p.life--;
+        spawnShotTrail(p);
         if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y < 0 || p.y > 600) {
             projectiles.splice(i, 1); continue;
         }
@@ -1749,25 +1769,84 @@ function updatePet() {
 }
 
 // ── UPDATE: PARADISE TOWN ─────────────────────────────────────
+function houseDoors() {
+    return BUILDINGS.filter(b => b.cost).map(b => ({ id: b.id, door: true, name: b.name, x: b.x, y: b.y + 40, cost: b.cost }));
+}
+
 function townNpcs() {
-    return NPCS.filter(n => n.id === 'home' ? state.houseOwned : n.id === 'seller' ? !state.houseOwned : true);
+    return [...WORKERS, ...paradise.villagers, ...houseDoors()];
+}
+
+function personName(id) {
+    const p = [...WORKERS, ...VILLAGERS].find(n => n.id === id);
+    return p ? p.name : id;
 }
 
 // The townsperson you're standing next to (only in the daytime — at night they hide indoors)
 function nearbyNpc() {
     if (state.room !== ROOM.PARADISE || paradise.phase !== 'day') return null;
-    return townNpcs().find(n => Math.hypot(player.x - n.x, player.y - n.y) < TALK_RANGE) || null;
+    let best = null, bestD = TALK_RANGE;
+    for (const n of townNpcs()) {
+        const d = Math.hypot(player.x - n.x, player.y - n.y);
+        if (d < bestD) { best = n; bestD = d; }
+    }
+    return best;
+}
+
+function jobDone(job = state.job) {
+    return job && job.count !== undefined && job.got >= job.count;
+}
+
+// What the job line at the bottom of the screen says
+function jobText() {
+    const j = state.job;
+    if (!j) return '';
+    if (j.kind === 'deliver') return `Deliver ${j.item} to ${personName(j.stops[0])}${j.stops.length > 1 ? ` (+${j.stops.length - 1} more)` : ''}`;
+    if (jobDone(j))           return `Done! Go back to the ${personName(j.giver)} to get paid`;
+    return `${j.text} (${j.got}/${j.count})`;
+}
+
+// Each job giver has their own kind of job — the harder ones pay more
+function makeJob(giver) {
+    const pick = list => list[Math.floor(Math.random() * list.length)];
+    const people = [...WORKERS.map(w => w.id), ...VILLAGERS.map(v => v.id)].filter(id => id !== giver)
+        .sort(() => Math.random() - 0.5);
+    if (giver === 'baker')  return { giver, kind: 'deliver', stops: people.slice(0, 3), item: '🎂', text: 'Deliver 3 cakes', pay: 15 };
+    if (giver === 'farmer') return { giver, kind: 'water', count: 6, got: 0, item: '💧', text: 'Water 6 thirsty crops', pay: 12 };
+    if (giver === 'fisher') return { giver, kind: 'fish',  count: 3, got: 0, item: '🎣', text: 'Catch 3 fish at the pier', pay: 15 };
+    if (Math.random() < 0.5) {
+        return { giver, kind: 'deliver', stops: [people[0]], item: pick(['💌', '📦', '🌷']), text: `Take this to ${personName(people[0])}`, pay: 6 };
+    }
+    return { giver, kind: 'apples', count: 5, got: 0, item: '🍎', text: 'Pick 5 apples', pay: 10 };
+}
+
+function startJob(job) {
+    state.job = job;
+    if (job.kind === 'apples') {
+        paradise.apples = [];
+        for (let i = 0; i < job.count; i++) {
+            paradise.apples.push({ x: 60 + Math.random() * 680, y: 260 + Math.random() * 170 });
+        }
+    }
+    if (job.kind === 'water') {
+        const crops = [...paradise.crops].sort(() => Math.random() - 0.5);
+        crops.forEach((c, i) => { c.thirsty = i < job.count; });
+    }
 }
 
 // What pressing the button will do, shown above the townsperson
 function talkLabel(n) {
     const job = state.job, maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
-    if (job && job.kind === 'deliver' && job.to === n.id) return `Deliver ${job.item}`;
+    if (job && job.kind === 'deliver' && job.stops[0] === n.id) return `Deliver ${job.item}`;
+    if (n.door)            return state.housesOwned[n.id] ? 'Rest (free heal)' : `Buy ${n.name} (🪙${n.cost})`;
     if (n.id === 'doctor') return state.playerHp < maxHp ? `Heal (🪙${HEAL_COST})` : 'Talk';
     if (n.id === 'smith')  return state.ammoBonus < AMMO_UPGRADE_COST.length ? `+1 Ammo (🪙${AMMO_UPGRADE_COST[state.ammoBonus]})` : 'Talk';
-    if (n.id === 'mayor')  return !job ? 'Get a job' : (job.kind === 'apples' && job.got >= job.count) ? 'Get paid!' : 'Talk';
-    if (n.id === 'seller') return `Buy house (🪙${HOUSE_COST})`;
-    return 'Rest (free heal)';
+    if (WORKERS.some(w => w.id === n.id && w.giver)) {
+        if (!job) return 'Get a job';
+        if (job.giver === n.id && jobDone(job)) return 'Get paid!';
+        return 'Talk';
+    }
+    return 'Chat';
 }
 
 function say(n, text) {
@@ -1786,9 +1865,34 @@ function payJob(n) {
 
 function talkTo(n) {
     const job = state.job, maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
-    if (job && job.kind === 'deliver' && job.to === n.id) { payJob(n); return; }
+    if (job && job.kind === 'deliver' && job.stops[0] === n.id) {
+        job.stops.shift();
+        if (job.stops.length === 0) { payJob(n); return; }
+        addScore(5);
+        say(n, `Yum, thank you! ${job.stops.length} more to go!`);
+        sfx('coin');
+        return;
+    }
+    const giver = WORKERS.find(w => w.id === n.id && w.giver);
 
-    if (n.id === 'doctor') {
+    if (n.door) {
+        const b = BUILDINGS.find(b => b.id === n.id);
+        if (state.housesOwned[n.id]) {
+            state.playerHp = maxHp;
+            spawnParticles(player.x, player.y, '#FF6688', 12);
+            say(n, 'Zzz… all rested! ❤');
+            sfx('buy');
+        } else if (state.coins < n.cost) {
+            say(n, `This ${n.name.toLowerCase()} costs 🪙${n.cost}. Keep saving!`);
+        } else {
+            state.coins -= n.cost;
+            state.housesOwned[n.id] = true;
+            addScore(n.cost * 2);
+            spawnConfettiAt(b.x, b.y);
+            say(n, `The ${n.name.toLowerCase()} is YOURS! 🏠 Rest here any time.`);
+            sfx('win');
+        }
+    } else if (n.id === 'doctor') {
         if (state.playerHp >= maxHp)       say(n, 'You look healthy to me!');
         else if (state.coins < HEAL_COST)  say(n, `Healing costs 🪙${HEAL_COST}. Come back soon!`);
         else {
@@ -1811,38 +1915,20 @@ function talkTo(n) {
             say(n, `CLANG! +1 AMMO — now you carry ${state.ammoMax}!`);
             sfx('found');
         }
-    } else if (n.id === 'mayor') {
+    } else if (giver) {
         if (!job) {
-            const choices = JOBS.filter(j => !(j.to === 'seller' && state.houseOwned));
-            state.job = { ...choices[Math.floor(Math.random() * choices.length)], got: 0 };
-            if (state.job.kind === 'apples') {
-                paradise.apples = [];
-                for (let i = 0; i < state.job.count; i++) {
-                    paradise.apples.push({ x: 80 + Math.random() * 640, y: 300 + Math.random() * 150 });
-                }
-            }
-            say(n, `Job: ${state.job.text}! I'll pay 🪙${state.job.pay}.`);
+            startJob(makeJob(n.id));
+            say(n, `${state.job.kind === 'deliver' ? jobText() : state.job.text}! I'll pay 🪙${state.job.pay}.`);
             sfx('coin');
-        } else if (job.kind === 'apples' && job.got >= job.count) {
+        } else if (job.giver === n.id && jobDone(job)) {
             payJob(n);
+        } else if (job.giver === n.id) {
+            say(n, `Keep going: ${jobText()}!`);
         } else {
-            say(n, job.kind === 'apples' ? `Apples: ${job.got}/${job.count}. Keep looking!` : `Don't forget: ${job.text}!`);
+            say(n, 'Finish your other job first, then come back!');
         }
-    } else if (n.id === 'seller') {
-        if (state.coins < HOUSE_COST) say(n, `This lovely house costs 🪙${HOUSE_COST}!`);
-        else {
-            state.coins -= HOUSE_COST;
-            state.houseOwned = true;
-            addScore(100);
-            spawnConfettiAt(560, 360);
-            say(NPCS.find(m => m.id === 'home'), 'It\'s YOUR house now! 🏠 Rest here any time.');
-            sfx('win');
-        }
-    } else if (n.id === 'home') {
-        state.playerHp = maxHp;
-        spawnParticles(player.x, player.y, '#FF6688', 12);
-        say(n, 'Zzz… all rested! ❤');
-        sfx('buy');
+    } else {
+        say(n, VILLAGER_CHAT[Math.floor(Math.random() * VILLAGER_CHAT.length)]);
     }
 }
 
@@ -1855,20 +1941,84 @@ function tryTalk() {
     return true;
 }
 
+function nearbyCrop() {
+    if (state.room !== ROOM.PARADISE || paradise.phase !== 'day' || !state.job || state.job.kind !== 'water') return null;
+    return paradise.crops.find(c => c.thirsty && Math.hypot(player.x - c.x, player.y - c.y) < 22) || null;
+}
+
+function atFishingSpot() {
+    return state.room === ROOM.PARADISE && paradise.phase === 'day' && state.job && state.job.kind === 'fish'
+        && !jobDone() && Math.hypot(player.x - FISH_SPOT.x, player.y - FISH_SPOT.y) < 26;
+}
+
+// Watering crops and fishing
+function tryTownAction() {
+    if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return false;
+    const crop = nearbyCrop();
+    if (crop) {
+        crop.thirsty = false;
+        state.job.got++;
+        spawnParticles(crop.x, crop.y - 6, '#66CCFF', 10);
+        spawnFloatText(crop.x, crop.y - 26, `💧 ${state.job.got}/${state.job.count}`, '#88DDFF');
+        sfx('splash');
+        return true;
+    }
+    if (atFishingSpot()) {
+        const f = paradise.fishing;
+        if (f.stage === 'idle') {
+            f.stage = 'waiting'; f.timer = 60 + Math.random() * 150;
+            spawnParticles(FISH_SPOT.x, FISH_SPOT.y + 16, '#AADDFF', 5);
+            sfx('splash');
+        } else if (f.stage === 'waiting') {
+            f.stage = 'idle';
+            spawnFloatText(FISH_SPOT.x, FISH_SPOT.y - 30, 'Too early! It swam away…', '#FFFFFF', 70);
+        } else {
+            f.stage = 'idle';
+            state.job.got++;
+            spawnFloatText(FISH_SPOT.x, FISH_SPOT.y - 30, `🐟 CAUGHT ONE! ${state.job.got}/${state.job.count}`, '#FFE066', 80);
+            spawnParticles(FISH_SPOT.x, FISH_SPOT.y + 10, '#88CCFF', 14);
+            sfx('found');
+        }
+        return true;
+    }
+    return false;
+}
+
 function updateTown() {
     const P = paradise;
     if (P.speech && --P.speech.timer <= 0) P.speech = null;
     if (state.room !== ROOM.PARADISE) return;
 
-    // Apple picking
-    if (P.phase === 'day' && state.job && state.job.kind === 'apples') {
-        for (let i = P.apples.length - 1; i >= 0; i--) {
-            const a = P.apples[i];
-            if (Math.hypot(player.x - a.x, player.y - a.y) > 22) continue;
-            P.apples.splice(i, 1);
-            state.job.got++;
-            spawnFloatText(a.x, a.y - 16, `🍎 ${state.job.got}/${state.job.count}`, '#FF6666');
-            sfx('coin');
+    if (P.phase === 'day') {
+        // Villagers stroll about the town square
+        for (const v of P.villagers) {
+            const dx = v.tx - v.x, dy = v.ty - v.y, d = Math.hypot(dx, dy);
+            if (d < 3) {
+                if (Math.random() < 0.01) { v.tx = 250 + Math.random() * 310; v.ty = 260 + Math.random() * 170; }
+            } else if (!(P.speech && P.speech.npc === v)) {   // stands still while talking to you
+                const spd = v.small ? 0.8 : 0.5;
+                v.x += dx / d * spd; v.y += dy / d * spd;
+                v.walk += 0.2; v.face = dx > 0 ? -1 : 1;
+            }
+        }
+        // Apple picking
+        if (state.job && state.job.kind === 'apples') {
+            for (let i = P.apples.length - 1; i >= 0; i--) {
+                const a = P.apples[i];
+                if (Math.hypot(player.x - a.x, player.y - a.y) > 22) continue;
+                P.apples.splice(i, 1);
+                state.job.got++;
+                spawnFloatText(a.x, a.y - 16, `🍎 ${state.job.got}/${state.job.count}`, '#FF6666');
+                sfx('coin');
+            }
+        }
+        // Fishing: wait for a bite, then be quick!
+        const f = P.fishing;
+        if (f.stage !== 'idle' && !atFishingSpot()) f.stage = 'idle';
+        if (f.stage === 'waiting' && --f.timer <= 0) { f.stage = 'bite'; f.timer = 50; sfx('bite'); }
+        else if (f.stage === 'bite' && --f.timer <= 0) {
+            f.stage = 'idle';
+            spawnFloatText(FISH_SPOT.x, FISH_SPOT.y - 30, 'Too slow! It got away…', '#FFFFFF', 70);
         }
     }
 
@@ -2675,9 +2825,9 @@ function drawParadiseSky() {
     ctx.save();
     ctx.globalAlpha = dark;
     ctx.fillStyle = '#FFFBE0'; ctx.shadowColor = '#FFFBE0'; ctx.shadowBlur = 30;   // moon
-    ctx.beginPath(); ctx.arc(740, 110, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(660, 95, 20, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(5,5,40,1)';
-    ctx.beginPath(); ctx.arc(750, 104, 18, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(669, 89, 16, 0, Math.PI * 2); ctx.fill();
     for (let i = 0; i < 25; i++) {   // twinkling stars
         const sx = (i * 137) % 800, sy = 75 + (i * 71) % 90;
         if (Math.sin(Date.now() / 400 + i) > -0.3) drawStar(sx, sy, 2, '#FFFFFF');
@@ -2686,75 +2836,124 @@ function drawParadiseSky() {
 }
 
 function drawBuilding(b, night) {
-    const w = 90, h = 55, x = b.x - w / 2, y = b.y - h / 2;
+    const w = b.w, h = b.id === 'mansion' ? 62 : 55, x = b.x - w / 2, y = b.y - h / 2;
     drawGroundShadow(b.x + 10, y + h + 2, w * 0.6, 8, 0.3);
     ctx.save();
     ctx.fillStyle = b.wall;
     ctx.fillRect(x, y, w, h);
     ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1;          // brick lines
-    for (let row = 1; row < 6; row++) {
+    for (let row = 1; row < Math.floor(h / 9); row++) {
         ctx.beginPath(); ctx.moveTo(x, y + row * 9); ctx.lineTo(x + w, y + row * 9); ctx.stroke();
         for (let bx = x + (row % 2) * 9; bx < x + w; bx += 18) { ctx.beginPath(); ctx.moveTo(bx, y + row * 9 - 9); ctx.lineTo(bx, y + row * 9); ctx.stroke(); }
+    }
+    if (b.id === 'mansion') {                                         // white columns
+        ctx.fillStyle = '#E8E8E8';
+        for (let k = 0; k < 4; k++) ctx.fillRect(x + 10 + k * 28, y + 6, 7, h - 6);
     }
     const shade = ctx.createLinearGradient(x, 0, x + w, 0);           // light from the left
     shade.addColorStop(0, 'rgba(255,255,255,0.12)'); shade.addColorStop(1, 'rgba(0,0,0,0.18)');
     ctx.fillStyle = shade; ctx.fillRect(x, y, w, h);
+    const peak = b.id === 'mansion' ? 38 : 32;
     ctx.fillStyle = b.roof;
-    ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(b.x, y - 32); ctx.lineTo(x + w + 8, y); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(b.x, y - peak); ctx.lineTo(x + w + 8, y); ctx.closePath(); ctx.fill();
     ctx.fillStyle = 'rgba(0,0,0,0.22)';                                // shady side of the roof
-    ctx.beginPath(); ctx.moveTo(b.x, y - 32); ctx.lineTo(x + w + 8, y); ctx.lineTo(b.x, y); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(b.x, y - peak); ctx.lineTo(x + w + 8, y); ctx.lineTo(b.x, y); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.15)';                              // roof tiles
     for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(x - 8 + k * 8, y - k * 8); ctx.lineTo(x + w + 8 - k * 8, y - k * 8); ctx.stroke(); }
+    if (b.id === 'bakery' || b.id === 'forge') {                       // chimney with smoke
+        ctx.fillStyle = '#7A4A3A'; ctx.fillRect(x + w - 24, y - 26, 10, 18);
+        for (let k = 0; k < 3; k++) {
+            const t = (Date.now() / 1500 + k / 3) % 1;
+            ctx.fillStyle = `rgba(220,220,220,${0.5 * (1 - t)})`;
+            ctx.beginPath(); ctx.arc(x + w - 19 + Math.sin(t * 6) * 4, y - 30 - t * 30, 4 + t * 6, 0, Math.PI * 2); ctx.fill();
+        }
+    }
     ctx.fillStyle = '#6B3E1E';                                  // door
     ctx.fillRect(b.x - 9, y + h - 26, 18, 26);
+    ctx.fillStyle = '#FFD700'; ctx.fillRect(b.x + 4, y + h - 14, 2, 2);   // door knob
     ctx.fillStyle = night ? '#FFE070' : '#AADDFF';              // windows glow at night
     if (night) { ctx.shadowColor = '#FFE070'; ctx.shadowBlur = 12; }
     ctx.fillRect(x + 10, y + 12, 16, 14);
     ctx.fillRect(x + w - 26, y + 12, 16, 14);
     ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#FFF'; ctx.lineWidth = 1.5;              // window frames
+    ctx.strokeRect(x + 10, y + 12, 16, 14); ctx.strokeRect(x + w - 26, y + 12, 16, 14);
     ctx.fillStyle = '#222'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
-    const label = b.id === 'house' ? (state.houseOwned ? 'YOUR HOUSE ❤' : 'FOR SALE') : b.name;
-    ctx.fillText(label, b.x, y + 8);
-    if (b.id === 'house' && !state.houseOwned) {                // price sign on a post
-        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x - 22, y + 20, 3, 35);
-        ctx.fillStyle = '#FFF'; ctx.fillRect(x - 40, y + 10, 38, 18);
-        ctx.fillStyle = '#C00'; ctx.font = 'bold 9px Arial';
-        ctx.fillText(`🪙${HOUSE_COST}`, x - 21, y + 23);
+    const owned = b.cost && state.housesOwned[b.id];
+    ctx.fillText(b.cost ? (owned ? `YOUR ${b.name} ❤` : b.name) : b.name, b.x, y + 9);
+    if (b.cost && !owned) {                                     // FOR SALE sign on a post
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x - 20, y + 22, 3, 34);
+        ctx.fillStyle = '#FFF'; ctx.fillRect(x - 42, y + 8, 46, 22);
+        ctx.fillStyle = '#C00'; ctx.font = 'bold 8px Arial';
+        ctx.fillText('FOR SALE', x - 19, y + 17);
+        ctx.fillText(`🪙${b.cost}`, x - 19, y + 27);
+    }
+    if (owned) {                                                // a little flag on your house
+        ctx.fillStyle = '#555'; ctx.fillRect(b.x - 1, y - peak - 16, 2, 16);
+        ctx.fillStyle = '#FF3355';
+        ctx.beginPath(); ctx.moveTo(b.x + 1, y - peak - 16); ctx.lineTo(b.x + 14, y - peak - 12 + Math.sin(Date.now() / 200) * 2); ctx.lineTo(b.x + 1, y - peak - 8); ctx.fill();
     }
     ctx.restore();
 }
 
-function drawNpc(n) {
-    if (!n.coat) return;   // "home" is just the front door
-    const bob = Math.sin(Date.now() / 350 + n.x) * 1.5, x = n.x, y = n.y + bob;
+// A townsperson or villager, with little walking legs
+function drawPerson(n) {
+    if (n.door) return;
+    const small = n.small ? 0.8 : 1;
+    const walking = n.walk !== undefined && Math.hypot(n.tx - n.x, n.ty - n.y) > 3;
+    const bob = walking ? Math.abs(Math.sin(n.walk)) * 2 : Math.sin(Date.now() / 350 + n.x) * 1.2;
+    const x = n.x, y = n.y - bob;
+    drawGroundShadow(x, n.y + 14, 11 * small, 4);
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';                                         // shadow
-    ctx.beginPath(); ctx.ellipse(x, n.y + 14, 11, 4, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = n.coat;                                                     // body
-    ctx.fillRect(x - 9, y - 6, 18, 20);
-    ctx.fillStyle = '#F2C49B';                                                  // head
-    ctx.beginPath(); ctx.arc(x, y - 14, 8, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#000';
-    ctx.fillRect(x - 4, y - 16, 2, 2); ctx.fillRect(x + 2, y - 16, 2, 2);        // eyes
-    ctx.fillRect(x - 2, y - 11, 4, 1);                                           // smile
-    if (n.hat === 'doctor') {
-        ctx.fillStyle = '#FFFFFF'; ctx.fillRect(x - 7, y - 25, 14, 5);
-        ctx.fillStyle = '#E03030'; ctx.fillRect(x - 1, y - 25, 2, 5); ctx.fillRect(x - 3, y - 23, 6, 2);
-        ctx.fillStyle = '#E03030'; ctx.fillRect(x - 1, y - 2, 2, 8); ctx.fillRect(x - 4, y + 1, 8, 2);   // red cross
-    } else if (n.hat === 'smith') {
-        ctx.fillStyle = '#333'; ctx.fillRect(x - 8, y - 23, 16, 4);              // bandana
-        ctx.fillStyle = '#888'; ctx.fillRect(x + 10, y - 4, 8, 5);               // hammer head
-        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x + 13, y + 1, 2, 9);            // hammer handle
-    } else if (n.hat === 'mayor') {
-        ctx.fillStyle = '#111'; ctx.fillRect(x - 6, y - 32, 12, 11); ctx.fillRect(x - 9, y - 22, 18, 2);   // top hat
-        ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(x, y + 4, 2.5, 0, Math.PI * 2); ctx.fill();    // medal
-    } else if (n.hat === 'seller') {
-        ctx.fillStyle = '#AA6633'; ctx.fillRect(x - 8, y - 23, 16, 4); ctx.fillRect(x - 2, y - 21, 12, 2); // cap
-        ctx.fillStyle = '#C00'; ctx.fillRect(x - 1, y - 5, 2, 9);                                          // tie
+    ctx.translate(x, y); ctx.scale(small, small);
+    const leg = walking ? Math.sin(n.walk * 2) * 3 : 0;          // legs
+    ctx.fillStyle = '#333';
+    ctx.fillRect(-6 + leg, 12, 4, 6); ctx.fillRect(2 - leg, 12, 4, 6);
+    ctx.fillStyle = n.coat;                                      // body
+    ctx.fillRect(-9, -6, 18, 19);
+    const shade = ctx.createLinearGradient(-9, 0, 9, 0);
+    shade.addColorStop(0, 'rgba(255,255,255,0.15)'); shade.addColorStop(1, 'rgba(0,0,0,0.2)');
+    ctx.fillStyle = shade; ctx.fillRect(-9, -6, 18, 19);
+    ctx.fillStyle = '#F2C49B';                                   // head
+    ctx.beginPath(); ctx.arc(0, -14, 8, 0, Math.PI * 2); ctx.fill();
+    if (n.hair) {                                                // villagers' hair
+        ctx.fillStyle = n.hair;
+        ctx.beginPath(); ctx.arc(0, -16, 8, Math.PI, 0); ctx.fill();
     }
-    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
-    ctx.fillText(n.name, x, n.y + 26);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(-4, -16, 2, 2); ctx.fillRect(2, -16, 2, 2);     // eyes
+    ctx.fillRect(-2, -11, 4, 1);                                 // smile
+    if (n.hat === 'doctor') {
+        ctx.fillStyle = '#FFFFFF'; ctx.fillRect(-7, -25, 14, 5);
+        ctx.fillStyle = '#E03030'; ctx.fillRect(-1, -25, 2, 5); ctx.fillRect(-3, -23, 6, 2);
+        ctx.fillRect(-1, -2, 2, 8); ctx.fillRect(-4, 1, 8, 2);   // red cross
+    } else if (n.hat === 'baker') {
+        ctx.fillStyle = '#FFFFFF';                               // tall chef hat
+        ctx.fillRect(-6, -30, 12, 9);
+        ctx.beginPath(); ctx.arc(-3, -30, 4, 0, Math.PI * 2); ctx.arc(3, -30, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#F2D2A0'; ctx.fillRect(-5, 0, 10, 6);   // apron pocket
+    } else if (n.hat === 'smith') {
+        ctx.fillStyle = '#333'; ctx.fillRect(-8, -23, 16, 4);    // bandana
+        ctx.fillStyle = '#888'; ctx.fillRect(10, -4, 8, 5);      // hammer head
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(13, 1, 2, 9);    // hammer handle
+    } else if (n.hat === 'mayor') {
+        ctx.fillStyle = '#111'; ctx.fillRect(-6, -32, 12, 11); ctx.fillRect(-9, -22, 18, 2);   // top hat
+        ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(0, 4, 2.5, 0, Math.PI * 2); ctx.fill();   // medal
+    } else if (n.hat === 'farmer') {
+        ctx.fillStyle = '#E8C860';                               // straw hat
+        ctx.beginPath(); ctx.ellipse(0, -21, 13, 3, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(-6, -27, 12, 6);
+        ctx.fillStyle = '#3A5A9A'; ctx.fillRect(-7, 0, 14, 12);  // dungarees
+    } else if (n.hat === 'fisher') {
+        ctx.fillStyle = '#FFCC33'; ctx.fillRect(-8, -24, 16, 5);  // yellow rain hat
+        ctx.strokeStyle = '#6B3E1E'; ctx.lineWidth = 1.5;          // fishing rod
+        ctx.beginPath(); ctx.moveTo(8, 4); ctx.lineTo(22, -22); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 0.7;
+        ctx.beginPath(); ctx.moveTo(22, -22); ctx.lineTo(24, 6); ctx.stroke();
+    }
     ctx.restore();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(n.name, n.x, n.y + 28);
 }
 
 function drawSpeech(n, text) {
@@ -2770,24 +2969,91 @@ function drawSpeech(n, text) {
     ctx.restore();
 }
 
+// Town square fountain, lamp posts, crops, butterflies
+function drawTownDetails(night) {
+    const t = Date.now() / 1000;
+    // Fountain
+    const fx = 400, fy = 345;
+    drawGroundShadow(fx + 4, fy + 14, 36, 8, 0.3);
+    ctx.fillStyle = '#9A9A9A'; ctx.beginPath(); ctx.ellipse(fx, fy, 34, 15, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#3A8FCF'; ctx.beginPath(); ctx.ellipse(fx, fy - 2, 28, 11, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
+    for (let k = 0; k < 2; k++) {                                   // ripples
+        const r = ((t * 12 + k * 14) % 26);
+        ctx.beginPath(); ctx.ellipse(fx, fy - 2, r, r * 0.4, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.fillStyle = '#B0B0B0'; ctx.fillRect(fx - 3, fy - 22, 6, 20);
+    for (let k = 0; k < 10; k++) {                                  // water spray
+        const a = (k / 10) * Math.PI * 2, ph = (t * 1.5 + k / 10) % 1;
+        ctx.fillStyle = `rgba(180,225,255,${0.8 * (1 - ph)})`;
+        ctx.beginPath(); ctx.arc(fx + Math.cos(a) * ph * 20, fy - 24 - Math.sin(ph * Math.PI) * 14 + ph * 16, 1.8, 0, Math.PI * 2); ctx.fill();
+    }
+    // Lamp posts — glow at night
+    for (const [lx, ly] of [[330, 290], [470, 290], [330, 400], [470, 400]]) {
+        ctx.fillStyle = '#333'; ctx.fillRect(lx - 1.5, ly - 30, 3, 30);
+        ctx.fillStyle = night ? '#FFE890' : '#DDD';
+        ctx.beginPath(); ctx.arc(lx, ly - 32, 4, 0, Math.PI * 2); ctx.fill();
+        if (night) {
+            const glow = ctx.createRadialGradient(lx, ly - 32, 2, lx, ly - 32, 60);
+            glow.addColorStop(0, 'rgba(255,230,140,0.45)'); glow.addColorStop(1, 'rgba(255,230,140,0)');
+            ctx.fillStyle = glow; ctx.fillRect(lx - 60, ly - 92, 120, 120);
+        }
+    }
+    // Crops on the farm (thirsty ones droop and go brown)
+    for (const c of paradise.crops) {
+        const droop = c.thirsty ? 4 : 0;
+        ctx.strokeStyle = c.thirsty ? '#8A7030' : '#2F8F2F'; ctx.lineWidth = 2;
+        for (const side of [-1, 1]) {
+            ctx.beginPath(); ctx.moveTo(c.x, c.y);
+            ctx.quadraticCurveTo(c.x + side * 6, c.y - 10 + droop, c.x + side * 9, c.y - 4 + droop * 2); ctx.stroke();
+        }
+        ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c.x, c.y - 14 + droop); ctx.stroke();
+        if (!c.thirsty) { ctx.fillStyle = '#E03A2A'; ctx.beginPath(); ctx.arc(c.x + 3, c.y - 9, 3, 0, Math.PI * 2); ctx.fill(); }
+        else if (!night) { ctx.fillStyle = '#88CCFF'; ctx.font = '10px Arial'; ctx.textAlign = 'center'; ctx.fillText('💧?', c.x, c.y - 20); }
+    }
+    // Butterflies (daytime)
+    if (!night) {
+        for (let k = 0; k < 5; k++) {
+            const bx = 400 + Math.sin(t * 0.4 + k * 2) * 300, by = 300 + Math.cos(t * 0.55 + k * 3) * 180;
+            const flap = Math.abs(Math.sin(t * 12 + k)) * 4 + 1;
+            ctx.fillStyle = ['#FFDD55', '#FF88CC', '#88CCFF', '#FFFFFF', '#FFAA44'][k];
+            ctx.beginPath(); ctx.ellipse(bx - 3, by, flap, 3, 0, 0, Math.PI * 2); ctx.ellipse(bx + 3, by, flap, 3, 0, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+}
+
 function drawParadise() {
     const t = Date.now() / 400;
     const P = paradise, night = P.phase !== 'day';
 
     for (const b of BUILDINGS) drawBuilding(b, night);
+    drawTownDetails(night);
 
     if (!night) {
-        // Townspeople, apples, speech and "talk" prompts (everyone hides indoors at night)
-        for (const n of townNpcs()) drawNpc(n);
+        // Townspeople, apples, speech and prompts (everyone hides indoors at night)
+        const people = [...WORKERS, ...P.villagers].sort((a, b) => a.y - b.y);
+        for (const n of people) drawPerson(n);
         for (const a of P.apples) {
+            drawGroundShadow(a.x, a.y + 7, 6, 2);
             ctx.fillStyle = '#E02020';
             ctx.beginPath(); ctx.arc(a.x, a.y, 7, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(a.x - 2.5, a.y - 2.5, 2, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#33AA33'; ctx.fillRect(a.x - 1, a.y - 11, 4, 5);
         }
+        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
         const n = nearbyNpc();
-        if (n && !(P.speech && P.speech.npc === n)) {
-            const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap TALK' : 'SPACE';
-            drawSpeech(n, `${verb}: ${talkLabel(n)}`);
+        if (n && !(P.speech && P.speech.npc === n)) drawSpeech(n, `${verb}: ${talkLabel(n)}`);
+        else if (nearbyCrop()) drawSpeech(nearbyCrop(), `${verb}: Water the crop`);
+        else if (atFishingSpot()) {
+            const f = P.fishing;
+            const spot = { x: FISH_SPOT.x, y: FISH_SPOT.y };
+            drawSpeech(spot, f.stage === 'idle' ? `${verb}: Cast your line` : f.stage === 'waiting' ? 'Wait for it…' : `!!! ${verb} NOW !!!`);
+        }
+        if (P.fishing.stage !== 'idle') {                          // bobber in the water
+            const bob = P.fishing.stage === 'bite' ? Math.sin(Date.now() / 40) * 3 : Math.sin(Date.now() / 300) * 1;
+            ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 0.8;
+            ctx.beginPath(); ctx.moveTo(player.x + 10, player.y - 10); ctx.lineTo(FISH_SPOT.x + 18, 592 + bob); ctx.stroke();
+            ctx.fillStyle = '#FF3333'; ctx.beginPath(); ctx.arc(FISH_SPOT.x + 18, 592 + bob, 3, 0, Math.PI * 2); ctx.fill();
         }
         if (P.speech) drawSpeech(P.speech.npc, P.speech.text);
     }
@@ -2817,21 +3083,21 @@ function drawParadise() {
 
     // Status line: time of day / what to do
     const nightNum = state.paradiseClearCount + 1;
-    let status, color = 'rgba(255,255,255,0.75)';
+    let status, color = 'rgba(255,255,255,0.85)';
     if (state.lightCrystals >= 3)       status = '☀ Paradise Island is safe! Now go and beat the Devil!';
     else if (P.phase === 'day')         status = `☀ Daytime — Monster Night ${nightNum}/3 comes in ${Math.ceil(P.timer / 60)}s`;
     else if (P.phase === 'dusk')      { status = '🌙 MONSTER NIGHT IS COMING! Get ready!'; color = Math.floor(Date.now() / 200) % 2 ? '#FF6666' : '#FFFFFF'; }
     else if (allMonstersDefeated())   { status = '⭐ You did it! Open the chest to win a Light Crystal!'; color = '#FFD700'; }
     else { status = `🌙 MONSTER NIGHT ${nightNum}/3${nightNum === 3 ? ' — THE KING SLIME IS HERE!' : ''} — beat every monster!`; color = '#AABBFF'; }
+    ctx.save();
+    ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
     ctx.fillStyle = color; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
     ctx.fillText(status, 400, 544);
-
-    // Current job
     if (state.job) {
-        const j = state.job;
-        ctx.fillStyle = 'rgba(255,230,150,0.85)'; ctx.font = '12px Arial';
-        ctx.fillText(`📋 Job: ${j.text}${j.kind === 'apples' ? ` (${j.got}/${j.count})` : ''} — pays 🪙${j.pay}`, 400, 564);
+        ctx.fillStyle = 'rgba(255,235,160,0.95)'; ctx.font = 'bold 12px Arial';
+        ctx.fillText(`📋 Job: ${jobText()} — pays 🪙${state.job.pay}`, 400, 562);
     }
+    ctx.restore();
 
     // Coins
     drawCoins(P.coins);
@@ -2878,7 +3144,7 @@ function paintParadise(g, R) {
     }
     // Dirt paths from every door and portal to the town square
     const plaza = { x: 400, y: 330 };
-    const ends = [...BUILDINGS.map(b => ({ x: b.x, y: b.y + 30 })), ...PORTALS.paradise, { x: 400, y: 480 }, { x: 200, y: 480 }, { x: 600, y: 480 }, { x: 700, y: 300 }];
+    const ends = [...BUILDINGS.map(b => ({ x: b.x, y: b.y + 30 })), ...PORTALS.paradise, { x: 400, y: 478 }, { x: 255, y: 470 }, { x: 640, y: 548 }];
     for (const [w, col] of [[30, '#9C8456'], [22, '#C9B07A']]) {
         g.strokeStyle = col; g.lineWidth = w; g.lineCap = 'round';
         for (const e of ends) { g.beginPath(); g.moveTo(plaza.x, plaza.y); g.quadraticCurveTo((plaza.x + e.x) / 2 + 30, (plaza.y + e.y) / 2, e.x, e.y); g.stroke(); }
@@ -2898,7 +3164,7 @@ function paintParadise(g, R) {
         g.fillStyle = '#FFB300'; g.beginPath(); g.arc(x, y, 1.3, 0, Math.PI * 2); g.fill();
     }
     // Trees (kept away from buildings, portals and paths)
-    for (const [x, y, r] of [[35, 150, 30], [770, 330, 34], [45, 470, 28], [300, 440, 24], [770, 520, 30], [480, 110, 22], [120, 330, 22]]) {
+    for (const [x, y, r] of [[30, 205, 26], [775, 330, 28], [520, 272, 18], [280, 300, 18], [760, 440, 26], [30, 395, 22], [260, 90, 18], [540, 95, 18]]) {
         g.fillStyle = 'rgba(0,0,0,0.25)'; g.beginPath(); g.ellipse(x + 8, y + r * 0.9, r * 0.9, r * 0.35, 0, 0, Math.PI * 2); g.fill();
         g.fillStyle = '#5A3A1E'; g.fillRect(x - 4, y, 8, r * 0.8);
         for (const [ox, oy, rr] of [[-r * 0.45, -r * 0.1, r * 0.7], [r * 0.45, -r * 0.1, r * 0.7], [0, -r * 0.55, r * 0.75]]) {
@@ -2907,6 +3173,15 @@ function paintParadise(g, R) {
             g.fillStyle = gr; g.beginPath(); g.arc(x + ox, y + oy, rr, 0, Math.PI * 2); g.fill();
         }
     }
+    // Farm field with a fence
+    g.fillStyle = '#6B4A2A'; g.fillRect(FARM.x, FARM.y, FARM.w, FARM.h);
+    g.strokeStyle = '#4E3418'; g.lineWidth = 3;
+    for (let fy = FARM.y + 14; fy < FARM.y + FARM.h; fy += 20) { g.beginPath(); g.moveTo(FARM.x + 6, fy); g.lineTo(FARM.x + FARM.w - 6, fy); g.stroke(); }
+    g.strokeStyle = '#C8A070'; g.lineWidth = 2;
+    g.strokeRect(FARM.x - 4, FARM.y - 4, FARM.w + 8, FARM.h + 8);
+    for (let fx = FARM.x - 4; fx <= FARM.x + FARM.w + 4; fx += 20) {
+        g.fillStyle = '#B08858'; g.fillRect(fx - 2, FARM.y - 9, 4, 10); g.fillRect(fx - 2, FARM.y + FARM.h - 1, 4, 10);
+    }
     // Beach and sea along the bottom — it's an island!
     const sand = g.createLinearGradient(0, 566, 0, 588);
     sand.addColorStop(0, 'rgba(230,210,150,0)'); sand.addColorStop(0.4, '#E6D296'); sand.addColorStop(1, '#D8C080');
@@ -2914,6 +3189,12 @@ function paintParadise(g, R) {
     const sea = g.createLinearGradient(0, 586, 0, 600);
     sea.addColorStop(0, '#4FB3D9'); sea.addColorStop(1, '#1F6FA8');
     g.fillStyle = sea; g.fillRect(0, 586, 800, 14);
+    // Wooden fishing pier
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(628, 552, 30, 50);
+    for (let py = 548; py < 600; py += 7) {
+        g.fillStyle = py % 14 ? '#9A6A3A' : '#8A5A2A'; g.fillRect(624, py, 32, 6);
+    }
+    g.fillStyle = '#5A3A1A'; g.fillRect(622, 548, 3, 52); g.fillRect(655, 548, 3, 52);
 }
 
 function paintHell(g, R) {
@@ -3354,13 +3635,64 @@ function drawPet() {
 }
 
 // ── DRAW: PROJECTILES ─────────────────────────────────────────
+// Each power looks like the real thing: ice shards, fireballs, crackling lightning, water drops
 function drawProjectiles() {
+    const t = Date.now();
     for (const p of projectiles) {
+        const a = Math.atan2(p.dy, p.dx);
         ctx.save();
-        ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 12;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+        ctx.translate(p.x, p.y); ctx.rotate(a);
+        if (p.power === POWER.ICE) {
+            // Pointy ice crystal
+            ctx.shadowColor = '#AEE4FF'; ctx.shadowBlur = 12;
+            const g = ctx.createLinearGradient(-10, -4, 8, 4);
+            g.addColorStop(0, '#E8F8FF'); g.addColorStop(1, '#4A9AE8');
+            ctx.fillStyle = g;
+            ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-2, -5); ctx.lineTo(-10, 0); ctx.lineTo(-2, 5); ctx.closePath(); ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-8, 0); ctx.stroke();
+        } else if (p.power === POWER.BRIMSTONE) {
+            // Flickering fireball
+            const flick = 1 + Math.sin(t / 30 + p.x) * 0.15;
+            const g = ctx.createRadialGradient(2, 0, 1, 0, 0, 10 * flick);
+            g.addColorStop(0, '#FFFBD0'); g.addColorStop(0.35, '#FFB020'); g.addColorStop(0.75, '#FF4A00'); g.addColorStop(1, 'rgba(180,20,0,0)');
+            ctx.fillStyle = g; ctx.shadowColor = '#FF6600'; ctx.shadowBlur = 16;
+            ctx.beginPath(); ctx.ellipse(-2, 0, 11 * flick, 8 * flick, 0, 0, Math.PI * 2); ctx.fill();
+        } else if (p.power === POWER.LIGHTNING) {
+            // Crackling spark bolt
+            ctx.strokeStyle = '#FFFFFF'; ctx.shadowColor = '#FFE033'; ctx.shadowBlur = 16; ctx.lineWidth = 2.5;
+            ctx.beginPath(); ctx.moveTo(-14, 0);
+            for (let k = 1; k <= 4; k++) ctx.lineTo(-14 + k * 7, (Math.random() - 0.5) * 8);
+            ctx.stroke();
+            ctx.fillStyle = '#FFF7B0'; ctx.beginPath(); ctx.arc(10, 0, 4, 0, Math.PI * 2); ctx.fill();
+        } else if (p.power === POWER.WATER) {
+            // Water droplet with a shine
+            const g = ctx.createRadialGradient(2, -2, 1, 0, 0, 10);
+            g.addColorStop(0, '#E6FBFF'); g.addColorStop(0.5, '#4AC8E8'); g.addColorStop(1, '#1A7AB0');
+            ctx.fillStyle = g; ctx.shadowColor = '#66DDFF'; ctx.shadowBlur = 10;
+            ctx.beginPath(); ctx.moveTo(-12, 0); ctx.quadraticCurveTo(-2, -8, 6, -6); ctx.arc(4, 0, 6, -Math.PI / 2, Math.PI / 2); ctx.quadraticCurveTo(-2, 8, -12, 0); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(5, -2.5, 1.8, 0, Math.PI * 2); ctx.fill();
+        } else {
+            // Rainbow orb
+            const g = ctx.createRadialGradient(0, 0, 1, 0, 0, 9);
+            g.addColorStop(0, '#FFFFFF'); g.addColorStop(0.5, p.color); g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g; ctx.shadowColor = p.color; ctx.shadowBlur = 18;
+            ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+        }
         ctx.restore();
     }
+}
+
+// Little trail left behind each shot
+function spawnShotTrail(p) {
+    const trail = {
+        [POWER.ICE]:       { color: '#DDF4FF', r: 1.5, dy: 0 },
+        [POWER.BRIMSTONE]: { color: Math.random() < 0.5 ? '#FF8A20' : 'rgba(90,90,90,0.8)', r: 3, dy: -0.6 },   // flames + smoke
+        [POWER.LIGHTNING]: { color: '#FFF3A0', r: 1.5, dy: 0 },
+        [POWER.WATER]:     { color: '#9EE6FF', r: 2, dy: 0.5 },
+    }[p.power] || { color: p.color, r: 2.5, dy: 0 };
+    particles.push({ x: p.x - p.dx * 0.5, y: p.y - p.dy * 0.5, dx: (Math.random() - 0.5) * 0.8, dy: trail.dy + (Math.random() - 0.5) * 0.8,
+                     life: 14, maxLife: 14, color: trail.color, r: trail.r + Math.random() * 1.5 });
 }
 
 // Zig-zag chain-lightning bolts
@@ -3815,7 +4147,8 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText((nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : 'SHOOT', VSHOOT.x, VSHOOT.y);
+    ctx.fillText((nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK'
+                 : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
 }
