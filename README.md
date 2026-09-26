@@ -15,7 +15,7 @@ You are a wandering soul navigating the **Void**, **Hell**, and **Paradise**. Co
 | Room | Background | Goal |
 |------|-----------|------|
 | **Void** | Grey | Starting area; go to Hell first to dig up Ice/Brimstone powers |
-| **Hell** | Dark red | Dig up Ice and Brimstone weapons buried in the caves (press Shoot 3× on a dirt pile); fight the Devil |
+| **Hell** | Dark red | Hide in caves (1 minute) and dig up weapons from dirt piles — dig deeper for rarer ones, but beware mole monsters; fight the Devil |
 | **Paradise** | Dark teal | Defeat Fire Monsters and Ghosts to unlock Light Chests |
 
 ### Controls
@@ -27,6 +27,11 @@ You are a wandering soul navigating the **Void**, **Hell**, and **Paradise**. Co
 ### Powers
 - **Ice** — blocks fire-type attacks; kills Fire Monsters
 - **Brimstone** — blocks ghost-type attacks; kills Ghosts
+- **Digging** — each dirt pile in Hell's caves has 3 layers (3, 4, then 5 presses of Shoot):
+  1. Ice or Brimstone
+  2. **Super** Ice / Brimstone — fires 3 shots at once
+  3. **Rainbow** — fires 3 shots, kills Fire Monsters *and* Ghosts, blocks both attack types
+  Each layer may release a **Mole Monster** (30% / 60% / 100%) that chases you even inside caves. Any power can shoot it, and it drops a coin. You can't dig while one is out.
 - You must hold 3 Light Crystals before your attacks damage the Devil
 
 ### Win Condition

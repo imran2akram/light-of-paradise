@@ -98,7 +98,7 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 
 // ── CONSTANTS ────────────────────────────────────────────────
 const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise' };
-const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone' };
+const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', RAINBOW: 'Rainbow' };
 const BASE_SPEED = 4;
 
 // ── LEVEL CONFIGURATIONS ─────────────────────────────────────
@@ -126,7 +126,7 @@ const LEVEL_CONFIGS = [
     },
 ];
 const MAX_LEVELS       = 3;
-const CAVE_MAX_FRAMES  = 180;   // 3 seconds at 60 fps — same for all levels
+const CAVE_MAX_FRAMES  = 3600;  // 1 minute at 60 fps — same for all levels
 
 // ── AVATAR SKINS ─────────────────────────────────────────────
 const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700'];
@@ -144,14 +144,18 @@ const DIG_SPOTS = [
     { x: 105, y: 125 }, { x: 180, y: 125 },   // top-left cave
     { x: 620, y: 480 }, { x: 695, y: 480 },   // bottom-right cave
 ];
-const DIG_HITS_NEEDED = 3;    // presses of Space / DIG to dig up a weapon
-const DIG_RANGE       = 24;   // how close the player must stand to a dig spot
+const DIG_MAX_DEPTH       = 3;                 // layers in each dig spot
+const DIG_HITS_PER_LAYER  = [3, 4, 5];         // Space / DIG presses per layer (deeper = harder)
+const DIG_MOLE_CHANCE     = [0.3, 0.6, 1.0];   // chance a mole monster pops out of each layer
+const DIG_RANGE           = 24;                // how close the player must stand to a dig spot
+// Layer 1: Ice / Fire · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (beats fire AND ghosts)
 
 // ── STATE ────────────────────────────────────────────────────
 let state = {
     room:               ROOM.VOID,
     lightCrystals:      0,
     power:              POWER.NONE,
+    powerTier:          1,         // 1 normal · 2 super · 3 rainbow (deeper digs = higher tier)
     won:                false,
     levelComplete:      false,     // true when current level beaten (but more levels remain)
     screenShake:        0,
@@ -303,14 +307,15 @@ function makeDigSpots() {
         const j = Math.floor(Math.random() * (i + 1));
         [loot[i], loot[j]] = [loot[j], loot[i]];
     }
-    return DIG_SPOTS.map((s, i) => ({ x: s.x, y: s.y, hits: 0, dug: false, weapon: loot[i] }));
+    return DIG_SPOTS.map((s, i) => ({ x: s.x, y: s.y, hits: 0, depth: 0, weapon: loot[i] }));
 }
 
 function makeHell() {
     const cfg = LEVEL_CONFIGS[state.level - 1];
     return {
         digSpots: makeDigSpots(),
-        foundMsg: null,   // { text, color, x, y, timer } — floats up after digging
+        foundMsg: null,   // { text, sub, color, x, y, timer } — floats up after digging
+        moles:    [],     // mole monsters that popped out of dig spots
         devil: {
             x: 660, y: 300, r: cfg.devilR, alive: true, shieldFlash: 0,
             hp: cfg.devilHp, maxHp: cfg.devilHp,
@@ -445,6 +450,7 @@ function getPlayerColor() {
     if (state.playerFlash > 0) return '#FFFF00';
     if (state.power === POWER.ICE)       return '#4488FF';
     if (state.power === POWER.BRIMSTONE) return '#FF4422';
+    if (state.power === POWER.RAINBOW)   return `hsl(${(Date.now() / 5) % 360}, 100%, 60%)`;
     return AVATAR_COLORS[state.activeSkin];
 }
 
@@ -460,6 +466,7 @@ function damagePlayer() {
 function respawnPlayer() {
     const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
     state.power           = POWER.NONE;
+    state.powerTier       = 1;
     state.playerHp        = maxHp;
     state.playerInvincible = 120;
     changeRoom(ROOM.VOID);
@@ -468,7 +475,7 @@ function respawnPlayer() {
 function resetGame() {
     const cfg = LEVEL_CONFIGS[0];
     Object.assign(state, {
-        room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE,
+        room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE, powerTier: 1,
         won: false, levelComplete: false, screenShake: 0, playerFlash: 0,
         gamePhase: 'intro', playerHp: cfg.playerMaxHp, playerInvincible: 0,
         confettiSpawned: false, paradiseClearCount: 0, voidHealTimer: 0,
@@ -498,7 +505,7 @@ function advanceLevel() {
     state.level++;
     const cfg = LEVEL_CONFIGS[state.level - 1];
     Object.assign(state, {
-        room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE,
+        room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE, powerTier: 1,
         won: false, levelComplete: false, screenShake: 0, playerFlash: 0,
         gamePhase: 'playing', playerHp: cfg.playerMaxHp, playerInvincible: 0,
         confettiSpawned: false, paradiseClearCount: 0, voidHealTimer: 0,
@@ -540,6 +547,7 @@ function changeRoom(dest) {
         // Weapons are buried again (in new places) each visit
         hell.digSpots = makeDigSpots();
         hell.foundMsg = null;
+        hell.moles    = [];
     }
     if (dest === ROOM.PARADISE) {
         player.x = 700; player.y = 300;
@@ -612,6 +620,7 @@ function updatePlayer() {
 function isShieldedAgainst(enemyType) {
     if (enemyType === 'fire'  && state.power === POWER.ICE)       return true;
     if (enemyType === 'ghost' && state.power === POWER.BRIMSTONE) return true;
+    if ((enemyType === 'fire' || enemyType === 'ghost') && state.power === POWER.RAINBOW) return true;
     return false;
 }
 
@@ -779,7 +788,10 @@ function shoot() {
         paradise.fireMonsters.filter(e => e.alive).forEach(e => enemies.push(e));
         paradise.ghosts.filter(e => e.alive).forEach(e => enemies.push(e));
     }
-    if (state.room === ROOM.HELL && hell.devil.alive) enemies.push(hell.devil);
+    if (state.room === ROOM.HELL) {
+        hell.moles.filter(m => m.emerge === 0).forEach(m => enemies.push(m));
+        if (hell.devil.alive) enemies.push(hell.devil);
+    }
     if (!enemies.length) return;
 
     const target = enemies.reduce((best, e) => {
@@ -789,9 +801,14 @@ function shoot() {
 
     if (!target) return;
     const a = Math.atan2(target.y - player.y, target.x - player.x);
-    const color = state.power === POWER.ICE ? '#4488FF' : '#FF4422';
-    projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a) * 9, dy: Math.sin(a) * 9,
-        color, power: state.power, life: 90, r: 6 });
+    const color = state.power === POWER.RAINBOW ? `hsl(${Math.random() * 360}, 100%, 60%)`
+                : state.power === POWER.ICE     ? '#4488FF' : '#FF4422';
+    // SUPER and RAINBOW weapons fire 3 shots in a spread for the same ammo
+    const spread = state.powerTier >= 2 ? [-0.2, 0, 0.2] : [0];
+    for (const off of spread) {
+        projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a + off) * 9, dy: Math.sin(a + off) * 9,
+            color, power: state.power, life: 90, r: 6 });
+    }
 
     state.ammo--;
     if (state.ammo <= 0) {
@@ -826,7 +843,7 @@ function updateProjectiles() {
             for (const e of paradise.fireMonsters) {
                 if (!e.alive) continue;
                 if (Math.hypot(p.x - e.x, p.y - e.y) < e.r + p.r) {
-                    if (p.power === POWER.ICE) { e.alive = false; spawnParticles(e.x, e.y, '#FF6600'); triggerShake(); }
+                    if (p.power === POWER.ICE || p.power === POWER.RAINBOW) { e.alive = false; spawnParticles(e.x, e.y, '#FF6600'); triggerShake(); }
                     hit = true; break;
                 }
             }
@@ -834,10 +851,27 @@ function updateProjectiles() {
                 for (const e of paradise.ghosts) {
                     if (!e.alive) continue;
                     if (Math.hypot(p.x - e.x, p.y - e.y) < e.r + p.r) {
-                        if (p.power === POWER.BRIMSTONE) { e.alive = false; spawnParticles(e.x, e.y, '#CC88FF'); triggerShake(); }
+                        if (p.power === POWER.BRIMSTONE || p.power === POWER.RAINBOW) { e.alive = false; spawnParticles(e.x, e.y, '#CC88FF'); triggerShake(); }
                         hit = true; break;
                     }
                 }
+            }
+        }
+
+        // Mole monsters — any power hurts them
+        if (!hit && state.room === ROOM.HELL) {
+            for (let j = hell.moles.length - 1; j >= 0; j--) {
+                const m = hell.moles[j];
+                if (m.emerge > 0 || Math.hypot(p.x - m.x, p.y - m.y) >= m.r + p.r) continue;
+                m.hp--;
+                spawnParticles(m.x, m.y, '#8B5A2B', 6);
+                if (m.hp <= 0) {
+                    hell.moles.splice(j, 1);
+                    spawnParticles(m.x, m.y, '#C08040', 14);
+                    triggerShake(6);
+                    collectCoin();   // moles drop a coin as a reward
+                }
+                hit = true; break;
             }
         }
 
@@ -873,36 +907,92 @@ function updateProjectiles() {
 }
 
 // ── UPDATE: DIGGING ───────────────────────────────────────────
+// Returns the dig spot the player is standing on (if it still has layers left)
 function nearbyDigSpot() {
     if (state.room !== ROOM.HELL) return null;
     return hell.digSpots.find(s =>
-        !s.dug && Math.hypot(player.x - s.x, player.y - s.y) < DIG_RANGE
+        s.depth < DIG_MAX_DEPTH && Math.hypot(player.x - s.x, player.y - s.y) < DIG_RANGE
     ) || null;
+}
+
+// You can't dig while a mole monster is out — Space / the button shoots it instead
+function canDig() {
+    return hell.moles.length === 0;
+}
+
+function powerName(power = state.power, tier = state.powerTier) {
+    if (power === POWER.NONE)    return 'None';
+    if (power === POWER.RAINBOW) return 'Rainbow';
+    return tier >= 2 ? `Super ${power}` : power;
+}
+
+function spawnMole(s) {
+    // Pops out a little way from the player so it doesn't hit them straight away
+    const a = Math.random() * Math.PI * 2;
+    hell.moles.push({
+        x: s.x + Math.cos(a) * 45, y: s.y + Math.sin(a) * 45,
+        r: 13 + s.depth * 2, hp: s.depth, speed: 0.8 + s.depth * 0.25,
+        emerge: 45,   // frames spent climbing out (harmless while emerging)
+    });
 }
 
 // Returns true if the player dug (so Space / the button doesn't also shoot)
 function tryDig() {
     if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return false;
     const s = nearbyDigSpot();
-    if (!s) return false;
+    if (!s || !canDig()) return false;
     s.hits++;
     spawnParticles(s.x, s.y, '#8B5A2B', 6);
     triggerShake(3);
-    if (s.hits >= DIG_HITS_NEEDED) {
-        s.dug = true;
-        state.power = s.weapon;
+    if (s.hits < DIG_HITS_PER_LAYER[s.depth]) return true;
+
+    // Broke through a layer!
+    s.hits = 0;
+    s.depth++;
+    const tier   = s.depth;
+    const weapon = tier === 3 ? POWER.RAINBOW : s.weapon;
+    const color  = weapon === POWER.RAINBOW ? '#FF66FF' : weapon === POWER.ICE ? '#4488FF' : '#FF4422';
+    const name   = weapon === POWER.RAINBOW ? 'RAINBOW POWER'
+                 : (tier >= 2 ? 'SUPER ' : '') + (weapon === POWER.ICE ? 'ICE' : 'FIRE');
+    let text;
+    if (state.power !== POWER.NONE && tier < state.powerTier) {
+        text = `Found ${name} — yours is better!`;
+    } else {
+        state.power     = weapon;
+        state.powerTier = tier;
         state.playerFlash = 25;
-        const isIce = s.weapon === POWER.ICE;
-        const color = isIce ? '#4488FF' : '#FF4422';
-        spawnParticles(s.x, s.y, color, 16);
-        triggerShake(8);
-        hell.foundMsg = { text: isIce ? 'You found ICE!' : 'You found FIRE!', color, x: s.x, y: s.y - 20, timer: 90 };
+        text = tier === 3 ? `LEGENDARY! ${name}!` : tier === 2 ? `RARE! ${name}!` : `You found ${name}!`;
     }
+    spawnParticles(s.x, s.y, color, 10 + tier * 6);
+    triggerShake(6 + tier * 2);
+
+    let sub = s.depth < DIG_MAX_DEPTH ? 'Keep digging for something rarer…' : '';
+    if (Math.random() < DIG_MOLE_CHANCE[s.depth - 1]) {
+        spawnMole(s);
+        sub = 'Look out — a MOLE MONSTER!';
+    }
+    hell.foundMsg = { text, sub, color, x: s.x, y: s.y - 20, timer: 120 };
     return true;
 }
 
 function updateDigging() {
     if (hell.foundMsg && --hell.foundMsg.timer <= 0) hell.foundMsg = null;
+    if (state.room !== ROOM.HELL) return;
+
+    // Mole monsters chase the player — even inside caves (they live underground!)
+    for (const m of hell.moles) {
+        if (m.emerge > 0) {
+            m.emerge--;
+            if (Math.random() < 0.4) spawnParticles(m.x, m.y + 8, '#6B3E1E', 1);
+            continue;
+        }
+        const a = Math.atan2(player.y - m.y, player.x - m.x);
+        m.x += Math.cos(a) * m.speed;
+        m.y += Math.sin(a) * m.speed;
+        if (state.playerInvincible === 0 && Math.hypot(m.x - player.x, m.y - player.y) < m.r + 16) {
+            damagePlayer();
+        }
+    }
 }
 
 // ── UPDATE: PICKUPS ───────────────────────────────────────────
@@ -1071,7 +1161,7 @@ function drawIntro() {
     // Hint: Caves
     ctx.fillStyle = 'rgba(180,120,60,0.7)';
     ctx.font = '13px Arial';
-    ctx.fillText('Tip: Caves in Hell hide you from the Devil — and have weapons buried inside!', 400, 460);
+    ctx.fillText('Tip: Hide in Hell\'s caves for 1 minute — dig deep for rare weapons, but watch out for moles!', 400, 460);
 
     // Pulsing Press Space
     const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 400);
@@ -1113,8 +1203,10 @@ function drawVoid() {
 
     // Shield hint
     if (state.power !== POWER.NONE) {
-        const shielded = state.power === POWER.ICE ? 'FIRE' : 'GHOST';
-        ctx.fillStyle = state.power === POWER.ICE ? 'rgba(80,160,255,0.75)' : 'rgba(255,100,60,0.75)';
+        const shielded = state.power === POWER.RAINBOW ? 'FIRE & GHOST'
+                       : state.power === POWER.ICE     ? 'FIRE' : 'GHOST';
+        ctx.fillStyle = state.power === POWER.RAINBOW ? 'rgba(255,120,255,0.8)'
+                      : state.power === POWER.ICE     ? 'rgba(80,160,255,0.75)' : 'rgba(255,100,60,0.75)';
         ctx.font = 'bold 12px Arial';
         ctx.fillText(`🛡 ${state.power.toUpperCase()} SHIELD active — blocks ${shielded} attacks`, 400, 360);
     }
@@ -1190,42 +1282,84 @@ function drawHell() {
         ctx.restore();
     }
 
-    // Dig spots — dirt piles with buried weapons
+    // Dig spots — dirt piles with weapons buried in layers
     for (const s of hell.digSpots) {
         ctx.save();
-        if (s.dug) {
-            // Empty hole
-            ctx.fillStyle = 'rgba(0,0,0,0.75)';
-            ctx.beginPath(); ctx.ellipse(s.x, s.y + 6, 15, 6, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.restore();
-            continue;
+        if (s.depth > 0) {
+            // Hole gets bigger and darker the deeper you dig
+            const holeR = 8 + s.depth * 4;
+            ctx.fillStyle = `rgba(0,0,0,${0.45 + s.depth * 0.18})`;
+            ctx.beginPath(); ctx.ellipse(s.x, s.y + 6, holeR, holeR * 0.45, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'rgba(200,150,90,0.8)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+            ctx.fillText(s.depth >= DIG_MAX_DEPTH ? 'BOTTOM' : `DEPTH ${s.depth}/${DIG_MAX_DEPTH}`, s.x, s.y + 24);
         }
-        // Pile shrinks a little with each dig
-        const size = 1 - (s.hits / DIG_HITS_NEEDED) * 0.45;
-        ctx.fillStyle = '#6B3E1E';
-        ctx.beginPath(); ctx.ellipse(s.x, s.y + 4, 18 * size, 10 * size, 0, Math.PI, 0); ctx.fill();
-        ctx.fillStyle = '#8B5A2B';
-        ctx.beginPath(); ctx.ellipse(s.x - 3, s.y + 1, 9 * size, 5 * size, 0, Math.PI, 0); ctx.fill();
-        // Twinkle so kids can spot the treasure
-        if (Math.sin(t * 2 + s.x) > 0.7) drawStar(s.x + 8 * size, s.y - 6 * size, 3, '#FFFFAA');
+        if (s.depth < DIG_MAX_DEPTH) {
+            // Dirt pile beside the hole shrinks a little with each dig
+            const size = 1 - (s.hits / DIG_HITS_PER_LAYER[s.depth]) * 0.45;
+            const px = s.depth > 0 ? s.x + 16 : s.x;
+            ctx.fillStyle = '#6B3E1E';
+            ctx.beginPath(); ctx.ellipse(px, s.y + 4, 18 * size, 10 * size, 0, Math.PI, 0); ctx.fill();
+            ctx.fillStyle = '#8B5A2B';
+            ctx.beginPath(); ctx.ellipse(px - 3, s.y + 1, 9 * size, 5 * size, 0, Math.PI, 0); ctx.fill();
+            // Twinkle so kids can spot the treasure — rainbow sparkle on the last layer
+            const sparkle = s.depth === 2 ? `hsl(${(Date.now() / 5) % 360}, 100%, 70%)` : '#FFFFAA';
+            if (Math.sin(t * 2 + s.x) > 0.7) drawStar(px + 8 * size, s.y - 6 * size, 3, sparkle);
+        }
         ctx.restore();
     }
 
     // "Dig here!" prompt when standing on a pile
     const digSpot = nearbyDigSpot();
     if (digSpot) {
-        ctx.fillStyle = '#FFE08A'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(isTouchDevice ? 'Tap DIG!' : 'Press SPACE to dig!', digSpot.x, digSpot.y - 22);
+        const verb = isTouchDevice ? 'Tap DIG' : 'Press SPACE';
+        ctx.fillStyle = canDig() ? '#FFE08A' : '#FF8888';
+        ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(!canDig() ? 'Beat the mole monster first!'
+                   : digSpot.depth === 0 ? `${verb} to dig!` : `${verb} to dig deeper!`,
+                   digSpot.x, digSpot.y - 22);
     }
 
-    // "You found ICE / FIRE!" message floating up
+    // Mole monsters
+    for (const m of hell.moles) {
+        const rise = 1 - m.emerge / 45;   // 0 → 1 while climbing out
+        const r = m.r * (0.4 + 0.6 * rise);
+        ctx.save();
+        ctx.globalAlpha = 0.4 + 0.6 * rise;
+        ctx.fillStyle = '#5C3A1E';
+        ctx.beginPath(); ctx.arc(m.x, m.y, r, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#E8A0A0';   // pink nose
+        ctx.beginPath(); ctx.arc(m.x, m.y + r * 0.25, r * 0.22, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FF2222';   // angry red eyes
+        ctx.beginPath();
+        ctx.arc(m.x - r * 0.35, m.y - r * 0.25, r * 0.15, 0, Math.PI * 2);
+        ctx.arc(m.x + r * 0.35, m.y - r * 0.25, r * 0.15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#D8C8A8'; ctx.lineWidth = 2;   // claws
+        for (const side of [-1, 1]) {
+            for (let k = -1; k <= 1; k++) {
+                ctx.beginPath();
+                ctx.moveTo(m.x + side * r * 0.8, m.y + r * 0.4 + k * 3);
+                ctx.lineTo(m.x + side * r * 1.25, m.y + r * 0.55 + k * 4);
+                ctx.stroke();
+            }
+        }
+        ctx.restore();
+    }
+
+    // "You found …!" message floating up
     if (hell.foundMsg) {
         const m = hell.foundMsg;
+        const y = m.y - (120 - m.timer) * 0.3;
         ctx.save();
         ctx.globalAlpha = Math.min(1, m.timer / 30);
         ctx.fillStyle = m.color; ctx.shadowColor = m.color; ctx.shadowBlur = 12;
         ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(m.text, m.x, m.y - (90 - m.timer) * 0.4);
+        ctx.fillText(m.text, m.x, y);
+        if (m.sub) {
+            ctx.fillStyle = m.sub.startsWith('Look out') ? '#FF6666' : '#FFE08A';
+            ctx.shadowBlur = 6; ctx.font = 'bold 12px Arial';
+            ctx.fillText(m.sub, m.x, y + 18);
+        }
         ctx.restore();
     }
 
@@ -1504,9 +1638,9 @@ function drawHUD() {
 
     // Power
     const pc = { None: '#888', Ice: '#4488FF', Brimstone: '#FF4422' };
-    ctx.fillStyle = pc[state.power];
+    ctx.fillStyle = state.power === POWER.RAINBOW ? getPlayerColor() : pc[state.power];
     ctx.font = 'bold 17px Arial'; ctx.textAlign = 'right';
-    ctx.fillText(`Power: ${state.power}`, 786, 28);
+    ctx.fillText(`Power: ${powerName()}`, 786, 28);
 
     // ── AMMO BAR ──────────────────────────────────────────────
     if (state.power !== POWER.NONE && state.room !== ROOM.VOID) {
@@ -1766,7 +1900,7 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(nearbyDigSpot() ? 'DIG' : 'SHOOT', VSHOOT.x, VSHOOT.y);
+    ctx.fillText(nearbyDigSpot() && canDig() ? 'DIG' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
 }
