@@ -97,7 +97,7 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 })();
 
 // ── CONSTANTS ────────────────────────────────────────────────
-const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven' };
+const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -256,6 +256,8 @@ const WORKERS = [
     { id: 'mayor',  name: 'Mayor',      x: 580, y: 226, coat: '#2A4A88', hat: 'mayor',  giver: true },
     { id: 'farmer', name: 'Farmer',     x: 278, y: 455, coat: '#4A7A2A', hat: 'farmer', giver: true },
     { id: 'fisher', name: 'Fisher',     x: 592, y: 548, coat: '#2A6A8A', hat: 'fisher', giver: true },
+    { id: 'teacher', name: 'Teacher (School)', x: 254, y: 250, coat: '#AA4444', hat: 'teacher' },
+    { id: 'hattie',  name: 'Hattie the Hat Seller', x: 700, y: 292, coat: '#E080C0', hat: 'hattie' },
 ];
 // Villagers stroll around the town square
 const VILLAGERS = [
@@ -273,6 +275,24 @@ const FARM       = { x: 40, y: 440, w: 200, h: 92 };
 const FARM_CROPS = [70, 118, 166, 214].flatMap(x => [{ x, y: 468 }, { x, y: 508 }]);
 const FISH_SPOT  = { x: 640, y: 574 };   // the end of the pier
 const CRAFTING_TABLE = { id: 'crafting', name: 'Crafting Table', x: 520, y: 432, table: true };
+const LESSONS = [
+    { id: 'running', icon: '🏃', name: 'Running Class',  cost: 10, desc: 'Run 20% faster everywhere' },
+    { id: 'magnet',  icon: '🧲', name: 'Magnet Class',   cost: 12, desc: 'Coins fly to you from far away' },
+    { id: 'shield',  icon: '🛡', name: 'Dodging Class',  cost: 15, desc: 'Longer safe time after a hit' },
+    { id: 'healing', icon: '💖', name: 'Healing Class',  cost: 20, desc: 'Heal 1 heart every 30 s anywhere' },
+    { id: 'double',  icon: '✌', name: 'Double Shot',    cost: 25, desc: 'Normal weapons fire 2 shots' },
+    { id: 'reload',  icon: '⏩', name: 'Quick Hands',    cost: 18, desc: 'Reload twice as fast' },
+];
+const HATS = [
+    { id: 'crown',   icon: '👑', name: 'Crown',        cost: 30 },
+    { id: 'cowboy',  icon: '🤠', name: 'Cowboy Hat',   cost: 12 },
+    { id: 'wizard',  icon: '🧙', name: 'Wizard Hat',   cost: 15 },
+    { id: 'tophat',  icon: '🎩', name: 'Top Hat',      cost: 10 },
+    { id: 'party',   icon: '🥳', name: 'Party Hat',    cost: 5  },
+    { id: 'pirate',  icon: '🏴‍☠️', name: 'Pirate Hat',   cost: 15 },
+    { id: 'cap',     icon: '🧢', name: 'Baseball Cap', cost: 6  },
+    { id: 'flowers', icon: '🌸', name: 'Flower Crown', cost: 8  },
+];
 const NIGHT_MONSTER_CHANCE = 0.7;         // some nights are quiet… (but never two quiet nights in a row)
 const QUIET_NIGHT_FRAMES   = 600;         // a quiet night lasts 10 s
 const AMBUSH_FRAMES        = [700, 1500]; // daytime: monsters sometimes pop up every 12–25 s
@@ -343,6 +363,14 @@ let state = {
     armor:              0,         // +hearts from crafted armor
     diamondPickaxe:     false,
     heavenWishes:       3,
+    // Island life
+    furniture:          { bed: true },   // what's in your house
+    lessonHealTimer:    0,
+    garden:             [0, 0, 0, 0],    // when each pot was planted (Date.now()), 0 = empty
+    lessons:            {},              // School lessons you've learned
+    hats:               {},              // hats you own
+    hat:                null,            // hat you're wearing
+    houseFrom:          null,            // which house door you went in by
     faceY:              0,
     // Score
     score:              0,
@@ -468,12 +496,12 @@ function pressAction() {
     if (menu) return;
     if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
         const { cx, cy } = buildTargetCell();
-        buildAt(cx, cy);
+        buildAt(cx, cy, player.x + state.faceX * 30, player.y + 5 + state.faceY * 30);
         return;
     }
     if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
-    else if (!tryDig() && !tryTalk() && !tryTownAction()) shoot();
+    else if (!tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
@@ -569,7 +597,7 @@ canvas.addEventListener('click', e => {
     if (handleTap(p.x, p.y)) return;
     // Build mode: click a spot near you to mine / place there
     if (state.buildMode && state.gamePhase === 'playing' && !menu && !state.shopOpen && Math.hypot(p.x - player.x, p.y - player.y) < BUILD_REACH) {
-        buildAt(Math.floor(p.x / CELL), Math.floor(p.y / CELL));
+        buildAt(Math.floor(p.x / CELL), Math.floor(p.y / CELL), p.x, p.y);
     }
 });
 
@@ -803,6 +831,7 @@ function makeParadise() {
         ],
         villagers: VILLAGERS.map(v => ({ ...v, tx: v.x, ty: v.y, walk: 0, face: 1 })),
         crops:     FARM_CROPS.map(c => ({ ...c, thirsty: false })),
+        birthday:  Math.random() < 0.4 ? { id: VILLAGERS[Math.floor(Math.random() * VILLAGERS.length)].id, wished: false } : null,
         fishing:   { stage: 'idle', timer: 0 },   // 'idle' → 'waiting' → 'bite'
         quiet:     false,     // tonight is a quiet night (no monsters)
         lastQuiet: false,
@@ -865,6 +894,161 @@ function makeUnderground() {
         // Glowing mushrooms (just for looks)
         shrooms: Array.from({ length: 14 }, (_, i) => ({ x: 40 + (i * 97) % 720, y: 80 + (i * 211) % 480, h: (i * 53) % 360 })),
     };
+}
+
+// ── YOUR HOME (inside whichever house you own) ────────────────
+const FURNITURE = [
+    { id: 'tv',        icon: '📺', name: 'Big TV',       cost: 15, x: 400, y: 128 },
+    { id: 'sofa',      icon: '🛋', name: 'Comfy Sofa',   cost: 10, x: 400, y: 220 },
+    { id: 'rug',       icon: '🟥', name: 'Fluffy Rug',   cost: 5,  x: 400, y: 330 },
+    { id: 'picture',   icon: '🖼', name: 'Picture',      cost: 5,  x: 250, y: 100 },
+    { id: 'lamp',      icon: '💡', name: 'Lamp',         cost: 6,  x: 690, y: 170 },
+    { id: 'bookshelf', icon: '📚', name: 'Bookshelf',    cost: 8,  x: 560, y: 118 },
+    { id: 'fishtank',  icon: '🐠', name: 'Fish Tank',    cost: 12, x: 130, y: 430 },
+];
+const HOUSE_BED    = { x: 130, y: 200 };
+const HOUSE_DOOR   = { x: 400, y: 578 };
+const CATALOGUE    = { id: 'catalogue', name: 'Furniture Catalogue', x: 290, y: 470 };
+const GARDEN_POTS  = [0, 1, 2, 3].map(i => ({ x: 560 + i * 50, y: 470 }));
+const GROW_MS      = 45000;   // a seed takes 45 s to grow (even while you're away!)
+const PET_BEDS     = [{ x: 560, y: 320 }, { x: 610, y: 320 }, { x: 660, y: 320 }, { x: 710, y: 320 }];
+
+function gardenStage(i) {
+    const t = state.garden[i];
+    if (!t) return 0;                                    // empty
+    return Math.min(3, 1 + Math.floor((Date.now() - t) / (GROW_MS / 2)));   // 1 seed, 2 sprout, 3 ready!
+}
+
+function nearHome(obj, r = 34) { return state.room === ROOM.HOUSE && Math.hypot(player.x - obj.x, player.y - obj.y) < r; }
+function nearPot() { return state.room === ROOM.HOUSE ? GARDEN_POTS.findIndex(p => Math.hypot(player.x - p.x, player.y - p.y) < 26) : -1; }
+
+// Things you can do at home with the main button
+function tryHomeAction() {
+    if (state.room !== ROOM.HOUSE) return false;
+    if (nearHome(CATALOGUE)) { openMenu('📖 FURNITURE CATALOGUE', furnitureItems); return true; }
+    if (nearHome(HOUSE_BED, 40)) {
+        state.playerHp = fullHearts();
+        spawnParticles(player.x, player.y, '#FF88AA', 12);
+        showToast('Zzz… you had a lovely nap. All hearts back! ❤', '#FFB0C8');
+        sfx('buy');
+        return true;
+    }
+    const i = nearPot();
+    if (i >= 0) {
+        const stage = gardenStage(i), p = GARDEN_POTS[i];
+        if (stage === 0) { state.garden[i] = Date.now(); spawnFloatText(p.x, p.y - 30, '🌱 Planted! Come back soon', '#88FF88', 70); sfx('dig'); }
+        else if (stage < 3) spawnFloatText(p.x, p.y - 30, 'Still growing…', '#CCFFCC', 50);
+        else {
+            state.garden[i] = 0;
+            const veg = ['🥕 Carrot', '🍓 Strawberry', '🍅 Tomato', '🌽 Corn'][i];
+            if (state.playerHp < fullHearts()) { state.playerHp++; spawnFloatText(p.x, p.y - 30, `${veg}! +1 ❤`, '#FFAA66', 80); }
+            else { addScore(20); spawnFloatText(p.x, p.y - 30, `${veg}! +20`, '#FFAA66', 80); }
+            sfx('found'); giveAward('gardener');
+        }
+        return true;
+    }
+    return false;
+}
+
+function furnitureItems() {
+    return FURNITURE.map(f => ({
+        icon: f.icon, name: f.name, desc: 'Makes your home look amazing', cost: f.cost,
+        status: state.furniture[f.id] ? 'IN YOUR HOME' : null,
+        action: () => {
+            if (state.furniture[f.id]) return;
+            if (spend(f.cost)) {
+                state.furniture[f.id] = true;
+                showToast(`${f.icon} ${f.name} added to your home!`);
+                if (FURNITURE.every(x => state.furniture[x.id])) giveAward('decorator');
+            }
+        },
+    }));
+}
+
+function paintHouse(g, R) {
+    // Wooden floor
+    for (let y = 130; y < 600; y += 20) {
+        for (let x = (y / 20) % 2 ? -40 : 0; x < 800; x += 80) {
+            g.fillStyle = `hsl(30, ${35 + R() * 10}%, ${38 + R() * 8}%)`;
+            g.fillRect(x, y, 79, 19);
+        }
+    }
+    // Wallpaper wall with a skirting board
+    g.fillStyle = '#F4E4C8'; g.fillRect(0, 46, 800, 90);
+    g.fillStyle = 'rgba(220,160,120,0.35)';
+    for (let x = 0; x < 800; x += 24) g.fillRect(x, 46, 10, 90);
+    g.fillStyle = '#8A5A34'; g.fillRect(0, 130, 800, 8);
+    // Windows
+    for (const wx of [90, 690]) {
+        const sky = g.createLinearGradient(0, 62, 0, 118);
+        sky.addColorStop(0, '#7FC8FF'); sky.addColorStop(1, '#D8F0FF');
+        g.fillStyle = sky; g.fillRect(wx - 28, 62, 56, 56);
+        g.strokeStyle = '#FFFFFF'; g.lineWidth = 4; g.strokeRect(wx - 28, 62, 56, 56);
+        g.beginPath(); g.moveTo(wx, 62); g.lineTo(wx, 118); g.moveTo(wx - 28, 90); g.lineTo(wx + 28, 90); g.stroke();
+    }
+    // Garden corner (soil)
+    g.fillStyle = '#6B8A3A'; g.fillRect(520, 430, 270, 80);
+    // Front door mat
+    g.fillStyle = '#8A3A2A'; g.fillRect(360, 560, 80, 30);
+}
+
+function drawHouse() {
+    const t = Date.now() / 1000, F = state.furniture;
+    const label = (text, x, y) => { ctx.fillStyle = 'rgba(60,30,10,0.8)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
+    // Front door (walk into it to go outside)
+    ctx.fillStyle = '#6B3E1E'; ctx.fillRect(HOUSE_DOOR.x - 22, 560, 44, 40);
+    ctx.fillStyle = '#FFD700'; ctx.fillRect(HOUSE_DOOR.x + 12, 578, 4, 4);
+    label('⬇ WAY OUT', HOUSE_DOOR.x, 556);
+    if (F.rug)     { ctx.fillStyle = '#C0304A'; ctx.beginPath(); ctx.ellipse(400, 330, 110, 45, 0, 0, Math.PI * 2); ctx.fill();
+                     ctx.strokeStyle = '#FFD0A0'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(400, 330, 95, 36, 0, 0, Math.PI * 2); ctx.stroke(); }
+    if (F.picture) { ctx.fillStyle = '#C8A040'; ctx.fillRect(222, 70, 56, 44); ctx.fillStyle = '#7FC8FF'; ctx.fillRect(228, 76, 44, 32);
+                     ctx.fillStyle = '#4CAF50'; ctx.beginPath(); ctx.moveTo(228, 108); ctx.lineTo(245, 88); ctx.lineTo(262, 108); ctx.fill();
+                     ctx.fillStyle = '#FFE066'; ctx.beginPath(); ctx.arc(262, 84, 4, 0, Math.PI * 2); ctx.fill(); }
+    if (F.bookshelf) { ctx.fillStyle = '#6B3E1E'; ctx.fillRect(530, 70, 60, 64);
+                     for (let r = 0; r < 3; r++) for (let b = 0; b < 6; b++) { ctx.fillStyle = ['#C03030', '#3060C0', '#30A050', '#E0A020', '#8040A0', '#20A0A0'][(b + r) % 6]; ctx.fillRect(534 + b * 9, 74 + r * 20, 7, 16); } }
+    if (F.tv)      { ctx.fillStyle = '#222'; ctx.fillRect(350, 84, 100, 60); ctx.fillStyle = `hsl(${(t * 40) % 360}, 60%, 55%)`; ctx.fillRect(356, 90, 88, 48);
+                     ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('📺 CARTOONS!', 400, 118);
+                     ctx.fillStyle = '#444'; ctx.fillRect(390, 144, 20, 6); }
+    if (F.sofa)    { ctx.fillStyle = '#3A6AB0'; pathRoundRect(340, 200, 120, 40, 10); ctx.fill(); ctx.fillStyle = '#4A7AC8'; pathRoundRect(345, 214, 110, 22, 8); ctx.fill(); }
+    if (F.lamp)    { ctx.fillStyle = '#555'; ctx.fillRect(688, 150, 4, 50); ctx.fillStyle = '#FFE8A0'; ctx.beginPath(); ctx.moveTo(676, 152); ctx.lineTo(704, 152); ctx.lineTo(698, 134); ctx.lineTo(682, 134); ctx.fill();
+                     const gl = ctx.createRadialGradient(690, 150, 4, 690, 150, 70); gl.addColorStop(0, 'rgba(255,230,150,0.35)'); gl.addColorStop(1, 'rgba(255,230,150,0)'); ctx.fillStyle = gl; ctx.fillRect(620, 80, 140, 140); }
+    if (F.fishtank){ ctx.fillStyle = 'rgba(80,170,230,0.7)'; ctx.fillRect(95, 405, 70, 45); ctx.strokeStyle = '#DDD'; ctx.lineWidth = 2; ctx.strokeRect(95, 405, 70, 45);
+                     for (let k = 0; k < 3; k++) { const fx = 105 + ((t * 20 + k * 22) % 50); ctx.fillStyle = ['#FF8800', '#FFDD00', '#FF4488'][k]; ctx.beginPath(); ctx.ellipse(fx, 418 + k * 10, 5, 3, 0, 0, Math.PI * 2); ctx.fill(); } }
+    // Bed (always)
+    ctx.fillStyle = '#8A5A34'; ctx.fillRect(90, 165, 80, 75);
+    ctx.fillStyle = '#FFFFFF'; ctx.fillRect(96, 170, 68, 18);
+    ctx.fillStyle = '#E05080'; ctx.fillRect(96, 190, 68, 45);
+    label('Bed — rest here', HOUSE_BED.x, 252);
+    // Catalogue
+    ctx.fillStyle = '#3A6A3A'; ctx.fillRect(CATALOGUE.x - 12, CATALOGUE.y - 9, 24, 18); ctx.fillStyle = '#FFE066'; ctx.fillRect(CATALOGUE.x - 1, CATALOGUE.y - 9, 2, 18);
+    label('📖 Furniture Catalogue', CATALOGUE.x, CATALOGUE.y + 22);
+    // Garden pots
+    GARDEN_POTS.forEach((p, i) => {
+        const st = gardenStage(i);
+        ctx.fillStyle = '#B0603A'; ctx.beginPath(); ctx.moveTo(p.x - 14, p.y - 4); ctx.lineTo(p.x + 14, p.y - 4); ctx.lineTo(p.x + 10, p.y + 14); ctx.lineTo(p.x - 10, p.y + 14); ctx.fill();
+        ctx.fillStyle = '#4A2E1A'; ctx.fillRect(p.x - 13, p.y - 6, 26, 4);
+        if (st >= 1) { ctx.strokeStyle = '#3A9A3A'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(p.x, p.y - 6); ctx.lineTo(p.x, p.y - 6 - st * 7); ctx.stroke(); }
+        if (st >= 2) { ctx.fillStyle = '#4CBF4C'; ctx.beginPath(); ctx.ellipse(p.x - 5, p.y - 14, 5, 3, -0.5, 0, Math.PI * 2); ctx.ellipse(p.x + 5, p.y - 17, 5, 3, 0.5, 0, Math.PI * 2); ctx.fill(); }
+        if (st === 3) { ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.fillText(['🥕', '🍓', '🍅', '🌽'][i], p.x, p.y - 26 + Math.sin(t * 3 + i) * 2); }
+    });
+    label('🌻 YOUR GARDEN — plant, wait, pick!', 655, 506);
+    // Pets asleep in their beds
+    let bed = 0;
+    PETS.forEach((pInfo, j) => {
+        if (!state.ownedPets[j] || j === state.activePet) return;
+        const b = PET_BEDS[bed++];
+        ctx.fillStyle = '#A06AC8'; ctx.beginPath(); ctx.ellipse(b.x, b.y + 8, 20, 9, 0, 0, Math.PI * 2); ctx.fill();
+        drawPetShape(pInfo.id, b.x, b.y, 1, 1);
+        ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+        ctx.fillText('z'.repeat(1 + Math.floor(t * 2 + j) % 3), b.x + 14, b.y - 16 - ((t * 10) % 8));
+    });
+    if (bed) label('💤 your pets are sleeping', 635, 346);
+    // What the button does here
+    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const i = nearPot();
+    if (nearHome(CATALOGUE)) drawSpeech(CATALOGUE, `${verb}: Buy furniture`);
+    else if (nearHome(HOUSE_BED, 40)) drawSpeech(HOUSE_BED, `${verb}: Take a nap (free heal)`);
+    else if (i >= 0) { const st = gardenStage(i); drawSpeech(GARDEN_POTS[i], `${verb}: ${st === 0 ? 'Plant a seed' : st < 3 ? 'Growing…' : 'Pick it!'}`); }
 }
 
 // ── HEAVEN: the opposite of Hell. No monsters, it heals you, 3 wishes, unlimited blocks ──
@@ -997,6 +1181,7 @@ const PORTALS = {
         { x: 740, y: 300, shape: 'circle'   },
         { x: 400, y: 545, shape: 'hexagon'  },
     ],
+    house: [],   // you leave by the front door, not a portal
     heaven: [
         { x: 60,  y: 330, shape: 'circle'   },
         { x: 740, y: 330, shape: 'star'     },
@@ -1134,6 +1319,9 @@ const SONGS = {
     secret: { bpm: 100, lead: 'triangle',   // sparkly treasure music
         melody: [84, 88, 91, 88, 96, 0, 91, 0, 86, 89, 93, 89, 98, 0, 93, 0,  84, 88, 91, 96, 95, 91, 88, 0, 86, 91, 95, 98, 96, 0, 0, 0],
         bass:   [48, 0, 55, 0, 52, 0, 55, 0, 50, 0, 57, 0, 53, 0, 57, 0,  48, 0, 55, 0, 52, 0, 55, 0, 55, 0, 50, 0, 48, 0, 0, 0] },
+    house: { bpm: 90, lead: 'triangle',   // cosy music box
+        melody: [76, 0, 79, 0, 84, 0, 83, 79, 81, 0, 77, 0, 79, 0, 0, 0,  76, 0, 79, 0, 84, 0, 86, 84, 83, 0, 79, 0, 81, 0, 0, 0],
+        bass:   [48, 0, 0, 0, 52, 0, 0, 0, 53, 0, 0, 0, 55, 0, 0, 0,  48, 0, 0, 0, 52, 0, 0, 0, 50, 0, 0, 0, 53, 0, 0, 0] },
     heaven: { bpm: 72, lead: 'triangle',   // gentle harp
         melody: [72, 76, 79, 84, 79, 76, 72, 0, 74, 77, 81, 86, 81, 77, 74, 0,  76, 79, 84, 88, 84, 79, 76, 0, 77, 81, 84, 89, 84, 81, 77, 0],
         bass:   [48, 0, 0, 0, 55, 0, 0, 0, 50, 0, 0, 0, 57, 0, 0, 0,  52, 0, 0, 0, 55, 0, 0, 0, 53, 0, 0, 0, 57, 0, 0, 0] },
@@ -1209,6 +1397,11 @@ const AWARDS = [
     { id: 'builder',     icon: '🧱', name: 'Builder',          desc: 'Place a block' },
     { id: 'crafter',     icon: '⚒',  name: 'Crafter',          desc: 'Craft something' },
     { id: 'diamond',     icon: '💎', name: 'DIAMONDS!',        desc: 'Mine a diamond' },
+    { id: 'decorator',   icon: '🛋', name: 'Decorator',        desc: 'Buy every piece of furniture' },
+    { id: 'gardener',    icon: '🥕', name: 'Green Fingers',    desc: 'Pick something from your garden' },
+    { id: 'student',     icon: '🎓', name: 'Top of the Class', desc: 'Learn a lesson at School' },
+    { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
+    { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -1238,7 +1431,8 @@ function countStat(stat) {
 const SAVE_KEY    = 'lop_save';
 const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'powerTier', 'playerHp', 'coins',
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
-                     'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe'];
+                     'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
+                     'furniture', 'garden', 'lessons', 'hats', 'hat'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -1309,7 +1503,7 @@ const HOTBAR = ['dirt', 'grass', 'stone', 'log', 'planks', 'brick', 'glass', 'le
 const MATERIALS = { iron: '⛓ Iron', diamond: '💎 Diamond' };
 const BUILD_REACH   = 170;    // how far away you can click to build
 const TNT_FUSE      = 90;
-const SAVED_WORLDS  = ['void', 'hell', 'paradise', 'heaven'];   // rooms whose blocks are remembered
+const SAVED_WORLDS  = ['void', 'hell', 'paradise', 'heaven', 'house'];   // rooms whose blocks are remembered
 
 let worldBlocks = {};   // room → { "cx,cy": { type, hits } }
 let litTnt = [];        // { room, cx, cy, t }
@@ -1329,6 +1523,7 @@ function roomBlocks(room = state.room) {
     return worldBlocks[room];
 }
 function blockAtCell(cx, cy) { return roomBlocks()[cellKey(cx, cy)]; }
+function blockAtCellIn(room, x, y) { return roomBlocks(room)[cellKey(Math.floor(x / CELL), Math.floor(y / CELL))]; }
 function solidAt(x, y) { return !!blockAtCell(Math.floor(x / CELL), Math.floor(y / CELL)); }
 
 // Your body touches a block? (feet-and-body box, a bit smaller than you look)
@@ -1376,6 +1571,7 @@ function invCount(type) { return state.inv[type] || 0; }
 function canPlaceAt(cx, cy) {
     const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
     if (x < 0 || x > 800 || y < 56 || y > 600) return false;
+    if (sceneryAt(x, y)) return false;
     if (Math.abs(x - player.x) < CELL / 2 + 8 && y + CELL / 2 > player.y - 6 && y - CELL / 2 < player.y + 16) return false;   // not on top of you
     for (const p of PORTALS[state.room] || []) if (Math.hypot(p.x - x, p.y - y) < PORTAL_R + 16) return false;
     if (goldenPortal && Math.hypot(goldenPortal.x - x, goldenPortal.y - y) < PORTAL_R + 16) return false;
@@ -1395,10 +1591,11 @@ function buildTargetCell() {
 }
 
 // Hit the block there (mine it), or place your block if it's empty
-function buildAt(cx, cy) {
+function buildAt(cx, cy, aimX, aimY) {
     const blocks = roomBlocks(), key = cellKey(cx, cy), b = blocks[key];
     const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
     state.digAnim = 14;
+    if (!b && mineScenery(aimX !== undefined ? aimX : x, aimY !== undefined ? aimY : y)) return;   // chop trees, mine rocks
     if (b) {
         b.hits++;
         const need = state.diamondPickaxe || isCreative() ? 1 : BLOCKS[b.type].hits;
@@ -1431,6 +1628,108 @@ function buildAt(cx, cy) {
     sfx('place');
     if (type === 'tnt') { litTnt.push({ room: state.room, cx, cy, t: TNT_FUSE }); sfx('hiss'); }
     giveAward('builder');
+}
+
+// ── SCENERY you can mine: the big trees, boulders and rocks ──
+const TREE_SPOTS    = [[30, 205, 26], [775, 330, 28], [520, 272, 18], [280, 300, 18], [760, 440, 26], [30, 395, 22], [260, 90, 18], [540, 95, 18]];
+const TREE_REGROW_MS = 60000;   // chopped trees grow back after a minute
+let scenery = {
+    paradise: TREE_SPOTS.map(([x, y, r]) => ({ kind: 'tree', x, y, r, hits: 0, gone: 0, shake: 0 })),
+    hell: [], underground: [],
+};
+
+function makeRocks(n, kind, avoid) {
+    const list = [];
+    let tries = 0;
+    while (list.length < n && tries++ < 500) {
+        const x = 60 + Math.random() * 680, y = 90 + Math.random() * 460, r = 12 + Math.random() * 12;
+        if (avoid(x, y)) continue;
+        list.push({ kind, x, y, r, hits: 0, gone: 0, shake: 0 });
+    }
+    return list;
+}
+
+function sceneryAt(px, py) {
+    return (scenery[state.room] || []).find(o => !o.gone && Math.hypot(o.x - px, (o.kind === 'tree' ? o.y - o.r * 0.2 : o.y) - py) < o.r + 12);
+}
+
+// Chop a tree / mine a rock. Returns true if there was something there.
+function mineScenery(px, py) {
+    const o = sceneryAt(px, py);
+    if (!o) return false;
+    const need = state.diamondPickaxe || isCreative() ? 1 : o.kind === 'tree' ? 5 : 4;
+    o.hits++; o.shake = 10;
+    spawnParticles(o.x, o.y - (o.kind === 'tree' ? o.r * 0.4 : 0), o.kind === 'tree' ? '#4CAF50' : '#777', 5);
+    sfx('dig');
+    if (o.hits < need) return true;
+    o.hits = 0;
+    o.gone = Date.now();
+    const give = (k, n) => { state.inv[k] = invCount(k) + n; };
+    let text;
+    if (o.kind === 'tree') {
+        give('log', 3); give('leaves', 2);
+        text = '🪵 +3 Wood Log  🍃 +2 Leaves';
+        if (Math.random() < 0.3 && state.playerHp < fullHearts()) { state.playerHp++; text += '  🍎 +1 ❤'; }
+        sfx('whoosh');
+    } else {
+        give('stone', 2);
+        text = '🪨 +2 Stone';
+        if (o.kind === 'lavaRock' && Math.random() < 0.3) { give('gold', 1); text += '  ✨ +1 Gold Block'; }
+        if (o.kind === 'boulder' && Math.random() < 0.25) { give('iron', 1); text += '  ⛓ +1 Iron'; }
+    }
+    spawnFloatText(o.x, o.y - o.r - 10, text, '#FFFFFF', 80);
+    spawnParticles(o.x, o.y, o.kind === 'tree' ? '#7A5230' : '#888', 14);
+    return true;
+}
+
+function updateScenery() {
+    for (const o of scenery.paradise) {
+        if (o.shake > 0) o.shake--;
+        if (o.gone && Date.now() - o.gone > TREE_REGROW_MS) { o.gone = 0; o.hits = 0; }   // it grew back!
+    }
+    for (const o of [...scenery.hell, ...scenery.underground]) if (o.shake > 0) o.shake--;
+}
+
+function drawTree(o) {
+    const { x, y, r } = o;
+    if (o.gone) {   // just a stump (growing back)
+        ctx.fillStyle = '#6B4A2A'; ctx.beginPath(); ctx.ellipse(x, y + r * 0.7, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#A07A4A'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(x, y + r * 0.7, 3.5, 2, 0, 0, Math.PI * 2); ctx.stroke();
+        const grow = Math.min(1, (Date.now() - o.gone) / TREE_REGROW_MS);
+        if (grow > 0.3) { ctx.fillStyle = '#4CAF50'; ctx.beginPath(); ctx.arc(x, y + r * 0.55, 3 + grow * 5, 0, Math.PI * 2); ctx.fill(); }   // little sapling
+        return;
+    }
+    const wob = o.shake > 0 ? Math.sin(o.shake * 2) * 3 : 0;
+    drawGroundShadow(x + 8, y + r * 0.9, r * 0.9, r * 0.35, 0.25);
+    ctx.fillStyle = '#5A3A1E'; ctx.fillRect(x - 4, y, 8, r * 0.8);
+    for (const [ox, oy, rr] of [[-r * 0.45, -r * 0.1, r * 0.7], [r * 0.45, -r * 0.1, r * 0.7], [0, -r * 0.55, r * 0.75]]) {
+        const gr = ctx.createRadialGradient(x + ox + wob - rr * 0.3, y + oy - rr * 0.3, rr * 0.1, x + ox + wob, y + oy, rr);
+        gr.addColorStop(0, '#6FCB55'); gr.addColorStop(1, '#1F5E1C');
+        ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x + ox + wob, y + oy, rr, 0, Math.PI * 2); ctx.fill();
+    }
+    if (o.hits > 0) { ctx.strokeStyle = 'rgba(40,20,10,0.8)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x - 4, y + r * 0.4); ctx.lineTo(x + o.hits, y + r * 0.35); ctx.stroke(); }   // axe notch
+}
+
+function drawRock(o) {
+    if (o.gone) return;
+    const wob = o.shake > 0 ? Math.sin(o.shake * 2) * 2 : 0, x = o.x + wob, { y, r } = o;
+    drawGroundShadow(x + 4, y + r * 0.6, r, r * 0.3, 0.3);
+    const st = ctx.createRadialGradient(x - r * 0.4, y - r * 0.4, 2, x, y, r);
+    if (o.kind === 'lavaRock') { st.addColorStop(0, '#5A4A48'); st.addColorStop(1, '#1A0E0C'); }
+    else                       { st.addColorStop(0, '#7A6656'); st.addColorStop(1, '#2A1C12'); }
+    ctx.fillStyle = st; ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.75, 0, 0, Math.PI * 2); ctx.fill();
+    if (o.kind === 'lavaRock') {   // glowing cracks
+        ctx.strokeStyle = 'rgba(255,110,20,0.85)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(x - r * 0.5, y); ctx.lineTo(x - r * 0.1, y - r * 0.2); ctx.lineTo(x + r * 0.3, y + r * 0.1); ctx.stroke();
+    }
+    if (o.hits > 0) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(x - r * 0.3, y - r * 0.4); ctx.lineTo(x, y); ctx.lineTo(x - r * 0.1, y + r * 0.4); ctx.stroke();
+    }
+}
+
+function drawScenery() {
+    for (const o of scenery[state.room] || []) (o.kind === 'tree' ? drawTree : drawRock)(o);
 }
 
 // TNT and creepers blow up nearby blocks
@@ -1529,9 +1828,18 @@ function drawBlocks() {
     }
     if (state.buildMode && state.gamePhase === 'playing') {   // which block you're aiming at
         const { cx, cy } = buildTargetCell();
-        ctx.strokeStyle = blockAtCell(cx, cy) ? '#FFFFFF' : canPlaceAt(cx, cy) ? '#FFE066' : '#FF6666';
+        const sc = !blockAtCell(cx, cy) && sceneryAt(player.x + state.faceX * 30, player.y + 5 + state.faceY * 30);
         ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
-        ctx.strokeRect(cx * CELL + 1, cy * CELL + 1, CELL - 2, CELL - 2);
+        if (sc) {   // aiming at a tree or rock
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.beginPath(); ctx.arc(sc.x, sc.kind === 'tree' ? sc.y - sc.r * 0.2 : sc.y, sc.r + 6, 0, Math.PI * 2); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+            ctx.fillText(sc.kind === 'tree' ? '🪓 Chop!' : '⛏ Mine!', sc.x, sc.y - sc.r - 14);
+        } else {
+            ctx.strokeStyle = blockAtCell(cx, cy) ? '#FFFFFF' : canPlaceAt(cx, cy) ? '#FFE066' : '#FF6666';
+            ctx.strokeRect(cx * CELL + 1, cy * CELL + 1, CELL - 2, CELL - 2);
+        }
         ctx.setLineDash([]);
     }
 }
@@ -1545,7 +1853,7 @@ function drawHotbar() {
     ctx.fillStyle = '#FFE066'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
     const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap BUILD' : 'SPACE / click';
     const cyc  = lastInput === 'pad' ? 'B' : lastInput === 'touch' ? '🔄' : 'Q or 1-9';
-    ctx.fillText(`🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${verb}: place / mine   ${cyc}: pick block`, 400, y0 - 12);
+    ctx.fillText(`🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${verb}: place / mine / chop trees   ${cyc}: pick block`, 400, y0 - 12);
     HOTBAR.forEach((type, i) => {
         const x = x0 + i * W, count = invCount(type);
         ctx.fillStyle = i === state.hotbar ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.08)';
@@ -1665,7 +1973,7 @@ function damagePlayer() {
     }
     sfx('hurt');
     state.playerHp--;
-    state.playerInvincible = 90;
+    state.playerInvincible = state.lessons.shield ? 150 : 90;
     triggerShake(14);
     spawnParticles(player.x, player.y, '#FF4444', 8);
     if (state.playerHp <= 0) respawnPlayer();
@@ -1697,6 +2005,7 @@ function resetGame() {
         ownedPets: PETS.map(() => false), activePet: -1,
         ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
         buildMode: false, hotbar: 0, inv: {}, armor: 0, diamondPickaxe: false,
+        furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -1787,7 +2096,15 @@ function changeRoom(dest) {
     state.awardsOpen = false;
     menu = null;
     gadgetObjs = [];
-    if (dest === ROOM.UNDERGROUND) worldBlocks.underground = makeWorldBlocks('underground');   // a fresh cave every time
+    if (dest === ROOM.UNDERGROUND) {   // a fresh cave every time
+        worldBlocks.underground = makeWorldBlocks('underground');
+        scenery.underground = makeRocks(14, 'boulder', (x, y) => Math.hypot(x - 100, y - 300) < 80 || Math.abs(x - 640) < 70
+            || !!blockAtCellIn('underground', x, y));
+    }
+    if (dest === ROOM.HELL) {
+        scenery.hell = makeRocks(8, 'lavaRock', (x, y) => inAnyCave(x, y, 20) || Math.hypot(x - 100, y - 300) < 80
+            || (PORTALS.hell).some(p => Math.hypot(p.x - x, p.y - y) < PORTAL_R + 30) || !!blockAtCellIn('hell', x, y));
+    }
     if (dest === ROOM.SECRET)      worldBlocks.secret = {};
     if (worldDirty) saveWorld();
     projectiles      = [];
@@ -1814,6 +2131,7 @@ function changeRoom(dest) {
     if (dest === ROOM.SECRET)      { player.x = 400; player.y = 420; secretRoom = makeSecretRoom(); giveAward('secret'); }
     if (dest === ROOM.UNDERGROUND) { player.x = 100; player.y = 300; underground = makeUnderground(); giveAward('underground'); }
     if (dest === ROOM.HEAVEN)      { player.x = 400; player.y = 330; heaven = makeHeaven(); giveAward('heaven'); }
+    if (dest === ROOM.HOUSE)       { player.x = HOUSE_DOOR.x; player.y = 520; }
     if (state.gamePhase === 'playing') saveGame();
     goldenPortal = MAIN_ROOMS.includes(dest) && Math.random() < SECRET_PORTAL_CHANCE
         ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
@@ -1824,7 +2142,7 @@ function changeRoom(dest) {
 function updatePlayer() {
     if (state.won || state.levelComplete || state.gamePhase !== 'playing') return;
 
-    const spd = state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED;
+    const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1);
     let dx = 0, dy = 0;
     if (!state.shopOpen && !state.awardsOpen && !menu) {
         if (keys['ArrowLeft']  || keys['KeyA']) dx -= 1;
@@ -1861,6 +2179,13 @@ function updatePlayer() {
             changeRoom(randomDoorDestination());
             return;
         }
+    }
+    // Out through your front door, back to the house you came in by
+    if (state.room === ROOM.HOUSE && player.y > 560 && Math.abs(player.x - HOUSE_DOOR.x) < 24) {
+        const door = houseDoors().find(d => d.id === state.houseFrom) || houseDoors()[0];
+        changeRoom(ROOM.PARADISE);
+        player.x = door.x; player.y = door.y + 22;
+        return;
     }
     if (goldenPortal && Math.hypot(player.x - goldenPortal.x, player.y - goldenPortal.y) < PORTAL_R * 0.75) {
         sfx('win');
@@ -1972,6 +2297,15 @@ function dropLoot(e) {
         });
     }
     if (Math.random() < HEART_DROP_CHANCE) heartPickups.push({ x: e.x + 12, y: e.y, life: 600 });
+}
+
+// Some mornings it's somebody's birthday!
+function maybeBirthday() {
+    paradise.birthday = null;
+    if (Math.random() > 0.4) return;
+    const who = [...WORKERS, ...VILLAGERS][Math.floor(Math.random() * (WORKERS.length + VILLAGERS.length))];
+    paradise.birthday = { id: who.id, wished: false };
+    setTimeout(() => showToast(`🎂 It's ${who.name}'s BIRTHDAY! Go and say Happy Birthday!`, '#FF88CC', 260), 1500);
 }
 
 // Every hit knocks little slimes off the King Slime
@@ -2381,7 +2715,7 @@ function shoot() {
     const w     = WEAPON_INFO[state.power];
     const color = state.power === POWER.RAINBOW ? `hsl(${Math.random() * 360}, 100%, 60%)` : w.color;
     // SUPER and RAINBOW weapons fire 3 shots in a spread for the same ammo
-    const spread = state.powerTier >= 2 ? [-0.2, 0, 0.2] : [0];
+    const spread = state.powerTier >= 2 ? [-0.2, 0, 0.2] : state.lessons.double ? [-0.08, 0.08] : [0];
     for (const off of spread) {
         projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a + off) * w.speed, dy: Math.sin(a + off) * w.speed,
             color, power: state.power, life: 90, r: w.size });
@@ -2579,6 +2913,23 @@ const pet = { x: 370, y: 320, cooldown: 0, healTimer: 0, face: 1 };
 
 function placePetBesidePlayer() {
     pet.x = player.x - 28; pet.y = player.y + 16; pet.cooldown = 30;
+}
+
+// School lessons that work all the time
+function updateLessons() {
+    if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return;
+    if (state.lessons.magnet) {   // coins fly to you
+        for (const c of roomCoins()) {
+            if (c.picked) continue;
+            const d = Math.hypot(player.x - c.x, player.y - c.y);
+            if (d < 260 && d > 1) { c.x += (player.x - c.x) / d * 4; c.y += (player.y - c.y) / d * 4; }
+        }
+    }
+    if (state.lessons.healing && state.playerHp < fullHearts() && ++state.lessonHealTimer >= 1800) {
+        state.lessonHealTimer = 0; state.playerHp++;
+        spawnFloatText(player.x, player.y - 30, '💖 +1', '#FF88AA', 60);
+    }
+    if (state.lessons.reload && state.ammoReloading) state.ammoReloadTimer--;   // counts down twice as fast
 }
 
 function updatePet() {
@@ -2911,6 +3262,29 @@ function drawRainbowArc() {
     ctx.restore();
 }
 
+function lessonItems() {
+    return LESSONS.map(l => ({
+        icon: l.icon, name: l.name, desc: l.desc, cost: l.cost, status: state.lessons[l.id] ? 'LEARNED' : null,
+        action: () => {
+            if (state.lessons[l.id]) return;
+            if (spend(l.cost)) { state.lessons[l.id] = true; showToast(`🎓 You learned ${l.name}!`); giveAward('student'); }
+        },
+    }));
+}
+
+function hatItems() {
+    return [
+        ...HATS.map(h => ({
+            icon: h.icon, name: h.name, desc: state.hat === h.id ? 'You are wearing it!' : 'Looks great on you', cost: h.cost,
+            status: state.hat === h.id ? 'WEARING' : state.hats[h.id] ? 'OWNED — wear' : null,
+            action: () => {
+                if (state.hats[h.id]) { state.hat = state.hat === h.id ? null : h.id; return; }
+                if (spend(h.cost)) { state.hats[h.id] = true; state.hat = h.id; showToast(`${h.icon} Looking good in your ${h.name}!`); giveAward('hat'); }
+            },
+        })),
+    ];
+}
+
 // Crafting recipes: turn what you've mined into new things
 function craftItems() {
     const has = (need) => Object.entries(need).every(([k, v]) => invCount(k) >= v);
@@ -3070,8 +3444,11 @@ function startJob(job) {
 function talkLabel(n) {
     const job = state.job, maxHp = fullHearts();
     if (job && job.kind === 'deliver' && job.stops[0] === n.id) return `Deliver ${job.item}`;
-    if (n.door)            return state.housesOwned[n.id] ? 'Rest (free heal)' : `Buy ${n.name} (🪙${n.cost})`;
+    if (n.door)            return state.housesOwned[n.id] ? 'Go inside 🏠' : `Buy ${n.name} (🪙${n.cost})`;
     if (n.table)           return 'Craft things ⚒';
+    if (n.id === 'teacher') return 'Go to School 🏫';
+    if (n.id === 'hattie')  return 'Buy a hat 🎩';
+    if (paradise.birthday && paradise.birthday.id === n.id && !paradise.birthday.wished) return 'Say Happy Birthday! 🎂';
     if (n.id === 'doctor') return state.playerHp < maxHp ? `Heal (🪙${HEAL_COST})` : 'Talk';
     if (n.id === 'smith')  return 'Open the Forge 🔨';
     if (WORKERS.some(w => w.id === n.id && w.giver)) {
@@ -3109,13 +3486,23 @@ function talkTo(n) {
     const giver = WORKERS.find(w => w.id === n.id && w.giver);
 
     if (n.table) { openMenu('⚒ CRAFTING TABLE', craftItems); return; }
+    if (n.id === 'teacher') { openMenu('🏫 SCHOOL — learn something new!', lessonItems); return; }
+    if (n.id === 'hattie')  { openMenu("🎩 HATTIE'S HATS", hatItems); return; }
+    if (paradise.birthday && paradise.birthday.id === n.id && !paradise.birthday.wished) {
+        paradise.birthday.wished = true;
+        if (state.playerHp < fullHearts()) state.playerHp++;
+        addScore(50);
+        spawnConfettiAt(n.x, n.y - 20);
+        say(n, 'Thank you!! Have some cake! 🎂 (+1 ❤)');
+        [523, 523, 587, 523, 698, 659].forEach((f, i) => tone(f, 0.25, 'triangle', 0.14, null, i * 0.28));   // Happy Birthday tune
+        giveAward('party');
+        return;
+    }
     if (n.door) {
         const b = BUILDINGS.find(b => b.id === n.id);
         if (state.housesOwned[n.id]) {
-            state.playerHp = maxHp;
-            spawnParticles(player.x, player.y, '#FF6688', 12);
-            say(n, 'Zzz… all rested! ❤');
-            sfx('buy');
+            state.houseFrom = n.id;
+            changeRoom(ROOM.HOUSE);
         } else if (state.coins < n.cost) {
             say(n, `This ${n.name.toLowerCase()} costs 🪙${n.cost}. Keep saving!`);
         } else {
@@ -3271,6 +3658,7 @@ function updateTown() {
     } else if (P.phase === 'night' && P.quiet && --P.timer <= 0) {
         P.phase = 'day'; P.timer = DAY_FRAMES; P.quiet = false;
         showToast('☀ Good morning, Paradise Island!', '#FFE066');
+        maybeBirthday();
     }
 }
 
@@ -3348,6 +3736,7 @@ function checkPickups() {
                 // Morning comes!
                 paradise.phase = 'day';
                 paradise.timer = DAY_FRAMES;
+                maybeBirthday();
             }
         }
         // Coins in Paradise
@@ -4440,6 +4829,8 @@ function drawBuilding(b, night) {
 // Hair, skin and clothes for each townsperson
 const TOWN_LOOKS = {
     doctor: { hair: '#2A1A10', hairStyle: 'short', pants: '#DDD' },
+    teacher:{ hair: '#6A3A1A', hairStyle: 'bun', pants: '#333' },
+    hattie: { hair: '#FFCC33', hairStyle: 'long', pants: '#884488' },
     baker:  { hair: '#8A5A2A', hairStyle: 'short', pants: '#6A4A2A', skin: '#E8B48A' },
     smith:  { hair: '#1A1A1A', hairStyle: 'bald', pants: '#3A2A1A', beard: '#1A1A1A', skin: '#C88A5A' },
     mayor:  { hair: '#777', hairStyle: 'short', pants: '#1A2A55', beard: '#999' },
@@ -4510,6 +4901,28 @@ function drawBuildingStyle(b, x, y, w, h, peak, night) {
     }
 }
 
+// Draws a hat so its brim sits at (x, y) — the top of a head
+function drawHatOn(x, y, id) {
+    ctx.save();
+    if (id === 'crown')   { ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 8; ctx.beginPath(); ctx.moveTo(x - 8, y + 2);
+                            for (let k = 0; k <= 4; k++) ctx.lineTo(x - 8 + k * 4, k % 2 ? y - 3 : y - 10); ctx.lineTo(x + 8, y + 2); ctx.closePath(); ctx.fill();
+                            ctx.fillStyle = '#FF3355'; ctx.beginPath(); ctx.arc(x, y - 1, 1.8, 0, Math.PI * 2); ctx.fill(); }
+    if (id === 'cowboy')  { ctx.fillStyle = '#8A5A2A'; ctx.beginPath(); ctx.ellipse(x, y + 1, 14, 3.5, 0, 0, Math.PI * 2); ctx.fill(); pathRoundRect(x - 7, y - 9, 14, 10, 3); ctx.fill();
+                            ctx.fillStyle = '#5A3A1A'; ctx.fillRect(x - 7, y - 3, 14, 2); }
+    if (id === 'wizard')  { ctx.fillStyle = '#3A2A9A'; ctx.beginPath(); ctx.moveTo(x - 10, y + 2); ctx.lineTo(x + 3, y - 22); ctx.lineTo(x + 10, y + 2); ctx.fill();
+                            ctx.fillStyle = '#FFE066'; drawStar(x, y - 7, 3, '#FFE066'); }
+    if (id === 'tophat')  { ctx.fillStyle = '#111'; ctx.fillRect(x - 10, y - 1, 20, 3); ctx.fillRect(x - 6, y - 14, 12, 14); ctx.fillStyle = '#C03030'; ctx.fillRect(x - 6, y - 4, 12, 2); }
+    if (id === 'party')   { ctx.fillStyle = '#FF55AA'; ctx.beginPath(); ctx.moveTo(x - 6, y + 1); ctx.lineTo(x, y - 16); ctx.lineTo(x + 6, y + 1); ctx.fill();
+                            ctx.fillStyle = '#FFE066'; ctx.beginPath(); ctx.arc(x, y - 16, 2.5, 0, Math.PI * 2); ctx.fill(); ctx.fillRect(x - 4, y - 6, 8, 2); }
+    if (id === 'pirate')  { ctx.fillStyle = '#111'; ctx.beginPath(); ctx.moveTo(x - 13, y + 1); ctx.quadraticCurveTo(x, y - 18, x + 13, y + 1); ctx.fill();
+                            ctx.fillStyle = '#FFF'; ctx.font = 'bold 7px Arial'; ctx.textAlign = 'center'; ctx.fillText('☠', x, y - 3); }
+    if (id === 'cap')     { ctx.fillStyle = '#2A5ACC'; ctx.beginPath(); ctx.arc(x, y + 1, 7.5, Math.PI, 0); ctx.fill(); ctx.fillRect(x, y - 1, 13, 3); }
+    if (id === 'flowers') { for (let k = 0; k < 5; k++) { ctx.fillStyle = ['#FF6699', '#FFFFFF', '#FFDD33', '#CC88FF', '#FF9944'][k]; ctx.beginPath(); ctx.arc(x - 8 + k * 4, y - 1 + (k % 2), 2.5, 0, Math.PI * 2); ctx.fill(); } }
+    if (id === 'teacher') { ctx.fillStyle = '#111'; ctx.fillRect(x - 9, y - 4, 18, 3); ctx.fillRect(x - 5, y - 1, 10, 3);                // graduation cap
+                            ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 8, y - 3); ctx.lineTo(x + 9, y + 6); ctx.stroke(); }
+    ctx.restore();
+}
+
 // A townsperson or villager, with little walking legs
 function drawCraftingTable() {
     const { x, y } = CRAFTING_TABLE;
@@ -4534,6 +4947,9 @@ function drawPerson(n) {
     const look = TOWN_LOOKS[n.id] || {};
     drawHuman(0, 0, 1, { shirt: n.coat, pants: look.pants, hair: n.hair || look.hair, hairStyle: look.hairStyle || (n.hair ? 'short' : 'short'),
                          beard: look.beard, skin: look.skin, walk: walking ? n.walk * 2 : 0 });
+    if (n.hat === 'teacher') drawHatOn(0, -23, 'teacher');
+    if (n.hat === 'hattie')  drawHatOn(0, -23, ['crown', 'cowboy', 'wizard', 'tophat', 'party', 'pirate', 'cap', 'flowers'][Math.floor(Date.now() / 1500) % 8]);   // she keeps trying hats on!
+    if (paradise.birthday && paradise.birthday.id === n.id) drawHatOn(0, -23, 'party');
     if (n.hat === 'doctor') {
         ctx.fillStyle = '#FFFFFF'; ctx.fillRect(-7, -25, 14, 5);
         ctx.fillStyle = '#E03030'; ctx.fillRect(-1, -25, 2, 5); ctx.fillRect(-3, -23, 6, 2);
@@ -4645,6 +5061,19 @@ function drawParadise() {
         const people = [...WORKERS, ...P.villagers].sort((a, b) => a.y - b.y);
         for (const n of people) drawPerson(n);
         drawCraftingTable();
+        // School chalkboard next to the Teacher
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(214, 232, 26, 20); ctx.fillStyle = '#2A4A2A'; ctx.fillRect(216, 234, 22, 16);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 6px Arial'; ctx.textAlign = 'center'; ctx.fillText('ABC', 227, 244);
+        ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = 'bold 9px Arial'; ctx.fillText('🏫 SCHOOL', 227, 228);
+        // Birthday balloons around the birthday person
+        if (P.birthday) {
+            const who = [...WORKERS, ...P.villagers].find(n => n.id === P.birthday.id);
+            if (who) for (let k = 0; k < 3; k++) {
+                const bx = who.x - 20 + k * 20, by = who.y - 48 + Math.sin(Date.now() / 400 + k) * 3;
+                ctx.strokeStyle = '#EEE'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(bx, by + 8); ctx.lineTo(who.x, who.y - 22); ctx.stroke();
+                ctx.fillStyle = ['#FF4466', '#44AAFF', '#FFDD33'][k]; ctx.beginPath(); ctx.ellipse(bx, by, 6, 8, 0, 0, Math.PI * 2); ctx.fill();
+            }
+        }
         for (const a of P.apples) {
             drawGroundShadow(a.x, a.y + 7, 6, 2);
             ctx.fillStyle = '#E02020';
@@ -4653,7 +5082,7 @@ function drawParadise() {
             ctx.fillStyle = '#33AA33'; ctx.fillRect(a.x - 1, a.y - 11, 4, 5);
         }
         const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
-        const n = nearbyNpc();
+        const n = state.buildMode ? null : nearbyNpc();   // in build mode the button builds instead
         if (n && !(P.speech && P.speech.npc === n)) drawSpeech(n, `${verb}: ${talkLabel(n)}`);
         else if (nearbyCrop()) drawSpeech(nearbyCrop(), `${verb}: Water the crop`);
         else if (atFishingSpot()) {
@@ -4747,7 +5176,7 @@ function roomBackground(room) {
         const c = document.createElement('canvas');
         c.width = 800; c.height = 600;
         if (room === 'void') { c.width = 900; c.height = 700; }   // fog is bigger than the screen so it can drift
-        const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven };
+        const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
@@ -4790,15 +5219,7 @@ function paintParadise(g, R) {
         g.fillStyle = '#FFB300'; g.beginPath(); g.arc(x, y, 1.3, 0, Math.PI * 2); g.fill();
     }
     // Trees (kept away from buildings, portals and paths)
-    for (const [x, y, r] of [[30, 205, 26], [775, 330, 28], [520, 272, 18], [280, 300, 18], [760, 440, 26], [30, 395, 22], [260, 90, 18], [540, 95, 18]]) {
-        g.fillStyle = 'rgba(0,0,0,0.25)'; g.beginPath(); g.ellipse(x + 8, y + r * 0.9, r * 0.9, r * 0.35, 0, 0, Math.PI * 2); g.fill();
-        g.fillStyle = '#5A3A1E'; g.fillRect(x - 4, y, 8, r * 0.8);
-        for (const [ox, oy, rr] of [[-r * 0.45, -r * 0.1, r * 0.7], [r * 0.45, -r * 0.1, r * 0.7], [0, -r * 0.55, r * 0.75]]) {
-            const gr = g.createRadialGradient(x + ox - rr * 0.3, y + oy - rr * 0.3, rr * 0.1, x + ox, y + oy, rr);
-            gr.addColorStop(0, '#6FCB55'); gr.addColorStop(1, '#1F5E1C');
-            g.fillStyle = gr; g.beginPath(); g.arc(x + ox, y + oy, rr, 0, Math.PI * 2); g.fill();
-        }
-    }
+    // (the trees are drawn every frame now, so you can chop them down — see SCENERY)
     // Farm field with a fence
     g.fillStyle = '#6B4A2A'; g.fillRect(FARM.x, FARM.y, FARM.w, FARM.h);
     g.strokeStyle = '#4E3418'; g.lineWidth = 3;
@@ -4878,12 +5299,6 @@ function paintUnderground(g, R) {
     for (let i = 0; i < 900; i++) {   // dirt and stone floor
         g.fillStyle = `hsla(${25 + R() * 15}, ${20 + R() * 20}%, ${8 + R() * 12}%, 0.7)`;
         g.beginPath(); g.ellipse(R() * 800, R() * 600, 3 + R() * 16, 2 + R() * 9, R() * 3, 0, Math.PI * 2); g.fill();
-    }
-    for (let i = 0; i < 18; i++) {   // big boulders
-        const x = R() * 800, y = 70 + R() * 530, r = 12 + R() * 22;
-        const st = g.createRadialGradient(x - r * 0.4, y - r * 0.4, 2, x, y, r);
-        st.addColorStop(0, '#5A4636'); st.addColorStop(1, '#1E140C');
-        g.fillStyle = st; g.beginPath(); g.ellipse(x, y, r, r * 0.75, 0, 0, Math.PI * 2); g.fill();
     }
     for (let i = 0; i < 7; i++) {    // shiny puddles
         const x = R() * 800, y = 90 + R() * 480;
@@ -5149,6 +5564,9 @@ function drawPlayer() {
         ctx.fillText(state.job.item, player.x, player.y - 30 + Math.sin(Date.now() / 200) * 2);
         ctx.textBaseline = 'alphabetic';
     }
+
+    // Your hat
+    if (state.hat) drawHatOn(state.danceTimer > 0 ? player.x : player.x, player.y - 23, state.hat);
 
     // Shovel swing while digging
     if (state.digAnim > 0) {
@@ -5560,7 +5978,7 @@ function drawHUD() {
     ctx.fillText(hearts, 400, 20);
 
     // Room name + Level
-    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES', heaven: '☁ HEAVEN ☁' };
+    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES', heaven: '☁ HEAVEN ☁', house: '🏠 YOUR HOME' };
     const cfg    = LEVEL_CONFIGS[state.level - 1];
     const lvlLabel = cfg.isBoss ? `LEVEL ${state.level} — BOSS!` : `LEVEL ${state.level}`;
     ctx.fillStyle = cfg.isBoss ? 'rgba(255,100,50,0.85)' : 'rgba(255,255,255,0.5)';
@@ -5761,7 +6179,7 @@ function drawWin() {
 // ── DRAW: AWARDS ──────────────────────────────────────────────
 function drawAwards() {
     if (!state.awardsOpen) return;
-    const X = 90, Y = 70, W = 620, H = 470;
+    const X = 90, Y = 56, W = 620, H = 500;
     ctx.save();
     ctx.fillStyle = 'rgba(10,5,25,0.97)'; ctx.fillRect(X, Y, W, H);
     ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
@@ -5772,20 +6190,20 @@ function drawAwards() {
     ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
     AWARDS.forEach((a, i) => {
         const col = i % 3, row = Math.floor(i / 3);
-        const x = X + 16 + col * 200, y = Y + 58 + row * 46;
+        const x = X + 16 + col * 200, y = Y + 58 + row * 37;
         const has = awards.got[a.id];
         ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
-        ctx.fillRect(x, y, 188, 42);
-        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 42);
+        ctx.fillRect(x, y, 188, 34);
+        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 34);
         ctx.globalAlpha = has ? 1 : 0.35;
-        ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(a.icon, x + 24, y + 30);
+        ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
+        ctx.fillText(a.icon, x + 22, y + 25);
         ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
         ctx.fillStyle = has ? '#FFE680' : '#888'; ctx.font = 'bold 12px Arial';
-        ctx.fillText(a.name, x + 48, y + 18);
+        ctx.fillText(a.name, x + 44, y + 15);
         ctx.fillStyle = has ? 'rgba(255,255,255,0.75)' : '#666'; ctx.font = '10px Arial';
-        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 48, y + 33);
+        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 44, y + 28);
     });
     ctx.restore();
 }
@@ -5985,9 +6403,11 @@ function update() {
         updateDigging();
         updateTown();
         updatePet();
+        updateLessons();
         updateDanceAndFart();
         updateGadgets();
         updateBlocks();
+        updateScenery();
         updateHeaven();
         updateVoidHealing();
         updateAmmo();
@@ -6029,7 +6449,7 @@ function draw() {
 
     if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawParadiseSky();
     if (!state.won && !state.levelComplete && state.room === ROOM.HEAVEN) drawHeavenBack();
-    if (!state.won && !state.levelComplete) drawBlocks();
+    if (!state.won && !state.levelComplete) { drawScenery(); drawBlocks(); }
     if (!state.won && !state.levelComplete) drawPortals();
     if (state.room === ROOM.VOID)     drawVoid();
     if (state.room === ROOM.HELL)     drawHell();
@@ -6037,6 +6457,7 @@ function draw() {
     if (state.room === ROOM.SECRET)   drawSecretRoom();
     if (state.room === ROOM.UNDERGROUND) drawUnderground();
     if (state.room === ROOM.HEAVEN)   drawHeaven();
+    if (state.room === ROOM.HOUSE)    drawHouse();
     drawPlayer();
     drawHeartPickups();
     drawGadgets();
