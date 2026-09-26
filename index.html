@@ -103,7 +103,9 @@ const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE];   // where mystery por
 // ── SECRET ROOMS ─────────────────────────────────────────────
 // A super-rare golden portal sometimes appears → the Secret Golden Room.
 // Dig all the way to the bottom of a dig spot → a tunnel to the Underground Caves.
-const SECRET_PORTAL_CHANCE = 0.15;
+const SECRET_PORTAL_CHANCE = 0.06;   // super rare — and almost invisible until you're close
+const SECRET_REVEAL_DIST   = 110;    // how close you must be to see the golden portal clearly
+const RAINBOW_CHANCE       = 0.3;    // chance the bottom of a dig spot (or the Secret Room) has Rainbow Power
 const GOLDEN_PORTAL_SPOTS  = { void: { x: 400, y: 205 }, hell: { x: 250, y: 450 }, paradise: { x: 250, y: 275 } };
 const GEM_HITS             = 3;    // presses to mine a gem in the Underground Caves
 const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', LIGHTNING: 'Lightning', WATER: 'Water', RAINBOW: 'Rainbow' };
@@ -203,7 +205,7 @@ const DIG_SPOTS = [
     { x: 620, y: 480 }, { x: 695, y: 480 },   // bottom-right cave
 ];
 const DIG_MAX_DEPTH       = 3;                 // layers in each dig spot
-const DIG_HITS_PER_LAYER  = [3, 4, 5];         // Space / DIG presses per layer (deeper = harder)
+const DIG_HITS_PER_LAYER  = [3, 4, 8];         // Space / DIG presses per layer (deeper = harder)
 const DIG_MOLE_CHANCE     = [0.3, 0.6, 1.0];   // chance a mole monster pops out of each layer
 const DIG_RANGE           = 24;                // how close the player must stand to a dig spot
 // Layer 1: Ice / Fire / Lightning / Water · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (strong vs everything)
@@ -280,6 +282,7 @@ let state = {
     coins:              0,
     shopOpen:           false,
     shopCursor:         0,         // highlighted shop item (for controllers)
+    digAnim:            0,         // frames left of the shovel swing
     unlockedSkins:      [true, ...Array(AVATAR_COLORS.length - 1).fill(false)],
     activeSkin:         0,
     bubble:             false,     // Shield Bubble from the shop — blocks one hit
@@ -551,7 +554,9 @@ function makeDigSpots() {
         const j = Math.floor(Math.random() * (i + 1));
         [loot[i], loot[j]] = [loot[j], loot[i]];
     }
-    return DIG_SPOTS.map((s, i) => ({ x: s.x, y: s.y, hits: 0, depth: 0, weapon: loot[i] }));
+    // Only ONE dig spot hides the tunnel to the Underground Caves — nobody knows which
+    const tunnel = Math.floor(Math.random() * DIG_SPOTS.length);
+    return DIG_SPOTS.map((s, i) => ({ x: s.x, y: s.y, hits: 0, depth: 0, weapon: loot[i], tunnel: i === tunnel }));
 }
 
 function inAnyCave(x, y, pad = 0) {
@@ -649,7 +654,8 @@ function makeVoidRoom() {
 function makeSecretRoom() {
     return {
         treasures: [
-            { kind: 'rainbow', x: 250, y: 300, picked: false },   // Rainbow Power
+            // Rainbow Power is only here sometimes — otherwise a big pile of points
+            { kind: Math.random() < RAINBOW_CHANCE ? 'rainbow' : 'gem', x: 250, y: 300, picked: false },
             { kind: 'heart',   x: 400, y: 250, picked: false },   // full hearts + Shield Bubble
             { kind: 'star',    x: 550, y: 300, picked: false },   // Gold skin (or lots of points)
         ],
@@ -687,13 +693,13 @@ let voidRoom  = makeVoidRoom();
 // ── PORTALS ───────────────────────────────────────────────────
 // Every portal is a mystery: it takes you to a random room (never the one you're in)
 // Kept clear of the caves, chests, spawn points and touch controls.
-const PORTAL_R = 26;
+const PORTAL_R = 34;
 const PORTALS = {
     void: [
         { x: 60,  y: 300, shape: 'circle'   },
         { x: 740, y: 300, shape: 'diamond'  },
-        { x: 400, y: 110, shape: 'star'     },
-        { x: 740, y: 110, shape: 'hexagon'  },
+        { x: 400, y: 112, shape: 'star'     },
+        { x: 740, y: 112, shape: 'hexagon'  },
     ],
     secret: [
         { x: 700, y: 440, shape: 'star'     },
@@ -704,13 +710,13 @@ const PORTALS = {
     ],
     hell: [
         { x: 740, y: 300, shape: 'star'     },
-        { x: 420, y: 95,  shape: 'triangle' },
+        { x: 420, y: 108, shape: 'triangle' },
         { x: 300, y: 545, shape: 'circle'   },
     ],
     paradise: [
         { x: 60,  y: 300, shape: 'hexagon'  },
-        { x: 60,  y: 100, shape: 'diamond'  },
-        { x: 760, y: 95,  shape: 'triangle' },
+        { x: 62,  y: 110, shape: 'diamond'  },
+        { x: 752, y: 110, shape: 'triangle' },
     ],
 };
 
@@ -1114,7 +1120,7 @@ function updatePlayer() {
     // A dig spot dug to the bottom becomes a tunnel (step off it first, then jump in)
     if (state.room === ROOM.HELL) {
         for (const s of hell.digSpots) {
-            if (s.depth < DIG_MAX_DEPTH) continue;
+            if (s.depth < DIG_MAX_DEPTH || !s.tunnel) continue;
             const d = Math.hypot(player.x - s.x, player.y - s.y);
             if (d > 30) s.tunnelReady = true;
             else if (s.tunnelReady && d < 14) { changeRoom(ROOM.UNDERGROUND); return; }
@@ -1123,6 +1129,7 @@ function updatePlayer() {
 
     if (state.playerFlash     > 0) state.playerFlash--;
     if (state.playerInvincible > 0) state.playerInvincible--;
+    if (state.digAnim > 0) state.digAnim--;
 
     // ── CAVE TIMER ─────────────────────────────────────────────
     if (isPlayerPhysicallyInCave()) {
@@ -1655,6 +1662,7 @@ function tryDig() {
     const s = nearbyDigSpot();
     if (!s || !canDig()) return false;
     s.hits++;
+    state.digAnim = 14;
     sfx('dig');
     spawnParticles(s.x, s.y, '#8B5A2B', 6);
     triggerShake(3);
@@ -1663,8 +1671,10 @@ function tryDig() {
     // Broke through a layer!
     s.hits = 0;
     s.depth++;
-    const tier   = s.depth;
-    const weapon = tier === 3 ? POWER.RAINBOW : s.weapon;
+    // The bottom layer only SOMETIMES has Rainbow Power — otherwise it's another Super weapon
+    const rainbow = s.depth === 3 && Math.random() < RAINBOW_CHANCE;
+    const tier   = rainbow ? 3 : Math.min(s.depth, 2);
+    const weapon = rainbow ? POWER.RAINBOW : s.weapon;
     const color  = WEAPON_INFO[weapon].color;
     const name   = (tier === 2 ? 'SUPER ' : '') + WEAPON_INFO[weapon].label;
     let text;
@@ -1681,7 +1691,9 @@ function tryDig() {
     sfx('found');
     addScore(5 * tier);
 
-    let sub = s.depth < DIG_MAX_DEPTH ? 'Keep digging for something rarer…' : '';
+    let sub = s.depth < DIG_MAX_DEPTH ? 'Keep digging for something rarer…'
+            : rainbow ? '' : 'No Rainbow down here this time…';
+    if (s.depth === DIG_MAX_DEPTH && s.tunnel) sub = 'What\'s that? A secret TUNNEL!';
     if (Math.random() < DIG_MOLE_CHANCE[s.depth - 1]) {
         spawnMole(s);
         sub = 'Look out — a MOLE MONSTER!';
@@ -2049,6 +2061,9 @@ function checkPickups() {
             if (tr.kind === 'rainbow') {
                 state.power = POWER.RAINBOW; state.powerTier = 3;
                 text = '🌈 RAINBOW POWER!';
+            } else if (tr.kind === 'gem') {
+                addScore(200);
+                text = '💎 +200 points!';
             } else if (tr.kind === 'heart') {
                 state.playerHp = maxHp; state.bubble = true;
                 text = '❤ Full hearts + a Shield Bubble!';
@@ -2290,7 +2305,10 @@ function portalPath(shape, x, y, r, spin) {
 function drawGoldenPortal() {
     if (!goldenPortal) return;
     const t = Date.now() / 1000, { x, y } = goldenPortal, r = PORTAL_R + 4 + Math.sin(t * 4) * 2;
+    const d = Math.hypot(player.x - x, player.y - y);
+    const seen = Math.max(0.06, Math.min(1, (SECRET_REVEAL_DIST + 60 - d) / 60));   // a faint shimmer from far away
     ctx.save();
+    ctx.globalAlpha = seen;
     portalPath('star', x, y, r, t * 1.2);
     const grad = ctx.createRadialGradient(x, y, 2, x, y, r);
     grad.addColorStop(0, '#FFFFFF'); grad.addColorStop(0.4, '#FFE066'); grad.addColorStop(1, '#B8860B');
@@ -2302,8 +2320,10 @@ function drawGoldenPortal() {
         drawStar(x + Math.cos(a) * (r + 10), y + Math.sin(a) * (r + 10), 3.5, '#FFFFFF');
     }
     ctx.restore();
-    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('✨ SECRET! ✨', x, y + PORTAL_R + 18);
+    if (d < SECRET_REVEAL_DIST) {
+        ctx.fillStyle = '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText('✨ SECRET! ✨', x, y + PORTAL_R + 18);
+    }
 }
 
 function drawPortals() {
@@ -2312,7 +2332,7 @@ function drawPortals() {
     for (const p of PORTALS[state.room]) {
         // Colour keeps shifting — you never know where it goes!
         const hue  = (t * 60 + p.x + p.y) % 360;
-        const spin = t * 0.6 + p.x;   // the whole shape slowly turns
+        const spin = t * 0.9 + p.x;   // the whole shape slowly turns
         const r    = PORTAL_R + Math.sin(t * 3 + p.x) * 2;
         ctx.save();
 
@@ -2331,18 +2351,33 @@ function drawPortals() {
         portalPath(p.shape, p.x, p.y, r, spin);
         ctx.clip();
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = `hsla(${(hue + 60) % 360}, 100%, 80%, 0.7)`;
-        ctx.lineWidth = 2;
-        for (let arm = 0; arm < 3; arm++) {
+        for (let arm = 0; arm < 5; arm++) {
+            ctx.strokeStyle = `hsla(${(hue + 40 + arm * 30) % 360}, 100%, ${70 + (arm % 2) * 15}%, 0.75)`;
+            ctx.lineWidth = 3 - (arm % 2);
             ctx.beginPath();
-            for (let k = 0; k <= 20; k++) {
-                const a  = -t * 4 + arm * (Math.PI * 2 / 3) + k * 0.3;
-                const rr = (k / 20) * r;
+            for (let k = 0; k <= 34; k++) {
+                const a  = -t * 5 + arm * (Math.PI * 2 / 5) + k * 0.28;
+                const rr = (k / 34) * r * 1.1;
                 ctx.lineTo(p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr);
             }
             ctx.stroke();
         }
+        // Rings pulsing into the middle, like a whirlpool
+        for (let k = 0; k < 3; k++) {
+            const rr = r * (1 - ((t * 0.8 + k / 3) % 1));
+            ctx.strokeStyle = `rgba(255,255,255,${0.35 * rr / r})`; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2); ctx.stroke();
+        }
         ctx.restore();
+
+        // Bits of light getting sucked in from outside
+        for (let k = 0; k < 8; k++) {
+            const ph = (t * 0.7 + k / 8) % 1;
+            const a  = k * 0.785 + t * 1.5 + ph * 3;
+            const rr = r * (1.6 - ph);
+            ctx.fillStyle = `hsla(${(hue + k * 40) % 360}, 100%, 75%, ${ph})`;
+            ctx.beginPath(); ctx.arc(p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, 2, 0, Math.PI * 2); ctx.fill();
+        }
 
         // Glowing outline
         portalPath(p.shape, p.x, p.y, r, spin);
@@ -2358,7 +2393,7 @@ function drawPortals() {
         ctx.restore();
 
         ctx.fillStyle = '#FFF';
-        ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText('?', p.x, p.y);
         ctx.textBaseline = 'alphabetic';
         ctx.font = 'bold 9px Arial';
@@ -2471,8 +2506,8 @@ function drawHell() {
             ctx.fillStyle = `rgba(0,0,0,${0.45 + s.depth * 0.18})`;
             ctx.beginPath(); ctx.ellipse(s.x, s.y + 6, holeR, holeR * 0.45, 0, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = 'rgba(200,150,90,0.8)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
-            ctx.fillText(s.depth >= DIG_MAX_DEPTH ? 'TUNNEL ⬇ jump in!' : `DEPTH ${s.depth}/${DIG_MAX_DEPTH}`, s.x, s.y + 24);
-            if (s.depth >= DIG_MAX_DEPTH) {
+            ctx.fillText(s.depth < DIG_MAX_DEPTH ? `DEPTH ${s.depth}/${DIG_MAX_DEPTH}` : s.tunnel ? 'TUNNEL ⬇ jump in!' : 'BOTTOM', s.x, s.y + 24);
+            if (s.depth >= DIG_MAX_DEPTH && s.tunnel) {
                 // Swirling tunnel down to the Underground Caves
                 ctx.strokeStyle = 'rgba(200,150,255,0.7)'; ctx.lineWidth = 2;
                 ctx.beginPath();
@@ -2500,6 +2535,7 @@ function drawHell() {
 
     // "Dig here!" prompt when standing on a pile
     const digSpot = nearbyDigSpot();
+    if (digSpot) drawDigView(digSpot);
     if (digSpot) {
         const verb = lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap DIG' : 'Press SPACE';
         ctx.fillStyle = canDig() ? '#FFE08A' : '#FF8888';
@@ -2782,6 +2818,48 @@ function drawEnemy(e, t) {
         ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
     }
+}
+
+// Shows exactly where (and how deep) you're digging:
+// a glowing ring on the pile, a progress bar, and a little underground window
+function drawDigView(s) {
+    const t = Date.now() / 1000;
+    ctx.save();
+    // Pulsing ring around the spot you're digging
+    ctx.strokeStyle = `rgba(255,224,138,${0.5 + Math.sin(t * 6) * 0.3})`; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.ellipse(s.x, s.y + 4, DIG_RANGE, DIG_RANGE * 0.5, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    // Progress through this layer
+    const need = DIG_HITS_PER_LAYER[s.depth], frac = s.hits / need;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(s.x - 20, s.y - 16, 40, 6);
+    ctx.fillStyle = '#FFB347'; ctx.fillRect(s.x - 20, s.y - 16, 40 * frac, 6);
+    ctx.strokeStyle = '#FFF'; ctx.lineWidth = 1; ctx.strokeRect(s.x - 20, s.y - 16, 40, 6);
+
+    // Underground window: the 3 soil layers, and your hole going down
+    const W = 58, H = 84, px = Math.min(800 - W - 6, s.x + 28), py = s.y < 220 ? s.y + 26 : s.y - H - 36;
+    ctx.fillStyle = 'rgba(10,6,2,0.85)'; ctx.fillRect(px - 3, py - 16, W + 6, H + 20);
+    ctx.strokeStyle = '#C8A070'; ctx.lineWidth = 2; ctx.strokeRect(px - 3, py - 16, W + 6, H + 20);
+    ctx.fillStyle = '#FFE08A'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`LAYER ${s.depth + 1}/${DIG_MAX_DEPTH}`, px + W / 2, py - 5);
+    const layerH = H / DIG_MAX_DEPTH, soils = ['#9A6A3A', '#6E4526', '#46291A'];
+    for (let L = 0; L < DIG_MAX_DEPTH; L++) {
+        ctx.fillStyle = soils[L]; ctx.fillRect(px, py + L * layerH, W, layerH);
+        for (let k = 0; k < 6; k++) {                                   // pebbles
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.fillRect(px + ((k * 17 + L * 11) % (W - 4)), py + L * layerH + ((k * 7) % (layerH - 3)), 3, 2);
+        }
+        if (L >= s.depth) {                                             // what's still buried?
+            ctx.fillStyle = L === 2 ? `hsl(${(t * 120) % 360}, 90%, 70%)` : '#FFE08A';
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText('?', px + W - 10, py + L * layerH + layerH / 2 + 4);
+        }
+    }
+    // The hole so far
+    const holeBottom = (s.depth + frac) * layerH;
+    ctx.fillStyle = '#050201'; ctx.fillRect(px + W / 2 - 7, py, 14, holeBottom);
+    // A tiny you, digging at the bottom of the hole
+    ctx.fillStyle = getPlayerColor(); ctx.fillRect(px + W / 2 - 4, py + Math.max(0, holeBottom - 9), 8, 8);
+    ctx.restore();
 }
 
 // Frozen solid: a see-through ice block (flickers just before melting)
@@ -3369,12 +3447,14 @@ function drawSecretRoom() {
         ctx.save();
         ctx.shadowColor = '#FFFFFF'; ctx.shadowBlur = 20;
         if (tr.kind === 'rainbow')    drawStar(tr.x, tr.y + bob, 16, `hsl(${(t * 200) % 360}, 100%, 60%)`);
+        else if (tr.kind === 'gem') { ctx.fillStyle = '#66EEFF'; ctx.beginPath(); ctx.moveTo(tr.x, tr.y + bob - 18); ctx.lineTo(tr.x + 13, tr.y + bob);
+                                      ctx.lineTo(tr.x, tr.y + bob + 12); ctx.lineTo(tr.x - 13, tr.y + bob); ctx.closePath(); ctx.fill(); }
         else if (tr.kind === 'heart') { ctx.font = '30px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                                         ctx.fillStyle = '#FF3355'; ctx.fillText('❤', tr.x, tr.y + bob); }
         else                          drawStar(tr.x, tr.y + bob, 16, '#FFD700');
         ctx.restore();
         ctx.fillStyle = '#FFF4C0'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
-        ctx.fillText({ rainbow: 'RAINBOW POWER', heart: 'SUPER HEART', star: 'GOLDEN STAR' }[tr.kind], tr.x, tr.y + 54);
+        ctx.fillText({ rainbow: 'RAINBOW POWER', gem: 'GIANT GEM', heart: 'SUPER HEART', star: 'GOLDEN STAR' }[tr.kind], tr.x, tr.y + 54);
     }
 }
 
@@ -3481,6 +3561,17 @@ function drawPlayer() {
         ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(state.job.item, player.x, player.y - 30 + Math.sin(Date.now() / 200) * 2);
         ctx.textBaseline = 'alphabetic';
+    }
+
+    // Shovel swing while digging
+    if (state.digAnim > 0) {
+        const swing = Math.sin((state.digAnim / 14) * Math.PI) * 1.2;
+        ctx.save();
+        ctx.translate(player.x + 14, player.y - 4); ctx.rotate(0.6 + swing);
+        ctx.fillStyle = '#8B5A2B'; ctx.fillRect(-1.5, -2, 3, 22);            // handle
+        ctx.fillStyle = '#B8C0C8';                                          // blade
+        ctx.beginPath(); ctx.moveTo(-6, 20); ctx.lineTo(6, 20); ctx.lineTo(4, 30); ctx.lineTo(0, 33); ctx.lineTo(-4, 30); ctx.closePath(); ctx.fill();
+        ctx.restore();
     }
 
     // Shield Bubble
