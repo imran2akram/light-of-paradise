@@ -501,7 +501,7 @@ function pressAction() {
     }
     if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
-    else if (!tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction()) shoot();
+    else if (!tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction() && !tryMineNearby()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
@@ -1732,6 +1732,30 @@ function drawScenery() {
     for (const o of scenery[state.room] || []) (o.kind === 'tree' ? drawTree : drawRock)(o);
 }
 
+// Like Minecraft: walk up to a tree, rock or block and press the button to chop / mine it
+// (only when no monster is close — then the button shoots)
+function nearbyMineable() {
+    if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return null;
+    if (targetableEnemies().some(e => Math.hypot(e.x - player.x, e.y - player.y) < 250)) return null;
+    const ax = player.x + state.faceX * 30, ay = player.y + 5 + state.faceY * 30;
+    const near = (scenery[state.room] || []).filter(o => !o.gone)
+        .find(o => Math.hypot(o.x - player.x, (o.kind === 'tree' ? o.y : o.y) - player.y) < o.r + 26);
+    const sc = sceneryAt(ax, ay) || near;
+    if (sc) return { scenery: sc };
+    const { cx, cy } = buildTargetCell();
+    if (blockAtCell(cx, cy)) return { cx, cy };
+    return null;
+}
+
+function tryMineNearby() {
+    const m = nearbyMineable();
+    if (!m) return false;
+    state.digAnim = 14;
+    if (m.scenery) mineScenery(m.scenery.x, m.scenery.kind === 'tree' ? m.scenery.y - m.scenery.r * 0.2 : m.scenery.y);
+    else buildAt(m.cx, m.cy);
+    return true;
+}
+
 // TNT and creepers blow up nearby blocks
 function blastBlocks(x, y, radius) {
     const blocks = roomBlocks(), ccx = Math.floor(x / CELL), ccy = Math.floor(y / CELL);
@@ -1825,6 +1849,18 @@ function drawBlocks() {
     for (const t of litTnt) {   // lit TNT flashes white
         if (t.room !== state.room || Math.floor(t.t / 6) % 2) continue;
         ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(t.cx * CELL, t.cy * CELL, CELL, CELL);
+    }
+    if (!state.buildMode && !menu) {   // walked up to something you can chop or mine
+        const m = nearbyMineable();
+        if (m) {
+            const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+            const o = m.scenery, x = o ? o.x : m.cx * CELL + CELL / 2, y = o ? o.y - o.r - 14 : m.cy * CELL - 6;
+            const what = o ? (o.kind === 'tree' ? '🪓 Chop the tree' : '⛏ Mine the rock') : `⛏ Mine the ${BLOCKS[blockAtCell(m.cx, m.cy).type].name}`;
+            ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+            ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+            ctx.fillText(`${verb}: ${what}`, x, y);
+            ctx.shadowBlur = 0;
+        }
     }
     if (state.buildMode && state.gamePhase === 'playing') {   // which block you're aiming at
         const { cx, cy } = buildTargetCell();
@@ -6382,7 +6418,7 @@ function drawVirtualControls() {
         ctx.fillStyle = '#FFF'; ctx.font = '16px Arial'; ctx.fillText(icon, b.x, b.y + 1);
     }
     ctx.font = 'bold 13px Arial';
-    ctx.fillText(state.buildMode ? 'BUILD' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK'
+    ctx.fillText(state.buildMode ? 'BUILD' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : nearbyMineable() ? 'MINE'
                  : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
