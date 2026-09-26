@@ -97,7 +97,15 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 })();
 
 // ── CONSTANTS ────────────────────────────────────────────────
-const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise' };
+const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground' };
+const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE];   // where mystery portals can take you
+
+// ── SECRET ROOMS ─────────────────────────────────────────────
+// A super-rare golden portal sometimes appears → the Secret Golden Room.
+// Dig all the way to the bottom of a dig spot → a tunnel to the Underground Caves.
+const SECRET_PORTAL_CHANCE = 0.15;
+const GOLDEN_PORTAL_SPOTS  = { void: { x: 400, y: 205 }, hell: { x: 250, y: 450 }, paradise: { x: 290, y: 330 } };
+const GEM_HITS             = 3;    // presses to mine a gem in the Underground Caves
 const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', LIGHTNING: 'Lightning', WATER: 'Water', RAINBOW: 'Rainbow' };
 
 // ── WEAPONS ──────────────────────────────────────────────────
@@ -622,6 +630,40 @@ function makeVoidRoom() {
     };
 }
 
+function makeSecretRoom() {
+    return {
+        treasures: [
+            { kind: 'rainbow', x: 250, y: 300, picked: false },   // Rainbow Power
+            { kind: 'heart',   x: 400, y: 250, picked: false },   // full hearts + Shield Bubble
+            { kind: 'star',    x: 550, y: 300, picked: false },   // Gold skin (or lots of points)
+        ],
+    };
+}
+
+function makeUnderground() {
+    const enemies = [];
+    for (let i = 0; i < 4; i++) {
+        const x = 200 + Math.random() * 480, y = 100 + Math.random() * 400;
+        enemies.push({ type: 'mole', x, y, alive: true, r: 15, hp: 5, maxHp: 5, hitFlash: 0, frozen: 0,
+                       speed: 1.1, emerge: 45 + i * 60 });
+    }
+    enemies.push(...makeWorms().slice(0, 2));
+    return {
+        enemies,
+        coins: [],
+        gems: [
+            { x: 180, y: 130, hits: 0, color: '#CC66FF', mined: false },
+            { x: 620, y: 140, hits: 0, color: '#33EEFF', mined: false },
+            { x: 560, y: 470, hits: 0, color: '#FF66AA', mined: false },
+        ],
+        // Glowing mushrooms (just for looks)
+        shrooms: Array.from({ length: 14 }, (_, i) => ({ x: 40 + (i * 97) % 720, y: 80 + (i * 211) % 480, h: (i * 53) % 360 })),
+    };
+}
+
+let secretRoom   = makeSecretRoom();
+let underground  = makeUnderground();
+let goldenPortal = null;    // { x, y } when the rare golden portal is showing
 let hell      = makeHell();
 let paradise  = makeParadise();
 let voidRoom  = makeVoidRoom();
@@ -637,6 +679,13 @@ const PORTALS = {
         { x: 400, y: 110, shape: 'star'     },
         { x: 740, y: 110, shape: 'hexagon'  },
     ],
+    secret: [
+        { x: 700, y: 440, shape: 'star'     },
+    ],
+    underground: [
+        { x: 740, y: 300, shape: 'circle'   },
+        { x: 400, y: 545, shape: 'hexagon'  },
+    ],
     hell: [
         { x: 740, y: 300, shape: 'star'     },
         { x: 420, y: 95,  shape: 'triangle' },
@@ -650,7 +699,7 @@ const PORTALS = {
 };
 
 function randomDoorDestination() {
-    const rooms = Object.values(ROOM).filter(r => r !== state.room);
+    const rooms = MAIN_ROOMS.filter(r => r !== state.room);
     return rooms[Math.floor(Math.random() * rooms.length)];
 }
 
@@ -755,6 +804,12 @@ const SONGS = {
     night: { bpm: 140, lead: 'sawtooth',   // Monster Night in Paradise — fast and spooky
         melody: [62, 0, 65, 62, 69, 0, 68, 0, 62, 0, 65, 0, 61, 0, 0, 0,  62, 0, 65, 62, 70, 69, 68, 0, 65, 64, 61, 0, 62, 0, 0, 0],
         bass:   [38, 38, 0, 38, 37, 0, 38, 0, 38, 38, 0, 38, 34, 0, 33, 0,  38, 38, 0, 38, 37, 0, 38, 0, 34, 34, 0, 34, 33, 0, 37, 0] },
+    secret: { bpm: 100, lead: 'triangle',   // sparkly treasure music
+        melody: [84, 88, 91, 88, 96, 0, 91, 0, 86, 89, 93, 89, 98, 0, 93, 0,  84, 88, 91, 96, 95, 91, 88, 0, 86, 91, 95, 98, 96, 0, 0, 0],
+        bass:   [48, 0, 55, 0, 52, 0, 55, 0, 50, 0, 57, 0, 53, 0, 57, 0,  48, 0, 55, 0, 52, 0, 55, 0, 55, 0, 50, 0, 48, 0, 0, 0] },
+    underground: { bpm: 76, lead: 'sine',   // slow, drippy and echoey
+        melody: [64, 0, 0, 67, 0, 0, 71, 0, 69, 0, 0, 0, 67, 0, 64, 0,  62, 0, 0, 64, 0, 0, 67, 0, 66, 0, 0, 0, 0, 0, 0, 0],
+        bass:   [40, 0, 0, 0, 0, 0, 0, 0, 43, 0, 0, 0, 0, 0, 0, 0,  38, 0, 0, 0, 0, 0, 0, 0, 35, 0, 0, 0, 0, 0, 0, 0] },
     paradise: { bpm: 120, lead: 'square', // happy major key
         melody: [67, 71, 74, 71, 76, 74, 71, 74, 72, 76, 79, 76, 74, 71, 67, 0,  67, 71, 74, 79, 78, 76, 74, 71, 72, 74, 76, 74, 71, 0, 67, 0],
         bass:   [43, 0, 50, 0, 48, 0, 50, 0, 45, 0, 52, 0, 50, 0, 43, 0,  43, 0, 50, 0, 47, 0, 50, 0, 48, 0, 50, 0, 50, 0, 43, 0] },
@@ -992,6 +1047,10 @@ function changeRoom(dest) {
     if (dest === ROOM.PARADISE) {
         player.x = 700; player.y = 300;
     }
+    if (dest === ROOM.SECRET)      { player.x = 400; player.y = 420; secretRoom = makeSecretRoom(); }
+    if (dest === ROOM.UNDERGROUND) { player.x = 100; player.y = 300; underground = makeUnderground(); }
+    goldenPortal = MAIN_ROOMS.includes(dest) && Math.random() < SECRET_PORTAL_CHANCE
+        ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
     placePetBesidePlayer();
 }
 
@@ -1026,6 +1085,20 @@ function updatePlayer() {
         if (Math.hypot(player.x - p.x, player.y - p.y) < PORTAL_R * 0.75) {
             changeRoom(randomDoorDestination());
             return;
+        }
+    }
+    if (goldenPortal && Math.hypot(player.x - goldenPortal.x, player.y - goldenPortal.y) < PORTAL_R * 0.75) {
+        sfx('win');
+        changeRoom(ROOM.SECRET);
+        return;
+    }
+    // A dig spot dug to the bottom becomes a tunnel (step off it first, then jump in)
+    if (state.room === ROOM.HELL) {
+        for (const s of hell.digSpots) {
+            if (s.depth < DIG_MAX_DEPTH) continue;
+            const d = Math.hypot(player.x - s.x, player.y - s.y);
+            if (d > 30) s.tunnelReady = true;
+            else if (s.tunnelReady && d < 14) { changeRoom(ROOM.UNDERGROUND); return; }
         }
     }
 
@@ -1091,7 +1164,8 @@ function hitEnemy(e, power) {
 // The bad guys in the room you're in
 function roomEnemies() {
     if (state.room === ROOM.PARADISE) return paradise.phase === 'night' && state.lightCrystals < 3 ? paradise.enemies : [];
-    if (state.room === ROOM.HELL)     return hell.enemies;
+    if (state.room === ROOM.HELL)        return hell.enemies;
+    if (state.room === ROOM.UNDERGROUND) return underground.enemies;
     return [];
 }
 
@@ -1102,7 +1176,8 @@ function targetableEnemies() {
 
 function roomCoins() {
     if (state.room === ROOM.PARADISE) return paradise.coins;
-    if (state.room === ROOM.HELL)     return hell.coins;
+    if (state.room === ROOM.HELL)        return hell.coins;
+    if (state.room === ROOM.UNDERGROUND) return underground.coins;
     return voidRoom.coins;
 }
 
@@ -1191,8 +1266,9 @@ function updateRoomEnemies() {
             damagePlayer();
         }
     }
-    // Defeated bad guys in Hell don't come back
-    hell.enemies = hell.enemies.filter(e => e.alive);
+    // Defeated bad guys in Hell and the Underground don't come back
+    hell.enemies        = hell.enemies.filter(e => e.alive);
+    underground.enemies = underground.enemies.filter(e => e.alive);
 }
 
 function moveEnemy(e) {
@@ -1208,7 +1284,7 @@ function moveEnemy(e) {
             // Tunnels toward the player — but never into the caves
             const a = Math.atan2(player.y - e.y, player.x - e.x);
             const nx = e.x + Math.cos(a) * 1.2, ny = e.y + Math.sin(a) * 1.2;
-            if (!inAnyCave(nx, ny, 20)) { e.x = nx; e.y = ny; }
+            if (state.room !== ROOM.HELL || !inAnyCave(nx, ny, 20)) { e.x = nx; e.y = ny; }
             if (Math.random() < 0.3) spawnParticles(e.x, e.y + 6, '#6B3E1E', 1);
         } else if (e.wState === 'up' && --e.spit <= 0) {
             e.spit = WORM_SPIT_FRAMES;
@@ -1528,9 +1604,34 @@ function spawnMole(s) {
     });
 }
 
+function nearbyGem() {
+    if (state.room !== ROOM.UNDERGROUND) return null;
+    return underground.gems.find(g => !g.mined && Math.hypot(player.x - g.x, player.y - g.y) < 30) || null;
+}
+
+// Mining a gem in the Underground Caves: a few hits, then +1 heart and points
+function tryMine() {
+    const gem = nearbyGem();
+    if (!gem) return false;
+    gem.hits++;
+    sfx('dig');
+    spawnParticles(gem.x, gem.y, gem.color, 5);
+    if (gem.hits >= GEM_HITS) {
+        gem.mined = true;
+        const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+        if (state.playerHp < maxHp) state.playerHp++;
+        addScore(50);
+        spawnFloatText(gem.x, gem.y - 26, '💎 +50  +1 ❤', gem.color, 90);
+        spawnParticles(gem.x, gem.y, gem.color, 16);
+        sfx('found');
+    }
+    return true;
+}
+
 // Returns true if the player dug (so Space / the button doesn't also shoot)
 function tryDig() {
     if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return false;
+    if (tryMine()) return true;
     const s = nearbyDigSpot();
     if (!s || !canDig()) return false;
     s.hits++;
@@ -1788,6 +1889,33 @@ function updateTown() {
 function checkPickups() {
     if (state.won || state.levelComplete) return;
 
+    // Secret Golden Room treasures
+    if (state.room === ROOM.SECRET) {
+        for (const tr of secretRoom.treasures) {
+            if (tr.picked || Math.hypot(player.x - tr.x, player.y - tr.y) > 26) continue;
+            tr.picked = true;
+            const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+            let text;
+            if (tr.kind === 'rainbow') {
+                state.power = POWER.RAINBOW; state.powerTier = 3;
+                text = '🌈 RAINBOW POWER!';
+            } else if (tr.kind === 'heart') {
+                state.playerHp = maxHp; state.bubble = true;
+                text = '❤ Full hearts + a Shield Bubble!';
+            } else if (!state.unlockedSkins[4]) {
+                state.unlockedSkins[4] = true; state.activeSkin = 4;
+                text = '⭐ You unlocked the GOLD skin!';
+            } else {
+                addScore(300);
+                text = '⭐ +300 points!';
+            }
+            spawnFloatText(tr.x, tr.y - 30, text, '#FFE066', 120);
+            spawnParticles(tr.x, tr.y, '#FFD700', 18);
+            triggerShake(6);
+            sfx('found');
+        }
+    }
+
     // Hearts dropped by bad guys
     for (let i = heartPickups.length - 1; i >= 0; i--) {
         const h = heartPickups[i];
@@ -2008,7 +2136,28 @@ function portalPath(shape, x, y, r, spin) {
     ctx.closePath();
 }
 
+// The super-rare golden portal to the Secret Golden Room
+function drawGoldenPortal() {
+    if (!goldenPortal) return;
+    const t = Date.now() / 1000, { x, y } = goldenPortal, r = PORTAL_R + 4 + Math.sin(t * 4) * 2;
+    ctx.save();
+    portalPath('star', x, y, r, t * 1.2);
+    const grad = ctx.createRadialGradient(x, y, 2, x, y, r);
+    grad.addColorStop(0, '#FFFFFF'); grad.addColorStop(0.4, '#FFE066'); grad.addColorStop(1, '#B8860B');
+    ctx.fillStyle = grad; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 35;
+    ctx.fill();
+    ctx.strokeStyle = '#FFF4B0'; ctx.lineWidth = 3; ctx.stroke();
+    for (let k = 0; k < 5; k++) {
+        const a = t * 3 + k * (Math.PI * 2 / 5);
+        drawStar(x + Math.cos(a) * (r + 10), y + Math.sin(a) * (r + 10), 3.5, '#FFFFFF');
+    }
+    ctx.restore();
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('✨ SECRET! ✨', x, y + PORTAL_R + 18);
+}
+
 function drawPortals() {
+    drawGoldenPortal();
     const t = Date.now() / 1000;
     for (const p of PORTALS[state.room]) {
         // Colour keeps shifting — you never know where it goes!
@@ -2186,7 +2335,17 @@ function drawHell() {
             ctx.fillStyle = `rgba(0,0,0,${0.45 + s.depth * 0.18})`;
             ctx.beginPath(); ctx.ellipse(s.x, s.y + 6, holeR, holeR * 0.45, 0, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = 'rgba(200,150,90,0.8)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
-            ctx.fillText(s.depth >= DIG_MAX_DEPTH ? 'BOTTOM' : `DEPTH ${s.depth}/${DIG_MAX_DEPTH}`, s.x, s.y + 24);
+            ctx.fillText(s.depth >= DIG_MAX_DEPTH ? 'TUNNEL ⬇ jump in!' : `DEPTH ${s.depth}/${DIG_MAX_DEPTH}`, s.x, s.y + 24);
+            if (s.depth >= DIG_MAX_DEPTH) {
+                // Swirling tunnel down to the Underground Caves
+                ctx.strokeStyle = 'rgba(200,150,255,0.7)'; ctx.lineWidth = 2;
+                ctx.beginPath();
+                for (let k = 0; k <= 16; k++) {
+                    const a = -Date.now() / 250 + k * 0.5, rr = (k / 16) * 18;
+                    ctx.lineTo(s.x + Math.cos(a) * rr, s.y + 6 + Math.sin(a) * rr * 0.45);
+                }
+                ctx.stroke();
+            }
         }
         if (s.depth < DIG_MAX_DEPTH) {
             // Dirt pile beside the hole shrinks a little with each dig
@@ -2423,9 +2582,9 @@ function drawEnemy(e, t) {
         ctx.fillStyle = '#FFEE00';
         ctx.beginPath(); ctx.arc(e.x - 4, e.y - 2, 2.5, 0, Math.PI * 2); ctx.arc(e.x + 4, e.y - 2, 2.5, 0, Math.PI * 2); ctx.fill();
     } else if (e.type === 'mole') {
-        const rise = 1 - (e.emerge || 0) / 45;   // 0 → 1 while climbing out
+        const rise = Math.max(0, 1 - (e.emerge || 0) / 45);   // 0 → 1 while climbing out
         const r = e.r * (0.4 + 0.6 * rise);
-        ctx.globalAlpha = 0.4 + 0.6 * rise;
+        ctx.globalAlpha = e.emerge > 45 ? 0 : 0.4 + 0.6 * rise;   // still deep underground: invisible
         ctx.fillStyle = '#5C3A1E';
         ctx.beginPath(); ctx.arc(e.x, e.y, r, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#E8A0A0';   // pink nose
@@ -2672,6 +2831,106 @@ function drawParadise() {
 
     // Coins
     drawCoins(P.coins);
+}
+
+// ── DRAW: SECRET ROOMS ────────────────────────────────────────
+function drawSecretRoom() {
+    const t = Date.now() / 1000;
+    // Golden glow and treasure piles
+    const glow = ctx.createRadialGradient(400, 300, 30, 400, 300, 420);
+    glow.addColorStop(0, 'rgba(255,215,0,0.35)'); glow.addColorStop(1, 'rgba(255,215,0,0)');
+    ctx.fillStyle = glow; ctx.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 12; i++) {
+        const x = 60 + i * 62, y = 560 - (i % 3) * 8;
+        ctx.fillStyle = i % 2 ? '#E8B830' : '#FFD700';
+        ctx.beginPath(); ctx.ellipse(x, y, 34, 14, 0, Math.PI, 0); ctx.fill();
+    }
+    for (let i = 0; i < 20; i++) {
+        if (Math.sin(t * 2 + i * 1.7) > 0.6) drawStar((i * 173) % 800, 70 + (i * 97) % 460, 3, '#FFF8C0');
+    }
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 22px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('You found the SECRET GOLDEN ROOM!', 400, 130);
+    ctx.fillStyle = 'rgba(255,240,180,0.8)'; ctx.font = '13px Arial';
+    ctx.fillText('Grab the treasures! The star portal takes you back out.', 400, 154);
+
+    for (const tr of secretRoom.treasures) {
+        if (tr.picked) continue;
+        const bob = Math.sin(t * 3 + tr.x) * 4;
+        // Pedestal
+        ctx.fillStyle = '#C8A040'; ctx.fillRect(tr.x - 22, tr.y + 14, 44, 12);
+        ctx.fillStyle = '#A08030'; ctx.fillRect(tr.x - 16, tr.y + 26, 32, 14);
+        ctx.save();
+        ctx.shadowColor = '#FFFFFF'; ctx.shadowBlur = 20;
+        if (tr.kind === 'rainbow')    drawStar(tr.x, tr.y + bob, 16, `hsl(${(t * 200) % 360}, 100%, 60%)`);
+        else if (tr.kind === 'heart') { ctx.font = '30px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                                        ctx.fillStyle = '#FF3355'; ctx.fillText('❤', tr.x, tr.y + bob); }
+        else                          drawStar(tr.x, tr.y + bob, 16, '#FFD700');
+        ctx.restore();
+        ctx.fillStyle = '#FFF4C0'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText({ rainbow: 'RAINBOW POWER', heart: 'SUPER HEART', star: 'GOLDEN STAR' }[tr.kind], tr.x, tr.y + 54);
+    }
+}
+
+function drawUnderground() {
+    const t = Date.now() / 1000;
+    // Rocky walls
+    ctx.fillStyle = '#2A1A0E';
+    for (let i = 0; i < 30; i++) {
+        const x = (i * 131) % 800, y = 60 + (i * 89) % 540;
+        ctx.beginPath(); ctx.ellipse(x, y, 30 + (i % 4) * 10, 14 + (i % 3) * 6, (i % 5) * 0.6, 0, Math.PI * 2); ctx.fill();
+    }
+    // Glowing mushrooms
+    for (const m of underground.shrooms) {
+        const c = `hsl(${m.h}, 90%, 60%)`;
+        ctx.save();
+        ctx.shadowColor = c; ctx.shadowBlur = 12;
+        ctx.fillStyle = '#DDD'; ctx.fillRect(m.x - 1.5, m.y - 6, 3, 8);
+        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(m.x, m.y - 6, 6, Math.PI, 0); ctx.fill();
+        ctx.restore();
+    }
+    // Gems to mine
+    for (const g of underground.gems) {
+        if (g.mined) continue;
+        ctx.save();
+        ctx.shadowColor = g.color; ctx.shadowBlur = 18 + Math.sin(t * 3 + g.x) * 6;
+        ctx.fillStyle = g.color;
+        const sz = 14 - g.hits * 2;
+        ctx.beginPath();
+        ctx.moveTo(g.x, g.y - sz * 1.4); ctx.lineTo(g.x + sz, g.y); ctx.lineTo(g.x, g.y + sz); ctx.lineTo(g.x - sz, g.y); ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.beginPath(); ctx.moveTo(g.x, g.y - sz * 1.4); ctx.lineTo(g.x + sz * 0.3, g.y - sz * 0.2); ctx.lineTo(g.x - sz * 0.5, g.y); ctx.closePath(); ctx.fill();
+        ctx.restore();
+    }
+    for (const e of underground.enemies) {
+        drawEnemy(e, t);
+        if (!(e.emerge > 0) && !e.hidden) drawEnemyHp(e);
+    }
+    drawCoins(underground.coins);
+}
+
+// Dark caves: you can only see near your lantern (drawn on top of the room, under the HUD)
+function drawCaveDarkness() {
+    const flicker = Math.sin(Date.now() / 90) * 4;
+    const dark = ctx.createRadialGradient(player.x, player.y, 50, player.x, player.y, 210 + flicker);
+    dark.addColorStop(0, 'rgba(0,0,0,0)'); dark.addColorStop(1, 'rgba(0,0,0,0.9)');
+    ctx.fillStyle = dark; ctx.fillRect(0, 0, 800, 600);
+    // Gems and portals still twinkle through the dark so you can find them
+    for (const g of underground.gems) {
+        if (!g.mined && Math.sin(Date.now() / 300 + g.x) > 0.3) drawStar(g.x, g.y - 4, 4, g.color);
+    }
+    for (const p of PORTALS.underground) {
+        ctx.fillStyle = 'rgba(200,180,255,0.35)';
+        ctx.beginPath(); ctx.arc(p.x, p.y, PORTAL_R, 0, Math.PI * 2); ctx.fill();
+    }
+    const gem = nearbyGem();
+    if (gem) {
+        ctx.fillStyle = '#FFE08A'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        const verb = lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap DIG' : 'Press SPACE';
+        ctx.fillText(`${verb} to mine the gem!`, gem.x, gem.y - 26);
+    }
+    ctx.fillStyle = 'rgba(255,220,150,0.6)'; ctx.font = '12px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('⛏ Mine the glowing gems — but watch out for moles and lava worms in the dark!', 400, 580);
 }
 
 // ── DRAW: PLAYER ──────────────────────────────────────────────
@@ -2971,7 +3230,7 @@ function drawHUD() {
     ctx.fillText(hearts, 400, 20);
 
     // Room name + Level
-    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND' };
+    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES' };
     const cfg    = LEVEL_CONFIGS[state.level - 1];
     const lvlLabel = cfg.isBoss ? `LEVEL ${state.level} — BOSS!` : `LEVEL ${state.level}`;
     ctx.fillStyle = cfg.isBoss ? 'rgba(255,100,50,0.85)' : 'rgba(255,255,255,0.5)';
@@ -3329,7 +3588,7 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(nearbyDigSpot() && canDig() ? 'DIG' : nearbyNpc() ? 'TALK' : 'SHOOT', VSHOOT.x, VSHOOT.y);
+    ctx.fillText((nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
 }
@@ -3380,7 +3639,7 @@ function draw() {
     if (state.won || state.levelComplete) {
         drawRainbowBg();
     } else {
-        const bg = { void: voidBgColor, hell: '#1a0000', paradise: '#001a1a' };
+        const bg = { void: voidBgColor, hell: '#1a0000', paradise: '#001a1a', secret: '#2a1e00', underground: '#140c06' };
         ctx.fillStyle = bg[state.room];
         ctx.fillRect(0, 0, 800, 600);
     }
@@ -3395,6 +3654,8 @@ function draw() {
     if (state.room === ROOM.VOID)     drawVoid();
     if (state.room === ROOM.HELL)     drawHell();
     if (state.room === ROOM.PARADISE) drawParadise();
+    if (state.room === ROOM.SECRET)   drawSecretRoom();
+    if (state.room === ROOM.UNDERGROUND) drawUnderground();
     drawPlayer();
     drawHeartPickups();
     drawPet();
@@ -3402,6 +3663,7 @@ function draw() {
     drawBolts();
     drawEnemyProjectiles();
     drawParticles();
+    if (state.room === ROOM.UNDERGROUND) drawCaveDarkness();
     drawFloatTexts();
     drawHUD();
     drawControls();
