@@ -127,27 +127,28 @@ const BASE_SPEED = 4;
 const LEVEL_CONFIGS = [
     { // Level 1 – Standard
         ammoMax: 5, reloadFrames: 180,
-        devilHp: 5, devilR: 28, devilSpeed: 0.9, devilShootRate: 190, devilShotsPerFire: 1,
+        devilHp: 5, devilR: 28, devilSpeed: 0.9, devilShootRate: 110, devilShotsPerFire: 1,
         extraFireMonsters: 0, extraGhosts: 0,
         playerMaxHp: 3,
         coinCount: 6, isBoss: false,
     },
     { // Level 2 – Hard
         ammoMax: 4, reloadFrames: 240,
-        devilHp: 10, devilR: 28, devilSpeed: 1.2, devilShootRate: 140, devilShotsPerFire: 1,
+        devilHp: 10, devilR: 28, devilSpeed: 1.2, devilShootRate: 80,  devilShotsPerFire: 1,
         extraFireMonsters: 1, extraGhosts: 1,
         playerMaxHp: 3,
         coinCount: 8, isBoss: false,
     },
     { // Level 3 – BOSS
         ammoMax: 4, reloadFrames: 270,
-        devilHp: 20, devilR: 52, devilSpeed: 1.4, devilShootRate: 100, devilShotsPerFire: 3,
+        devilHp: 20, devilR: 52, devilSpeed: 1.4, devilShootRate: 55,  devilShotsPerFire: 3,
         extraFireMonsters: 2, extraGhosts: 2,
         playerMaxHp: 2,
         coinCount: 10, isBoss: true,
     },
 ];
 const MAX_LEVELS       = 3;
+const DEVIL_BULLET_SPEED = 7.5;   // px/frame (player moves 4)
 const CAVE_MAX_FRAMES  = 3600;  // 1 minute at 60 fps — same for all levels
 
 // ── AVATAR SKINS ─────────────────────────────────────────────
@@ -783,7 +784,7 @@ function updateEnemies() {
                         const offset = shotsPerFire > 1 ? (s - (shotsPerFire - 1) / 2) * spreadAngle : 0;
                         enemyProjectiles.push({
                             x: d.x, y: d.y,
-                            dx: Math.cos(a + offset) * 5, dy: Math.sin(a + offset) * 5,
+                            dx: Math.cos(a + offset) * DEVIL_BULLET_SPEED, dy: Math.sin(a + offset) * DEVIL_BULLET_SPEED,
                             color: '#FF6600', life: 130, r: cfg.isBoss ? 9 : 7,
                         });
                     }
