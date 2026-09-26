@@ -2305,25 +2305,11 @@ function drawVoid() {
 function drawHell() {
     const t = Date.now() / 500;
 
-    // Caves
+    // Caves (the rocks are painted into the background)
     for (const c of HELL_CAVES) {
-        ctx.save();
-        ctx.fillStyle   = 'rgba(15, 8, 4, 0.85)';
-        ctx.strokeStyle = '#5a2800';
-        ctx.lineWidth   = 3;
-        const rad = 18;
-        ctx.beginPath();
-        ctx.moveTo(c.x + rad, c.y);
-        ctx.arcTo(c.x + c.w, c.y,       c.x + c.w, c.y + c.h, rad);
-        ctx.arcTo(c.x + c.w, c.y + c.h, c.x,       c.y + c.h, rad);
-        ctx.arcTo(c.x,       c.y + c.h, c.x,       c.y,       rad);
-        ctx.arcTo(c.x,       c.y,       c.x + c.w, c.y,       rad);
-        ctx.closePath();
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle   = 'rgba(120,70,30,0.55)';
+        ctx.fillStyle   = 'rgba(200,140,90,0.6)';
         ctx.font        = 'bold 11px Arial'; ctx.textAlign = 'center';
-        ctx.fillText('CAVE  (hide & dig here!)', c.x + c.w / 2, c.y + 20);
-        ctx.restore();
+        ctx.fillText('CAVE  (hide & dig here!)', c.x + c.w / 2, c.y + 22);
     }
 
     // Dig spots — dirt piles with weapons buried in layers
@@ -2399,6 +2385,7 @@ function drawHell() {
     // Devil
     const d = hell.devil;
     if (d.alive) {
+        drawGroundShadow(d.x + 4, d.y + d.r + 4, d.r * 1.1, d.r * 0.3, 0.4);
         const telegraphing = d.telegraphTimer > 0;
         const flashOn      = telegraphing && Math.floor(Date.now() / 80) % 2 === 0;
 
@@ -2485,6 +2472,10 @@ function drawHell() {
 
 // ── DRAW: BAD GUYS ────────────────────────────────────────────
 function drawEnemy(e, t) {
+    if (!e.hidden && !(e.emerge > 45)) {
+        const flying = e.type === 'ghost' || e.type === 'bat' || e.type === 'imp';
+        drawGroundShadow(e.x + 2, e.y + e.r + (flying ? 12 : 2), e.r * (flying ? 0.7 : 1), e.r * 0.3, flying ? 0.15 : 0.3);
+    }
     ctx.save();
     if (e.type === 'fire') {
         ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
@@ -2675,7 +2666,7 @@ function drawParadiseSky() {
     const P = paradise;
     const dark = P.phase === 'night' ? 1 : P.phase === 'dusk' ? 1 - P.timer / DUSK_FRAMES : 0;
     if (dark === 0) {
-        ctx.fillStyle = 'rgba(120,200,160,0.18)';   // bright daytime
+        ctx.fillStyle = 'rgba(255,240,190,0.06)';   // warm sunshine
         ctx.fillRect(0, 0, 800, 600);
         return;
     }
@@ -2696,11 +2687,24 @@ function drawParadiseSky() {
 
 function drawBuilding(b, night) {
     const w = 90, h = 55, x = b.x - w / 2, y = b.y - h / 2;
+    drawGroundShadow(b.x + 10, y + h + 2, w * 0.6, 8, 0.3);
     ctx.save();
     ctx.fillStyle = b.wall;
     ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1;          // brick lines
+    for (let row = 1; row < 6; row++) {
+        ctx.beginPath(); ctx.moveTo(x, y + row * 9); ctx.lineTo(x + w, y + row * 9); ctx.stroke();
+        for (let bx = x + (row % 2) * 9; bx < x + w; bx += 18) { ctx.beginPath(); ctx.moveTo(bx, y + row * 9 - 9); ctx.lineTo(bx, y + row * 9); ctx.stroke(); }
+    }
+    const shade = ctx.createLinearGradient(x, 0, x + w, 0);           // light from the left
+    shade.addColorStop(0, 'rgba(255,255,255,0.12)'); shade.addColorStop(1, 'rgba(0,0,0,0.18)');
+    ctx.fillStyle = shade; ctx.fillRect(x, y, w, h);
     ctx.fillStyle = b.roof;
     ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(b.x, y - 32); ctx.lineTo(x + w + 8, y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';                                // shady side of the roof
+    ctx.beginPath(); ctx.moveTo(b.x, y - 32); ctx.lineTo(x + w + 8, y); ctx.lineTo(b.x, y); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';                              // roof tiles
+    for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(x - 8 + k * 8, y - k * 8); ctx.lineTo(x + w + 8 - k * 8, y - k * 8); ctx.stroke(); }
     ctx.fillStyle = '#6B3E1E';                                  // door
     ctx.fillRect(b.x - 9, y + h - 26, 18, 26);
     ctx.fillStyle = night ? '#FFE070' : '#AADDFF';              // windows glow at night
@@ -2833,6 +2837,228 @@ function drawParadise() {
     drawCoins(P.coins);
 }
 
+// ── DRAW: BACKGROUNDS ─────────────────────────────────────────
+// Each room's ground is painted once onto its own hidden canvas, then copied every frame.
+// A seeded random number generator makes the scenery look the same every time.
+function seededRandom(seed) {
+    return () => {
+        seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+const bgCache = {};
+function roomBackground(room) {
+    if (!bgCache[room]) {
+        const c = document.createElement('canvas');
+        c.width = 800; c.height = 600;
+        if (room === 'void') { c.width = 900; c.height = 700; }   // fog is bigger than the screen so it can drift
+        const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog };
+        painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
+        bgCache[room] = c;
+    }
+    return bgCache[room];
+}
+
+function paintParadise(g, R) {
+    g.fillStyle = '#3E8C38'; g.fillRect(0, 0, 800, 600);
+    // Patchy grass colours
+    for (let i = 0; i < 1400; i++) {
+        g.fillStyle = `hsla(${95 + R() * 30}, ${40 + R() * 25}%, ${26 + R() * 16}%, 0.55)`;
+        g.beginPath(); g.ellipse(R() * 800, R() * 600, 4 + R() * 12, 3 + R() * 7, R() * 3, 0, Math.PI * 2); g.fill();
+    }
+    // Grass blades
+    g.lineWidth = 1;
+    for (let i = 0; i < 3000; i++) {
+        const x = R() * 800, y = R() * 600, h = 3 + R() * 5;
+        g.strokeStyle = R() < 0.5 ? 'rgba(20,70,20,0.6)' : 'rgba(140,200,90,0.5)';
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + (R() - 0.5) * 3, y - h); g.stroke();
+    }
+    // Dirt paths from every door and portal to the town square
+    const plaza = { x: 400, y: 330 };
+    const ends = [...BUILDINGS.map(b => ({ x: b.x, y: b.y + 30 })), ...PORTALS.paradise, { x: 400, y: 480 }, { x: 200, y: 480 }, { x: 600, y: 480 }, { x: 700, y: 300 }];
+    for (const [w, col] of [[30, '#9C8456'], [22, '#C9B07A']]) {
+        g.strokeStyle = col; g.lineWidth = w; g.lineCap = 'round';
+        for (const e of ends) { g.beginPath(); g.moveTo(plaza.x, plaza.y); g.quadraticCurveTo((plaza.x + e.x) / 2 + 30, (plaza.y + e.y) / 2, e.x, e.y); g.stroke(); }
+        g.fillStyle = col; g.beginPath(); g.arc(plaza.x, plaza.y, w * 2.2, 0, Math.PI * 2); g.fill();
+    }
+    for (let i = 0; i < 400; i++) {   // pebbles on the paths
+        const e = ends[Math.floor(R() * ends.length)], k = R();
+        g.fillStyle = R() < 0.5 ? 'rgba(120,100,70,0.7)' : 'rgba(230,215,180,0.7)';
+        g.beginPath(); g.arc(plaza.x + (e.x - plaza.x) * k + (R() - 0.5) * 14, plaza.y + (e.y - plaza.y) * k + (R() - 0.5) * 14, 1 + R() * 1.5, 0, Math.PI * 2); g.fill();
+    }
+    // Flowers
+    const petals = ['#FFFFFF', '#FFE44D', '#FF7FB0', '#B98CFF', '#FF6A4D'];
+    for (let i = 0; i < 140; i++) {
+        const x = R() * 800, y = 70 + R() * 490, col = petals[Math.floor(R() * petals.length)];
+        g.fillStyle = col;
+        for (let k = 0; k < 5; k++) { const a = k * 1.256; g.beginPath(); g.arc(x + Math.cos(a) * 2.2, y + Math.sin(a) * 2.2, 1.8, 0, Math.PI * 2); g.fill(); }
+        g.fillStyle = '#FFB300'; g.beginPath(); g.arc(x, y, 1.3, 0, Math.PI * 2); g.fill();
+    }
+    // Trees (kept away from buildings, portals and paths)
+    for (const [x, y, r] of [[35, 150, 30], [770, 330, 34], [45, 470, 28], [300, 440, 24], [770, 520, 30], [480, 110, 22], [120, 330, 22]]) {
+        g.fillStyle = 'rgba(0,0,0,0.25)'; g.beginPath(); g.ellipse(x + 8, y + r * 0.9, r * 0.9, r * 0.35, 0, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#5A3A1E'; g.fillRect(x - 4, y, 8, r * 0.8);
+        for (const [ox, oy, rr] of [[-r * 0.45, -r * 0.1, r * 0.7], [r * 0.45, -r * 0.1, r * 0.7], [0, -r * 0.55, r * 0.75]]) {
+            const gr = g.createRadialGradient(x + ox - rr * 0.3, y + oy - rr * 0.3, rr * 0.1, x + ox, y + oy, rr);
+            gr.addColorStop(0, '#6FCB55'); gr.addColorStop(1, '#1F5E1C');
+            g.fillStyle = gr; g.beginPath(); g.arc(x + ox, y + oy, rr, 0, Math.PI * 2); g.fill();
+        }
+    }
+    // Beach and sea along the bottom — it's an island!
+    const sand = g.createLinearGradient(0, 566, 0, 588);
+    sand.addColorStop(0, 'rgba(230,210,150,0)'); sand.addColorStop(0.4, '#E6D296'); sand.addColorStop(1, '#D8C080');
+    g.fillStyle = sand; g.fillRect(0, 566, 800, 22);
+    const sea = g.createLinearGradient(0, 586, 0, 600);
+    sea.addColorStop(0, '#4FB3D9'); sea.addColorStop(1, '#1F6FA8');
+    g.fillStyle = sea; g.fillRect(0, 586, 800, 14);
+}
+
+function paintHell(g, R) {
+    const base = g.createRadialGradient(400, 320, 60, 400, 320, 520);
+    base.addColorStop(0, '#3C0E06'); base.addColorStop(1, '#120302');
+    g.fillStyle = base; g.fillRect(0, 0, 800, 600);
+    // Cracked volcanic rock
+    for (let i = 0; i < 700; i++) {
+        g.fillStyle = `hsla(${8 + R() * 14}, ${35 + R() * 25}%, ${6 + R() * 14}%, 0.6)`;
+        g.beginPath(); g.ellipse(R() * 800, R() * 600, 6 + R() * 22, 4 + R() * 12, R() * 3, 0, Math.PI * 2); g.fill();
+    }
+    // Glowing lava cracks
+    for (let i = 0; i < 18; i++) {
+        let x = R() * 800, y = 70 + R() * 530, a = R() * Math.PI * 2;
+        const pts = [[x, y]];
+        for (let k = 0; k < 5 + R() * 6; k++) {   // wanders a little, like a real crack
+            a += (R() - 0.5) * 1.1;
+            const step = 12 + R() * 14;
+            x += Math.cos(a) * step; y += Math.sin(a) * step; pts.push([x, y]);
+        }
+        for (const [w, col, blur] of [[2.2, 'rgba(255,70,0,0.75)', 7], [0.8, 'rgba(255,215,130,0.8)', 0]]) {
+            g.strokeStyle = col; g.lineWidth = w; g.shadowColor = '#FF3300'; g.shadowBlur = blur; g.lineJoin = 'round';
+            g.beginPath(); pts.forEach(([px, py], k) => k ? g.lineTo(px, py) : g.moveTo(px, py)); g.stroke();
+        }
+    }
+    g.shadowBlur = 0;
+    // Lava pools
+    for (const [x, y, rx, ry] of [[70, 555, 70, 34], [770, 190, 42, 60]]) {
+        g.fillStyle = '#2A0A04'; g.beginPath(); g.ellipse(x, y, rx + 8, ry + 6, 0, 0, Math.PI * 2); g.fill();
+        const lava = g.createRadialGradient(x - rx * 0.2, y - ry * 0.2, 4, x, y, Math.max(rx, ry));
+        lava.addColorStop(0, '#FFF0A0'); lava.addColorStop(0.35, '#FFA020'); lava.addColorStop(1, '#B01E00');
+        g.fillStyle = lava; g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); g.fill();
+    }
+    // Rocky cave entrances (the dark caves you can hide in)
+    HELL_CAVES.forEach((c, ci) => {
+        const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+        const inside = g.createRadialGradient(cx, cy, 10, cx, cy, Math.max(c.w, c.h) * 0.7);
+        inside.addColorStop(0, '#050201'); inside.addColorStop(1, '#1E0E06');
+        g.fillStyle = inside;
+        g.beginPath(); g.ellipse(cx, cy, c.w / 2, c.h / 2, 0, 0, Math.PI * 2); g.fill();
+        g.fillRect(c.x + 14, c.y + 8, c.w - 28, c.h - 16);
+        // Boulders around the edge
+        for (let k = 0; k < 46; k++) {
+            const a = (k / 46) * Math.PI * 2, rr = 6 + R() * 9;
+            const bx = cx + Math.cos(a) * (c.w / 2 + 2), by = cy + Math.sin(a) * (c.h / 2 + 2);
+            const stone = g.createRadialGradient(bx - rr * 0.4, by - rr * 0.4, 1, bx, by, rr);
+            stone.addColorStop(0, '#7A5A48'); stone.addColorStop(1, '#2E1E16');
+            g.fillStyle = stone; g.beginPath(); g.arc(bx, by, rr, 0, Math.PI * 2); g.fill();
+        }
+    });
+}
+
+function paintUnderground(g, R) {
+    g.fillStyle = '#1C130C'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 900; i++) {   // dirt and stone floor
+        g.fillStyle = `hsla(${25 + R() * 15}, ${20 + R() * 20}%, ${8 + R() * 12}%, 0.7)`;
+        g.beginPath(); g.ellipse(R() * 800, R() * 600, 3 + R() * 16, 2 + R() * 9, R() * 3, 0, Math.PI * 2); g.fill();
+    }
+    for (let i = 0; i < 18; i++) {   // big boulders
+        const x = R() * 800, y = 70 + R() * 530, r = 12 + R() * 22;
+        const st = g.createRadialGradient(x - r * 0.4, y - r * 0.4, 2, x, y, r);
+        st.addColorStop(0, '#5A4636'); st.addColorStop(1, '#1E140C');
+        g.fillStyle = st; g.beginPath(); g.ellipse(x, y, r, r * 0.75, 0, 0, Math.PI * 2); g.fill();
+    }
+    for (let i = 0; i < 7; i++) {    // shiny puddles
+        const x = R() * 800, y = 90 + R() * 480;
+        g.fillStyle = 'rgba(60,90,120,0.35)'; g.beginPath(); g.ellipse(x, y, 20 + R() * 20, 6 + R() * 5, 0, 0, Math.PI * 2); g.fill();
+        g.fillStyle = 'rgba(200,230,255,0.2)'; g.beginPath(); g.ellipse(x - 6, y - 2, 8, 2, 0, 0, Math.PI * 2); g.fill();
+    }
+    // Stalactites (top) and stalagmites (bottom)
+    for (let x = 0; x < 800; x += 18 + R() * 26) {
+        const h = 14 + R() * 30;
+        g.fillStyle = '#3A2A1C';
+        g.beginPath(); g.moveTo(x, 46); g.lineTo(x + 8, 46 + h); g.lineTo(x + 16, 46); g.fill();
+        const h2 = 10 + R() * 22;
+        g.beginPath(); g.moveTo(x + 4, 600); g.lineTo(x + 12, 600 - h2); g.lineTo(x + 20, 600); g.fill();
+    }
+}
+
+// Soft fog clouds for the Void (drawn over its colour, drifting slowly)
+function paintVoidFog(g, R) {
+    for (let i = 0; i < 30; i++) {
+        const x = R() * 900, y = R() * 700, r = 60 + R() * 140;
+        const fog = g.createRadialGradient(x, y, 0, x, y, r);
+        fog.addColorStop(0, `rgba(255,255,255,${0.08 + R() * 0.1})`); fog.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = fog; g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+}
+
+// Darker edges make everything feel more real
+let vignetteCanvas = null;
+function drawVignette() {
+    if (!vignetteCanvas) {
+        vignetteCanvas = document.createElement('canvas');
+        vignetteCanvas.width = 800; vignetteCanvas.height = 600;
+        const g = vignetteCanvas.getContext('2d');
+        const v = g.createRadialGradient(400, 320, 240, 400, 320, 560);
+        v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.5)');
+        g.fillStyle = v; g.fillRect(0, 0, 800, 600);
+    }
+    ctx.drawImage(vignetteCanvas, 0, 0);
+}
+
+function drawRoomBackground() {
+    const t = Date.now() / 1000;
+    if (state.room === ROOM.VOID) {
+        ctx.fillStyle = voidBgColor; ctx.fillRect(0, 0, 800, 600);
+        ctx.drawImage(roomBackground('void'), -50 + Math.sin(t / 6) * 30, -50 + Math.cos(t / 8) * 15);
+    } else if (state.room === ROOM.SECRET) {
+        const gold = ctx.createRadialGradient(400, 300, 50, 400, 300, 500);
+        gold.addColorStop(0, '#5A4210'); gold.addColorStop(1, '#1E1400');
+        ctx.fillStyle = gold; ctx.fillRect(0, 0, 800, 600);
+    } else {
+        ctx.drawImage(roomBackground(state.room), 0, 0);
+    }
+    if (state.room === ROOM.HELL) {
+        // Lava pools pulse, embers float up
+        ctx.save();
+        ctx.globalAlpha = 0.25 + Math.sin(t * 2) * 0.15;
+        ctx.fillStyle = '#FFE070'; ctx.shadowColor = '#FF8800'; ctx.shadowBlur = 30;
+        ctx.beginPath(); ctx.ellipse(70, 555, 40, 18, 0, 0, Math.PI * 2); ctx.ellipse(770, 190, 22, 34, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        for (let i = 0; i < 24; i++) {
+            const x = (i * 97 + Math.sin(t + i) * 20) % 800, y = 600 - ((t * 30 + i * 53) % 560);
+            ctx.fillStyle = `rgba(255,${120 + (i % 5) * 25},40,${0.5 + 0.4 * Math.sin(t * 3 + i)})`;
+            ctx.fillRect(x, y, 2, 2);
+        }
+    }
+    if (state.room === ROOM.PARADISE) {
+        // Waves washing up the beach
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let x = 0; x <= 800; x += 10) ctx.lineTo(x, 587 + Math.sin(x / 30 + t * 2) * 2);
+        ctx.stroke();
+    }
+}
+
+// Soft shadow on the ground under something
+function drawGroundShadow(x, y, rx, ry = rx * 0.35, alpha = 0.3) {
+    ctx.save();
+    ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+    ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+}
+
 // ── DRAW: SECRET ROOMS ────────────────────────────────────────
 function drawSecretRoom() {
     const t = Date.now() / 1000;
@@ -2873,12 +3099,6 @@ function drawSecretRoom() {
 
 function drawUnderground() {
     const t = Date.now() / 1000;
-    // Rocky walls
-    ctx.fillStyle = '#2A1A0E';
-    for (let i = 0; i < 30; i++) {
-        const x = (i * 131) % 800, y = 60 + (i * 89) % 540;
-        ctx.beginPath(); ctx.ellipse(x, y, 30 + (i % 4) * 10, 14 + (i % 3) * 6, (i % 5) * 0.6, 0, Math.PI * 2); ctx.fill();
-    }
     // Glowing mushrooms
     for (const m of underground.shrooms) {
         const c = `hsl(${m.h}, 90%, 60%)`;
@@ -2969,6 +3189,7 @@ function drawPlayer() {
     if (state.playerInvincible > 0 && Math.floor(Date.now() / 80) % 2 === 0) return;
 
     const color = getPlayerColor();
+    drawGroundShadow(player.x + 3, player.y + 19, 16, 5);
     ctx.save();
     ctx.shadowColor = color; ctx.shadowBlur = 14;
     drawAvatar(player.x, player.y, player.w, color, AVATAR_STYLES[state.activeSkin]);
@@ -3012,6 +3233,12 @@ function drawAvatar(x, y, size, color, style) {
     ctx.fillStyle = color;
     ctx.fillRect(x - h, y - h, size, size);
     ctx.shadowBlur = 0;
+    // Light from the top-left, shadow at the bottom-right — makes the square look solid
+    const shade = ctx.createLinearGradient(x - h, y - h, x + h, y + h);
+    shade.addColorStop(0, 'rgba(255,255,255,0.35)'); shade.addColorStop(0.5, 'rgba(255,255,255,0)'); shade.addColorStop(1, 'rgba(0,0,0,0.3)');
+    ctx.fillStyle = shade; ctx.fillRect(x - h, y - h, size, size);
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = Math.max(1, k);
+    ctx.strokeRect(x - h, y - h, size, size);
     if (style === 'ninja') {
         ctx.fillStyle = '#DD2222';                                   // headband + tails
         ctx.fillRect(x - h, y - 12 * k, size, 5 * k);
@@ -3639,15 +3866,8 @@ function draw() {
     if (state.won || state.levelComplete) {
         drawRainbowBg();
     } else {
-        const bg = { void: voidBgColor, hell: '#1a0000', paradise: '#001a1a', secret: '#2a1e00', underground: '#140c06' };
-        ctx.fillStyle = bg[state.room];
-        ctx.fillRect(0, 0, 800, 600);
+        drawRoomBackground();
     }
-
-    // Subtle grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.lineWidth = 1;
-    for (let x = 0; x <= 800; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 600); ctx.stroke(); }
-    for (let y = 0; y <= 600; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(800, y); ctx.stroke(); }
 
     if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawParadiseSky();
     if (!state.won && !state.levelComplete) drawPortals();
@@ -3664,6 +3884,7 @@ function draw() {
     drawEnemyProjectiles();
     drawParticles();
     if (state.room === ROOM.UNDERGROUND) drawCaveDarkness();
+    else if (!state.won && !state.levelComplete) drawVignette();
     drawFloatTexts();
     drawHUD();
     drawControls();
