@@ -375,11 +375,12 @@ let state = {
     // Minecraft-style building
     buildMode:          false,
     hotbar:             0,         // which block you're holding
-    inv:                {},        // blocks and materials you've collected, e.g. { log: 3, iron: 1 }
+    inv:                { dirt: 10, planks: 10, stone: 5, glass: 5 },   // blocks and materials you've collected (you start with a few)
     armor:              0,         // +hearts from crafted armor
     diamondPickaxe:     false,
     heavenWishes:       3,
     placesSeen:         {},
+    gotStarterBlocks:   true,
     // Island life
     furniture:          { bed: true },   // what's in your house
     lessonHealTimer:    0,
@@ -520,7 +521,7 @@ function pressAction() {
     }
     if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
-    else if (!tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction() && !tryMineNearby()) shoot();
+    else if (!tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction() && !tryMineNearby() && !tryDigGround()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
@@ -539,6 +540,7 @@ function handleTap(x, y) {
         return true;
     }
     if (race) { raceTap(); return true; }
+    if (lastInput !== 'touch' && state.gamePhase === 'playing' && !menu && !state.shopOpen && inRect(x, y, BUILD_BTN)) { toggleBuild(); return true; }
     if (state.awardsOpen) { state.awardsOpen = false; return true; }
     if (menu) {
         const list = menu.items();
@@ -615,10 +617,20 @@ canvas.addEventListener('click', e => {
     initAudio();
     const p = canvasPos(e.clientX, e.clientY);
     if (handleTap(p.x, p.y)) return;
-    // Build mode: click a spot near you to mine / place there
-    if (state.buildMode && state.gamePhase === 'playing' && !menu && !state.shopOpen && Math.hypot(p.x - player.x, p.y - player.y) < BUILD_REACH) {
-        buildAt(Math.floor(p.x / CELL), Math.floor(p.y / CELL), p.x, p.y);
-    }
+    if (state.gamePhase !== 'playing' || menu || state.shopOpen || state.won || state.levelComplete) return;
+    if (Math.hypot(p.x - player.x, p.y - player.y) > BUILD_REACH) return;
+    const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
+    if (state.buildMode) { buildAt(cx, cy, p.x, p.y); return; }            // build mode: click to mine or place
+    if (blockAtCell(cx, cy) || sceneryAt(p.x, p.y)) buildAt(cx, cy, p.x, p.y);   // otherwise left-click mines, like Minecraft
+});
+// Right-click places a block, like Minecraft
+canvas.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const p = canvasPos(e.clientX, e.clientY);
+    if (state.gamePhase !== 'playing' || menu || state.shopOpen || state.won || state.levelComplete) return;
+    if (Math.hypot(p.x - player.x, p.y - player.y) > BUILD_REACH) return;
+    const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
+    if (!blockAtCell(cx, cy)) buildAt(cx, cy, -9999, -9999);   // (far-away aim so it never chops a tree by accident)
 });
 
 // ── GAME CONTROLLER (Xbox, PlayStation, Switch Pro… anything the browser maps as "standard") ──
@@ -1726,6 +1738,7 @@ const AWARDS = [
     { id: 'frostgiant',  icon: '❄', name: 'Giant Slayer',     desc: 'Beat the Frost Giant' },
     { id: 'thunderbird', icon: '⚡', name: 'Storm Chaser',     desc: 'Beat the Thunder Bird' },
     { id: 'mothership',  icon: '🛸', name: 'Space Hero',       desc: 'Beat the Alien Mothership' },
+    { id: 'miner',       icon: '⛏', name: 'Miner',            desc: 'Dig up the ground' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -1756,7 +1769,7 @@ const SAVE_KEY    = 'lop_save';
 const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'powerTier', 'playerHp', 'coins',
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
-                     'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen'];
+                     'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -1776,6 +1789,7 @@ function startFromIntro(fresh = false) {
     if (fresh || !savedGame) {
         if (fresh) { clearSave(); worldBlocks = {}; saveWorld(); }
         state.gamePhase = 'playing';
+        showToast('⛏ Like Minecraft: SPACE or left-click mines, B builds, right-click places blocks!', '#FFE066', 300);
         return;
     }
     const data = savedGame;
@@ -1784,6 +1798,11 @@ function startFromIntro(fresh = false) {
     state.gamePhase = 'playing';
     while (state.ownedPets.length < PETS.length) state.ownedPets.push(false);   // pets added since you saved
     state.petXp = state.petXp || [];
+    if (!state.gotStarterBlocks) {
+        state.gotStarterBlocks = true;
+        state.inv = state.inv || {};
+        for (const [k, v] of Object.entries({ dirt: 10, planks: 10, stone: 5, glass: 5 })) state.inv[k] = (state.inv[k] || 0) + v;
+    }
     while (state.petXp.length < PETS.length) state.petXp.push(0);
     const cfg = LEVEL_CONFIGS[state.level - 1];
     state.ammoMax = cfg.ammoMax + state.ammoBonus;
@@ -2063,7 +2082,9 @@ function drawScenery() {
 // (only when no monster is close — then the button shoots)
 function nearbyMineable() {
     if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return null;
-    if (targetableEnemies().some(e => Math.hypot(e.x - player.x, e.y - player.y) < 250)) return null;
+    if (targetableEnemies().some(e => Math.hypot(e.x - player.x, e.y - player.y) < 180)) return null;
+    if (state.room === ROOM.HELL && hell.devil.alive && state.power !== POWER.NONE
+        && Math.hypot(hell.devil.x - player.x, hell.devil.y - player.y) < 300) return null;   // fight the Devil first!
     const ax = player.x + state.faceX * 30, ay = player.y + 5 + state.faceY * 30;
     const near = (scenery[state.room] || []).filter(o => !o.gone)
         .find(o => Math.hypot(o.x - player.x, (o.kind === 'tree' ? o.y : o.y) - player.y) < o.r + 26);
@@ -2081,6 +2102,58 @@ function tryMineNearby() {
     if (m.scenery) mineScenery(m.scenery.x, m.scenery.kind === 'tree' ? m.scenery.y - m.scenery.r * 0.2 : m.scenery.y);
     else buildAt(m.cx, m.cy);
     return true;
+}
+
+// ── DIGGING THE GROUND (anywhere, like Minecraft) ──
+// What you get from the ground in each place
+const GROUND = { paradise: 'dirt', void: 'stone', hell: 'netherrack', underground: 'stone', heaven: 'cloud', candy: 'dirt',
+                 ice: 'cloud', haunted: 'planks', sky: 'stone', space: 'stone' };
+const GROUND_HITS = 3;
+let groundDig = null;      // { x, y, hits } — the spot you're digging
+let groundHoles = [];      // little holes you've dug (they fill back in)
+
+// Dig the ground when there's nothing to fight (or you don't have a weapon)
+function wouldDigGround() {
+    if (state.gamePhase !== 'playing' || state.won || state.levelComplete || !GROUND[state.room]) return false;
+    const enemies = targetableEnemies().length > 0 || (state.room === ROOM.HELL && hell.devil.alive);
+    return state.power === POWER.NONE || !enemies;
+}
+
+function tryDigGround() {
+    if (!wouldDigGround()) return false;
+    const x = player.x + state.faceX * 22, y = player.y + 14 + state.faceY * 16;
+    if (!groundDig || Math.hypot(groundDig.x - x, groundDig.y - y) > 14) groundDig = { x, y, hits: 0 };
+    groundDig.hits++;
+    state.digAnim = 14;
+    const type = GROUND[state.room];
+    spawnParticles(x, y, blockColor(type), 5);
+    sfx('dig');
+    if (groundDig.hits >= (state.diamondPickaxe ? 1 : GROUND_HITS)) {
+        const drop = BLOCKS[type].drop;
+        state.inv[drop] = invCount(drop) + 1;
+        spawnFloatText(x, y - 16, `+1 ${BLOCKS[drop].name}`, '#FFFFFF', 50);
+        groundHoles.push({ x, y, room: state.room, t: 600 });
+        if (groundHoles.length > 30) groundHoles.shift();
+        groundDig = null;
+        giveAward('miner');
+    }
+    return true;
+}
+
+function drawGroundHoles() {
+    for (const h of groundHoles) {
+        if (h.room !== state.room) continue;
+        h.t--;
+        ctx.fillStyle = `rgba(40,25,10,${Math.min(0.6, h.t / 300)})`;
+        ctx.beginPath(); ctx.ellipse(h.x, h.y, 9, 4, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    groundHoles = groundHoles.filter(h => h.t > 0);
+    if (groundDig && groundDig.hits > 0) {   // cracks where you're digging
+        ctx.strokeStyle = 'rgba(40,25,10,0.8)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(groundDig.x - 6, groundDig.y); ctx.lineTo(groundDig.x + 6, groundDig.y + 1);
+        if (groundDig.hits > 1) { ctx.moveTo(groundDig.x, groundDig.y - 3); ctx.lineTo(groundDig.x + 2, groundDig.y + 4); }
+        ctx.stroke();
+    }
 }
 
 // TNT and creepers blow up nearby blocks
@@ -2367,7 +2440,7 @@ function resetGame() {
         job: null, housesOwned: {}, ammoBonus: 0,
         ownedPets: PETS.map(() => false), activePet: -1, petXp: PETS.map(() => 0),
         ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
-        buildMode: false, hotbar: 0, inv: {}, armor: 0, diamondPickaxe: false,
+        buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {},
     });
     player.x = 400; player.y = 300;
@@ -3648,6 +3721,21 @@ function drawGadgets() {
         }
         ctx.restore();
     }
+}
+
+// A clickable BUILD button that also shows which block you're holding
+const BUILD_BTN = { x: 272, y: 5, w: 86, h: 22 };   // in the top bar
+function drawBuildButton() {
+    if (lastInput === 'touch' || state.gamePhase !== 'playing' || state.won || state.levelComplete) return;
+    const b = BUILD_BTN, type = HOTBAR[state.hotbar];
+    ctx.save();
+    ctx.fillStyle = state.buildMode ? 'rgba(255,224,102,0.9)' : 'rgba(0,0,0,0.6)';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.strokeStyle = '#FFE066'; ctx.lineWidth = 1.5; ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.drawImage(blockCanvas(type), b.x + 3, b.y + 3, 16, 16);
+    ctx.fillStyle = state.buildMode ? '#222' : '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(`BUILD (B) ${isCreative() ? '∞' : '×' + invCount(type)}`, b.x + 22, b.y + b.h / 2 + 1);
+    ctx.restore();
 }
 
 // Little gadget + dash icons in the bottom-left corner
@@ -6720,6 +6808,7 @@ function drawHUD() {
     ctx.fillText(`Score ${state.score}   ·   Best 🏆 ${highScore}`, 786, 46);
 
     drawGadgetHud();
+    drawBuildButton();
 
     // ── MUTE BUTTON (M) ───────────────────────────────────────
     ctx.save();
@@ -7075,7 +7164,7 @@ function drawVirtualControls() {
     }
     ctx.font = 'bold 13px Arial';
     ctx.fillText(state.buildMode ? 'BUILD' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : nearbyMineable() ? 'MINE'
-                 : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : 'SHOOT', VSHOOT.x, VSHOOT.y);
+                 : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : wouldDigGround() ? 'DIG' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
 }
@@ -7143,7 +7232,7 @@ function draw() {
 
     if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawParadiseSky();
     if (!state.won && !state.levelComplete && state.room === ROOM.HEAVEN) drawHeavenBack();
-    if (!state.won && !state.levelComplete) { drawScenery(); drawBlocks(); }
+    if (!state.won && !state.levelComplete) { drawGroundHoles(); drawScenery(); drawBlocks(); }
     if (!state.won && !state.levelComplete) drawPortals();
     if (state.room === ROOM.VOID)     drawVoid();
     if (state.room === ROOM.HELL)     drawHell();
