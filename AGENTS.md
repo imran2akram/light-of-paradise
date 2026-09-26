@@ -1,171 +1,83 @@
 # AGENTS — AI Context for Light of Paradise
 
-This file gives AI coding agents (GitHub Copilot, Claude, etc.) the orientation they need to work on this codebase without having to re-derive everything from scratch.
+This file gives AI coding agents the orientation they need to work on this codebase without re-deriving everything.
 
 ---
 
 ## What this project is
 
-A single-player browser action game written in **vanilla JavaScript** (ES2017) using the **HTML5 Canvas 2D API**. No framework, no bundler, no package manager. The entire game ships as one file: `index.html`.
+A browser action-adventure game written in **vanilla JavaScript** using the **HTML5 Canvas 2D API**. No framework, no bundler, no package manager. The entire game ships as one file: `index.html` (~7,500 lines).
 
-The deployed game is at: `https://imran2akram.github.io/light-of-paradise/`
+It is being designed by a 7-year-old (Goldwinner), so features are frequent, playful and kid-friendly. Keep text on screen short and simple.
 
----
-
-## File map
-
-```
-index.html                    ← everything (HTML + CSS + JS, ~1 300 lines)
-Light of paradise opening.mp4 ← intro cinematic (referenced in index.html)
-.github/workflows/deploy.yml  ← auto-deploy to GitHub Pages on push to master
-README.md                     ← player/developer documentation
-AGENTS.md                     ← this file
-```
+Live site: `https://imran2akram.github.io/light-of-paradise/`. GitHub Pages deploys from the `main` branch directly; `.github/workflows/deploy.yml` targets `master` and never runs.
 
 ---
 
 ## How to run & test
 
 ```bash
-# No build required — open directly or serve locally:
 python3 -m http.server 8000   # then open http://localhost:8000
 ```
 
-There is **no test framework**. Validate changes by:
-1. Checking JS syntax: `node --check /tmp/extracted.js` (extract the `<script>` block first)
-2. Opening the page in a browser and playing through each room
-3. On mobile: open in Chrome DevTools device simulation or a real Android device
+There is no test framework. Validate changes by:
+1. Syntax check: extract the `<script>` block and run `node --check` on it.
+2. Headless simulation: load the script in Node with a stub DOM (a `Proxy` canvas context, a fake `AudioContext`, `localStorage`, `navigator.getGamepads`) and call `update()` / `draw()` in a loop. `node-canvas` (`npm i canvas`) gives real screenshots. Chromium/Playwright may not launch under WSL (missing `libnspr4`).
+3. Play it in a browser (desktop, touch and a game controller).
 
 ---
 
-## Code structure inside `index.html`
+## Big picture
 
-All game logic is inside the single `<script>` block. Sections are delimited by banner comments like `// ── SECTION ─`.
+`state` holds almost all saved/progress state; `resetGame()` and `advanceLevel()` reset it. Each room has its own data object:
 
-### Key globals
+| Room (`ROOM.*`) | Data | Notes |
+|---|---|---|
+| `void` | `voidRoom` | hub: shop, awards, race master, rocket, Boss Rush gate |
+| `hell` | `hell` | Devil, caves, dig spots, `hell.enemies` |
+| `paradise` | `paradise` | town (NPCs, jobs, houses), day/dusk/night cycle, `paradise.enemies` + `ambushers` |
+| `underground` | `underground` | dark caves, rebuilt every visit |
+| `secret` | `secretRoom` | golden treasure room |
+| `heaven` | `heaven` | wishes, creative building |
+| `house` | — | your home interior (`state.furniture`, `state.garden`) |
+| `ship`, `candy`, `ice`, `haunted`, `sky`, `space`, `arena` | `placeState[room]` via `place()` | defined in the `PLACES` table; `make()` builds a fresh state on every entry |
 
-| Symbol | Type | Purpose |
-|--------|------|---------|
-| `canvas` / `ctx` | DOM / CanvasRenderingContext2D | 800×600 canvas |
-| `state` | object | All mutable game state (room, HP, phase, etc.) |
-| `player` | `{x, y, w, h}` | Player position |
-| `keys` | `{}` | Keyboard state map (keyed by `e.code`) |
-| `vTouch` | object | Virtual touch state (joystick + shoot button) |
-| `isTouchDevice` | boolean | Set `true` on first `touchstart`; gates virtual control rendering |
-| `projectiles` | array | Player bullets |
-| `enemyProjectiles` | array | Enemy bullets |
-| `particles` | array | Visual effects (sparks, confetti) |
-| `hell` / `paradise` / `void_` | objects | Per-room entity state |
+`MAIN_ROOMS` are the rooms mystery portals can lead to. `changeRoom(dest)` is the one place that sets up a room on entry.
 
-### Key constants
+### Shared systems (search for the banner comments)
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `ROOM` | `{VOID, HELL, PARADISE}` | Room identifiers |
-| `POWER` | `{NONE, ICE, BRIMSTONE}` | Player power states |
-| `BASE_SPEED` | `4` | Player movement px/frame (×1.2 in Paradise) |
-| `VJOY` | `{x:100, y:490, baseR:55, maxDist:40}` | Virtual joystick geometry |
-| `VSHOOT` | `{x:700, y:490, r:45}` | Virtual shoot button geometry |
-| `TOUCH_AREA_MULTIPLIER` | `1.5` | Touch hit area expansion factor |
-| `JOYSTICK_DEADZONE_RATIO` | `0.2` | Deadzone fraction of `maxDist` |
+- **Enemies** — `ENEMY_TYPES` (name, hp, `weakTo`). `roomEnemies()` lists the current room's bad guys, `spawnList()` returns the real array to push new ones into, `moveEnemy()` / `drawEnemy()` switch on `type`, and `damageEnemy()` handles damage, freezing, chain lightning and loot.
+- **Weapons** — `POWER`, `WEAPON_INFO`, `state.powerTier`; `shoot()` auto-aims.
+- **Input** — keyboard, mouse (left-click mines, right-click places), touch (`vTouch`, `handleTap()`) and gamepads (`pollGamepad()`, `PAD`) all go through `pressAction()` / `pressStart()`. The main button tries, in order: treasure → dig spot → talk → town action → home action → mine nearby → dig ground → shoot.
+- **Menus** — `openMenu(title, itemsFn)` for pop-up stores (Forge, crafting, school, hats, sailing, wishes). The Void shop is `drawShop()` / `shopSelect()`.
+- **Blocks** — `BLOCKS`, `worldBlocks[room]`, `buildAt()`, `playerHitsBlock()`; mineable scenery (trees, rocks) in `scenery[room]`.
+- **Pets** — `PETS`, `pet`, `updatePet()`, `petLevel()`.
+- **Player 2** — `p2`, `updateP2()`, `drawP2()`.
+- **Audio** — Web Audio synth: `SFX` table, `sfx(name)`, and per-room `SONGS`.
+- **Saving** — `SAVE_FIELDS` (the list of `state` keys saved to `localStorage`), plus `lop_world` (blocks), `lop_awards`, `lop_highscore`, `lop_muted`. Old saves are patched in `startFromIntro()`.
+- **Awards** — `AWARDS` list, `giveAward(id)`, `countStat()`.
 
 ### Main loop
 
-```
-loop()
- ├── update()
- │    ├── updatePlayer()       ← reads keys[] and vTouch
- │    ├── updateEnemies()
- │    ├── updateProjectiles()
- │    ├── updateEnemyProjectiles()
- │    ├── checkPickups()
- │    └── updateParticles()
- └── draw()
-      ├── drawBackground()
-      ├── drawPortals()
-      ├── drawVoid/Hell/Paradise()
-      ├── drawPlayer()
-      ├── drawProjectiles() / drawEnemyProjectiles()
-      ├── drawParticles()
-      ├── drawHUD()
-      ├── drawControls()
-      ├── drawVirtualControls()  ← only renders when isTouchDevice is true
-      └── drawWin()              ← only renders when state.won is true
-```
-
----
-
-## Input system
-
-### Keyboard
-A `keys` dictionary is maintained via `keydown`/`keyup` listeners on `document`. `updatePlayer()` reads it each frame:
-```js
-if (keys['ArrowLeft'] || keys['KeyA']) dx -= spd;
-```
-
-### Virtual touch controls (added for Android)
-- `touchstart` on canvas: detects intro skip, Play Again, joystick activation, and shoot button press.
-- `touchmove` on canvas: updates `vTouch.joyDX` / `vTouch.joyDY` (clamped to `VJOY.maxDist`).
-- `touchend` / `touchcancel`: calls `clearTouchId()` to release the respective touch.
-- `updatePlayer()` reads `vTouch.joyDX/joyDY` with a deadzone, producing the same `dx/dy` as keyboard.
-- Both inputs are additive — desktop keyboard and touch work simultaneously.
-
-All canvas touch listeners use `{ passive: false }` so `e.preventDefault()` can suppress browser scroll/zoom.
-
-### `canvasPos(clientX, clientY)`
-Converts browser client coordinates to 800×600 logical canvas coordinates, accounting for CSS scaling:
-```js
-x = (clientX - rect.left) * (800 / rect.width)
-y = (clientY - rect.top)  * (600 / rect.height)
-```
-
----
-
-## Game state machine
-
-`state.gamePhase` drives the top-level flow:
-
-```
-'intro'   →  (Space / click / tap)  →  'playing'
-'playing' →  (all 3 crystals + devil dead)  →  state.won = true  →  drawWin()
-```
-
-`resetGame()` resets everything back to `gamePhase: 'intro'`.
-
----
-
-## Collision conventions
-
-- **Pickups / projectile–enemy**: distance check with `Math.hypot(a.x-b.x, a.y-b.y) < threshold`
-- **Portal entry**: AABB rectangle overlap (`player.x > p.x && player.x < p.x + p.w …`)
-- **Player bounds**: clamped in `updatePlayer()` to `[18, canvas.width-18]` × `[52, canvas.height-18]`
-
----
-
-## Devil AI states
-
-| State | Trigger | Behaviour |
-|-------|---------|-----------|
-| `CHASE` | Player outside `HELL_CAVES` | Moves toward player at 0.9 px/frame |
-| `WANDER` | Player inside a cave | Picks random destination; telegraphs 30 frames before shooting |
+`loop()` → `pollGamepad()`, `update()`, `draw()`. `update()` pauses for the intro and for pet races. `draw()` paints the background (`drawRoomBackground()`, cached per room in `bgCache`), then blocks, portals, the room, the player, effects, the HUD, and finally overlays (shop, awards, menus, races, end screens).
 
 ---
 
 ## Adding a new feature — checklist
 
-1. **State changes** — add fields to `state` (or a per-room object) and initialise them in `resetGame()` / the relevant factory (`makeHell`, `makeParadise`, `makeVoid`).
-2. **Update logic** — add to the relevant `update*()` function.
-3. **Rendering** — add a `draw*()` call inside `draw()`, after `drawBackground` but before `drawHUD` so HUD renders on top.
-4. **Input** — if touch-triggered, extend the `touchstart` handler; if keyboard-triggered, extend the `keydown` handler or `updatePlayer()`.
-5. **Constants** — add new magic numbers as named `const` at the top of the script.
-6. **Validate** — extract the `<script>` block and run `node --check` to catch syntax errors before testing in browser.
+1. **State** — add fields to `state`, reset them in `resetGame()`, and add them to `SAVE_FIELDS` if they should survive a reload.
+2. **Update / draw** — add an `update*()` call in `update()` and a `draw*()` call in `draw()` (before `drawHUD()` so the HUD stays on top).
+3. **Input** — go through `pressAction()` / `handleTap()` / the keydown and gamepad handlers so every input method works. Show the right key for `lastInput` (`'keyboard' | 'touch' | 'pad'`).
+4. **New room** — prefer a `PLACES` entry (plus `PORTALS[room]`, a painter in `roomBackground()`, a song and an exit).
+5. **Constants** — name magic numbers with `const` near the related section.
+6. **Validate** — `node --check`, a simulation run, and screenshots.
 
 ---
 
 ## Style conventions
 
-- Sections are separated by `// ── SECTION NAME ─────────────────────────────────────────` banners.
-- Positional alignment with spaces (not tabs) is used throughout (e.g. aligning object values).
-- No external libraries. No `import`/`export`. No TypeScript.
-- `const` for everything that does not need rebinding; `let` for mutable state.
-- All coordinates are in logical canvas pixels (800×600 space).
+- Sections are separated by `// ── SECTION NAME ─────────────` banners.
+- Aligned object literals with spaces, 4-space indent, no tabs.
+- No external libraries, no `import`/`export`, no TypeScript.
+- All coordinates are logical canvas pixels (800×600).
+- Comments explain *why* in plain words (the owner is a kid and a parent).
