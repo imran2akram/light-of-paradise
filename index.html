@@ -193,6 +193,17 @@ const PETS = [
 ];
 const OWL_HEAL_FRAMES = 1200;   // the Owl heals 1 heart every 20 s
 
+// ── GADGETS (bought at the Blacksmith's Forge, used with Q / B / the ⚙ button) ──
+const GADGETS = [
+    { id: 'boomerang', name: 'Boomerang', icon: '🪃', cost: 12, cooldown: 40,  desc: 'Flies out and comes back' },
+    { id: 'bomb',      name: 'Bombs',     icon: '💣', cost: 18, cooldown: 90,  desc: 'BOOM! Hits everything nearby' },
+    { id: 'wand',      name: 'Frog Wand', icon: '🪄', cost: 25, cooldown: 150, desc: 'Turns a monster into a frog' },
+    { id: 'tornado',   name: 'Tornado',   icon: '🌪', cost: 30, cooldown: 240, desc: 'Sucks monsters in and spins them' },
+];
+const DASH_COST          = 10;
+const DASH_COOLDOWN      = 70;
+const WEAPON_LEVEL_COST  = [0, 15, 30];   // Weapon Level 2 and 3: every shot does +1 / +2 damage
+
 // ── HELL CAVES (player can hide here; devil switches to WANDER) ──
 const HELL_CAVES = [
     { x: 55,  y: 55,  w: 175, h: 115 },
@@ -304,6 +315,16 @@ let state = {
     // Pets
     ownedPets:          PETS.map(() => false),
     activePet:          -1,        // index into PETS, -1 = no pet
+    // Forge
+    ownedGadgets:       {},        // e.g. { bomb: true }
+    gadget:             null,      // id of the gadget you're holding
+    gadgetCooldown:     0,
+    hasDash:            false,
+    dashTimer:          0,
+    dashCooldown:       0,
+    weaponLevel:        1,
+    faceX:              1,         // last direction you moved (for dashing / throwing)
+    faceY:              0,
     // Score
     score:              0,
     newBest:            false,     // beat the high score this game
@@ -393,8 +414,39 @@ function shopSelect(i) {
     }
 }
 
+// ── POP-UP MENUS (the Blacksmith's Forge, and other town shops) ──
+// A menu is a title plus a function that returns the items, so prices and ticks are always up to date.
+// Each item: { icon, name, desc, cost?, status?, action() }
+let menu = null;   // { title, items, cursor }
+const MENU = { X: 130, Y: 100, W: 540, H: 400 };
+
+function openMenu(title, items) { menu = { title, items, cursor: 0 }; }
+function menuItemRect(i) {
+    const col = i % 2, row = Math.floor(i / 2);
+    return { x: MENU.X + 14 + col * 262, y: MENU.Y + 58 + row * 82, w: 250, h: 74 };
+}
+function menuSelect(i) {
+    const list = menu.items();
+    if (!list[i]) return;
+    menu.cursor = i;
+    list[i].action();
+}
+function moveMenuCursor(dx, dy) {
+    const n = menu.items().length;
+    menu.cursor = Math.max(0, Math.min(n - 1, menu.cursor + dx + dy * 2));
+}
+
+// Buy something from a menu: returns true if you had enough coins
+function spend(cost) {
+    if (state.coins < cost) { showToast(`Not enough coins — you need 🪙${cost}`, '#FF8888', 120); sfx('hurt'); return false; }
+    state.coins -= cost;
+    sfx('buy');
+    return true;
+}
+
 // The main button: Space, A on a controller, or the on-screen SHOOT / DIG button
 function pressAction() {
+    if (menu) return;
     if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
     else if (!tryDig() && !tryTalk() && !tryTownAction()) shoot();
@@ -416,6 +468,16 @@ function handleTap(x, y) {
         return true;
     }
     if (state.awardsOpen) { state.awardsOpen = false; return true; }
+    if (menu) {
+        const list = menu.items();
+        for (let i = 0; i < list.length; i++) if (inRect(x, y, menuItemRect(i))) { menuSelect(i); return true; }
+        if (!inRect(x, y, { x: MENU.X, y: MENU.Y, w: MENU.W, h: MENU.H }) || y < MENU.Y + 40) menu = null;   // tap outside / title bar closes
+        return true;
+    }
+    if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
+        if (Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { useGadget(); return true; }
+        if (Math.hypot(x - VDASH.x,   y - VDASH.y)   < VDASH.r * 1.3)   { dash();      return true; }
+    }
     if (!state.shopOpen && canOpenShop() && inRect(x, y, AWARDS_BTN)) { state.awardsOpen = true; return true; }
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
         if (Math.hypot(x - VDANCE.x, y - VDANCE.y) < VDANCE.r * 1.3) { dance(); return true; }
@@ -438,6 +500,18 @@ document.addEventListener('keydown', e => {
     keys[e.code] = true;
     lastInput = 'keyboard';
     if (e.code === 'KeyM') toggleMute();
+    if (menu) {
+        const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
+                      ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] }[e.code];
+        if (nav) { e.preventDefault(); moveMenuCursor(nav[0], nav[1]); }
+        if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); menuSelect(menu.cursor); }
+        const d = /^Digit([1-9])$/.exec(e.code);
+        if (d) menuSelect(Number(d[1]) - 1);
+        if (e.code === 'Escape' || e.code === 'KeyE') menu = null;
+        return;
+    }
+    if (e.code === 'KeyQ') useGadget();
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') dash();
     if (state.shopOpen) {
         const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
                       ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] }[e.code];
@@ -489,6 +563,17 @@ function pollGamepad() {
     }
 
     if (pressed(PAD.BACK))  toggleMute();
+    if (menu) {
+        if (pressed(PAD.LEFT))  moveMenuCursor(-1, 0);
+        if (pressed(PAD.RIGHT)) moveMenuCursor(1, 0);
+        if (pressed(PAD.UP))    moveMenuCursor(0, -1);
+        if (pressed(PAD.DOWN))  moveMenuCursor(0, 1);
+        if (pressed(PAD.A))     menuSelect(menu.cursor);
+        if (pressed(PAD.B) || pressed(PAD.Y)) menu = null;
+        return;
+    }
+    if (pressed(PAD.B) && !state.shopOpen && !state.awardsOpen) useGadget();
+    if (pressed(PAD.LT)) dash();
     if (pressed(PAD.LB))    dance();
     if (pressed(PAD.RB))    fart();
     if (pressed(PAD.X) && state.gamePhase === 'intro') startFromIntro(true);
@@ -853,6 +938,10 @@ const SFX = {
     nightfall:() => [392, 370, 349, 330, 311].forEach((f, i) => tone(f, 0.4, 'triangle', 0.15, null, i * 0.3)),
     splash:   () => { noise(0.25, 0.2, 1800); tone(900, 0.15, 'sine', 0.08, 400); },
     bite:     () => { tone(1200, 0.08, 'square', 0.15); tone(1500, 0.1, 'square', 0.15, null, 0.1); },
+    whoosh:   () => { noise(0.2, 0.2, 2500); tone(300, 0.2, 'sine', 0.08, 900); },
+    boom:     () => { noise(0.6, 0.5, 600); tone(80, 0.5, 'sawtooth', 0.3, 30); },
+    magic:    () => [880, 1175, 1568, 2093].forEach((f, i) => tone(f, 0.12, 'sine', 0.12, null, i * 0.05)),
+    ribbit:   () => { tone(180, 0.08, 'square', 0.1, 260); tone(170, 0.1, 'square', 0.1, 240, 0.12); },
     fart:     () => { tone(90, 0.5, 'sawtooth', 0.25, 55); tone(70, 0.45, 'square', 0.12, 45, 0.05); noise(0.4, 0.15, 300); },
     // "HA HA HA HA" — the Devil's scary laugh
     laugh:    () => { for (let i = 0; i < 4; i++) { tone(240 - i * 20, 0.14, 'sawtooth', 0.16, 150 - i * 15, i * 0.18);
@@ -968,7 +1057,8 @@ function countStat(stat) {
 // ── SAVING ────────────────────────────────────────────────────
 const SAVE_KEY    = 'lop_save';
 const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'powerTier', 'playerHp', 'coins',
-                     'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet'];
+                     'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
+                     'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -1137,6 +1227,7 @@ function resetGame() {
         bubble: false, score: 0, newBest: false,
         job: null, housesOwned: {}, ammoBonus: 0,
         ownedPets: PETS.map(() => false), activePet: -1,
+        ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -1223,6 +1314,8 @@ function changeRoom(dest) {
     state.room = dest;
     state.shopOpen = false;   // close shop when changing rooms
     state.awardsOpen = false;
+    menu = null;
+    gadgetObjs = [];
     projectiles      = [];
     enemyProjectiles = [];
     heartPickups     = [];
@@ -1254,7 +1347,7 @@ function updatePlayer() {
 
     const spd = state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED;
     let dx = 0, dy = 0;
-    if (!state.shopOpen && !state.awardsOpen) {
+    if (!state.shopOpen && !state.awardsOpen && !menu) {
         if (keys['ArrowLeft']  || keys['KeyA']) dx -= 1;
         if (keys['ArrowRight'] || keys['KeyD']) dx += 1;
         if (keys['ArrowUp']    || keys['KeyW']) dy -= 1;
@@ -1270,7 +1363,13 @@ function updatePlayer() {
     }
     const len = Math.hypot(dx, dy);
     if (len > 1) { dx /= len; dy /= len; }   // diagonals aren't faster
+    if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; }   // remember which way you're going
     dx *= spd; dy *= spd;
+    if (state.dashTimer > 0) {   // ZOOM!
+        state.dashTimer--;
+        dx = state.faceX * 15; dy = state.faceY * 15;
+        particles.push({ x: player.x, y: player.y, dx: 0, dy: 0, life: 12, maxLife: 12, color: 'rgba(255,255,255,0.6)', r: 12 });
+    }
 
     player.x = Math.max(18, Math.min(canvas.width  - 18, player.x + dx));
     player.y = Math.max(52, Math.min(canvas.height - 18, player.y + dy));
@@ -1336,19 +1435,20 @@ function weaponDamage(power, enemyType) {
 
 // Your weapon shields you from the bad guys it's strong against (never the Devil)
 function isShieldedAgainst(enemyType) {
+    if (state.dashTimer > 0) return true;   // dashing through things
     if (state.power === POWER.NONE || !ENEMY_TYPES[enemyType]) return false;
     return weaponDamage(state.power, enemyType) === DAMAGE_STRONG;
 }
 
 // Hurts a bad guy; returns true if it was defeated
-function hitEnemy(e, power) {
-    const dmg = weaponDamage(power, e.type);
+function hitEnemy(e, power, bonus = 0) {
+    const dmg = weaponDamage(power, e.type) + bonus;
     e.hp -= dmg;
     e.hitFlash = 8;
-    spawnFloatText(e.x, e.y - e.r - 8, dmg === DAMAGE_STRONG ? `-${dmg} SUPER HIT!` : `-${dmg}`,
-                   dmg === DAMAGE_STRONG ? '#FFEE44' : '#FFFFFF');
-    spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, dmg === DAMAGE_STRONG ? 10 : 4);
-    if (e.hp > 0) { sfx(dmg === DAMAGE_STRONG ? 'superHit' : 'hit'); return false; }
+    const strong = dmg >= DAMAGE_STRONG;
+    spawnFloatText(e.x, e.y - e.r - 8, strong ? `-${dmg} SUPER HIT!` : `-${dmg}`, strong ? '#FFEE44' : '#FFFFFF');
+    spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, strong ? 10 : 4);
+    if (e.hp > 0) { sfx(strong ? 'superHit' : 'hit'); return false; }
     spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, 16);
     triggerShake();
     sfx('defeat');
@@ -1404,7 +1504,7 @@ function kingSplit(k, count) {
 }
 
 // Hit a bad guy with a weapon: damage, freeze (ICE), chain (LIGHTNING), loot when defeated
-function damageEnemy(e, power, chained = false) {
+function damageEnemy(e, power, chained = false, bonus = 0) {
     // Pick the lightning jump targets before anything dies
     const jumps = power === POWER.LIGHTNING && !chained
         ? targetableEnemies()
@@ -1413,12 +1513,12 @@ function damageEnemy(e, power, chained = false) {
             .slice(0, CHAIN_JUMPS)
         : [];
 
-    if (hitEnemy(e, power)) {
+    if (hitEnemy(e, power, bonus)) {
         e.alive = false;
         dropLoot(e);
         countStat('kills');
         if (e.type === 'king') giveAward('king');
-    } else if (power === POWER.ICE) {
+    } else if (power === POWER.ICE && !e.frog) {
         if (!e.frozen) sfx('freeze');
         e.frozen = FREEZE_FRAMES;
     }
@@ -1429,7 +1529,7 @@ function damageEnemy(e, power, chained = false) {
     for (const o of jumps) {
         bolts.push({ x1: from.x, y1: from.y, x2: o.x, y2: o.y, life: 12 });
         from = o;
-        damageEnemy(o, power, true);
+        damageEnemy(o, power, true, bonus);
     }
     if (jumps.length) sfx('zap');
 }
@@ -1460,6 +1560,7 @@ function updateRoomEnemies() {
         }
         if (e.hitFlash > 0) e.hitFlash--;
         if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
+        if (e.frog) { moveFrog(e); continue; }   // frogs are harmless
         moveEnemy(e);
         if (!e.hidden && state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
             Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
@@ -1470,6 +1571,17 @@ function updateRoomEnemies() {
     hell.enemies        = hell.enemies.filter(e => e.alive);
     underground.enemies = underground.enemies.filter(e => e.alive);
     paradise.ambushers  = paradise.ambushers.filter(e => e.alive);
+}
+
+function moveFrog(e) {
+    if (--e.hopTimer <= 0) {
+        e.hopTimer = 50 + Math.random() * 40;
+        const a = Math.random() * Math.PI * 2;
+        e.dx = Math.cos(a) * 3; e.dy = Math.sin(a) * 3;
+        if (Math.random() < 0.3) sfx('ribbit');
+    }
+    e.x = Math.max(40, Math.min(760, e.x + e.dx)); e.y = Math.max(70, Math.min(560, e.y + e.dy));
+    e.dx *= 0.9; e.dy *= 0.9;
 }
 
 function moveEnemy(e) {
@@ -1734,7 +1846,7 @@ function updateProjectiles() {
 
         for (const e of targetableEnemies()) {
             if (Math.hypot(p.x - e.x, p.y - e.y) >= e.r + p.r) continue;
-            damageEnemy(e, p.power);
+            damageEnemy(e, p.power, false, p.fromPet ? 0 : state.weaponLevel - 1);
             hit = true; break;
         }
 
@@ -1961,7 +2073,7 @@ function updatePet() {
 const VDANCE = { x: 640, y: 415, r: 20 };   // touch buttons above SHOOT
 const VFART  = { x: 760, y: 415, r: 20 };
 
-function playing() { return state.gamePhase === 'playing' && !state.won && !state.levelComplete && !state.shopOpen; }
+function playing() { return state.gamePhase === 'playing' && !state.won && !state.levelComplete && !state.shopOpen && !menu; }
 
 // People nearby react
 function nearbyTownsfolk(range) {
@@ -2004,6 +2116,163 @@ function updateDanceAndFart() {
                            `hsl(${Math.random() * 360}, 100%, 70%)`, 50);
         }
     }
+}
+
+// ── GADGETS & DASH ────────────────────────────────────────────
+const VGADGET = { x: 600, y: 540, r: 22 };   // touch buttons
+const VDASH   = { x: 700, y: 385, r: 20 };
+let gadgetObjs = [];   // boomerangs, bombs and tornadoes flying about
+
+function nearestTarget(range = 400) {
+    let best = null, bestD = range;
+    for (const e of targetableEnemies()) {
+        if (e.frog) continue;
+        const d = Math.hypot(e.x - player.x, e.y - player.y);
+        if (d < bestD) { best = e; bestD = d; }
+    }
+    return best;
+}
+
+// Where to aim: the nearest monster, or straight ahead
+function aimPoint(dist = 140) {
+    const t = nearestTarget();
+    return t ? { x: t.x, y: t.y } : { x: player.x + state.faceX * dist, y: player.y + state.faceY * dist };
+}
+
+function useGadget() {
+    if (!playing() || !state.gadget || state.gadgetCooldown > 0 || state.room === ROOM.VOID) return;
+    const g = GADGETS.find(g => g.id === state.gadget);
+    const aim = aimPoint();
+    const a = Math.atan2(aim.y - player.y, aim.x - player.x);
+    if (g.id === 'boomerang') {
+        gadgetObjs.push({ kind: 'boomerang', x: player.x, y: player.y, vx: Math.cos(a) * 9, vy: Math.sin(a) * 9, t: 0, hits: new Set() });
+        sfx('whoosh');
+    } else if (g.id === 'bomb') {
+        gadgetObjs.push({ kind: 'bomb', x: player.x, y: player.y, sx: player.x, sy: player.y, tx: aim.x, ty: aim.y, t: 0, dur: 36 });
+        sfx('whoosh');
+    } else if (g.id === 'wand') {
+        const e = nearestTarget(320);
+        if (!e) { showToast('🪄 No monster close enough to zap!', '#CC99FF', 90); return; }
+        bolts.push({ x1: player.x, y1: player.y, x2: e.x, y2: e.y, life: 14 });
+        if (e.type === 'king') {
+            spawnFloatText(e.x, e.y - e.r - 10, 'Too big to be a frog!', '#CC99FF', 70);
+        } else {
+            Object.assign(e, { frog: true, hp: 1, maxHp: 1, frozen: 0, hopTimer: 20, dx: 0, dy: 0, r: 12 });
+            spawnParticles(e.x, e.y, '#CC99FF', 16);
+            spawnFloatText(e.x, e.y - 24, 'RIBBIT! 🐸', '#88FF88', 70);
+        }
+        sfx('magic');
+    } else if (g.id === 'tornado') {
+        gadgetObjs.push({ kind: 'tornado', x: aim.x, y: aim.y, t: 0, dur: 180 });
+        sfx('whoosh');
+    }
+    state.gadgetCooldown = g.cooldown;
+}
+
+function dash() {
+    if (!playing() || !state.hasDash || state.dashCooldown > 0) return;
+    state.dashTimer = 8;
+    state.dashCooldown = DASH_COOLDOWN;
+    sfx('whoosh');
+}
+
+function updateGadgets() {
+    if (state.gadgetCooldown > 0) state.gadgetCooldown--;
+    if (state.dashCooldown > 0)   state.dashCooldown--;
+    for (let i = gadgetObjs.length - 1; i >= 0; i--) {
+        const o = gadgetObjs[i];
+        o.t++;
+        if (o.kind === 'boomerang') {
+            if (o.t > 28) {   // curve back to you
+                const a = Math.atan2(player.y - o.y, player.x - o.x);
+                o.vx += Math.cos(a) * 1.1; o.vy += Math.sin(a) * 1.1;
+                const sp = Math.hypot(o.vx, o.vy); if (sp > 11) { o.vx *= 11 / sp; o.vy *= 11 / sp; }
+                if (Math.hypot(player.x - o.x, player.y - o.y) < 18) { gadgetObjs.splice(i, 1); continue; }
+            }
+            o.x += o.vx; o.y += o.vy;
+            for (const e of targetableEnemies()) {
+                if (o.hits.has(e) || Math.hypot(e.x - o.x, e.y - o.y) > e.r + 12) continue;
+                o.hits.add(e);
+                damageEnemy(e, POWER.NONE, false, 1 + state.weaponLevel - 1);
+            }
+            if (o.t > 150) gadgetObjs.splice(i, 1);
+        } else if (o.kind === 'bomb') {
+            const k = o.t / o.dur;
+            o.x = o.sx + (o.tx - o.sx) * k; o.y = o.sy + (o.ty - o.sy) * k - Math.sin(k * Math.PI) * 60;   // arcs through the air
+            if (o.t >= o.dur) {
+                for (const e of targetableEnemies()) {
+                    if (Math.hypot(e.x - o.tx, e.y - o.ty) < 95) damageEnemy(e, POWER.NONE, false, 2 + state.weaponLevel - 1);
+                }
+                for (let k2 = 0; k2 < 3; k2++) spawnParticles(o.tx, o.ty, ['#FFEE66', '#FF8800', '#555555'][k2], 16);
+                triggerShake(18);
+                sfx('boom');
+                gadgetObjs.splice(i, 1);
+            }
+        } else if (o.kind === 'tornado') {
+            const tgt = nearestTarget(600);
+            if (tgt) { o.x += Math.sign(tgt.x - o.x) * 1.2; o.y += Math.sign(tgt.y - o.y) * 1.2; }
+            for (const e of targetableEnemies()) {
+                const d = Math.hypot(e.x - o.x, e.y - o.y);
+                if (d < 140 && d > 4) {   // pulled in and spun around
+                    const a = Math.atan2(e.y - o.y, e.x - o.x) + 0.12;
+                    const nd = Math.max(8, d - 1.6);
+                    e.x = o.x + Math.cos(a) * nd; e.y = o.y + Math.sin(a) * nd;
+                }
+                if (d < 40 && o.t % 30 === 0) damageEnemy(e, POWER.NONE, false, state.weaponLevel - 1);
+            }
+            if (o.t >= o.dur) gadgetObjs.splice(i, 1);
+        }
+    }
+}
+
+function drawGadgets() {
+    const t = Date.now() / 1000;
+    for (const o of gadgetObjs) {
+        ctx.save();
+        if (o.kind === 'boomerang') {
+            ctx.translate(o.x, o.y); ctx.rotate(o.t * 0.5);
+            ctx.strokeStyle = '#C8843A'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(-10, 6); ctx.lineTo(0, -6); ctx.lineTo(10, 6); ctx.stroke();
+        } else if (o.kind === 'bomb') {
+            drawGroundShadow(o.x, o.ty + 8, 8, 3);
+            ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(o.x, o.y, 9, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(o.x - 3, o.y - 3, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = Math.random() < 0.5 ? '#FFEE66' : '#FF6600';   // fizzing fuse
+            ctx.beginPath(); ctx.arc(o.x + 6, o.y - 9, 3, 0, Math.PI * 2); ctx.fill();
+        } else if (o.kind === 'tornado') {
+            ctx.globalAlpha = Math.min(1, (o.dur - o.t) / 30);
+            for (let k = 0; k < 9; k++) {
+                const y = o.y + 20 - k * 7, w = 8 + k * 4;
+                ctx.strokeStyle = `rgba(200,210,220,${0.7 - k * 0.05})`; ctx.lineWidth = 2.5;
+                ctx.beginPath(); ctx.ellipse(o.x + Math.sin(t * 8 + k) * 4, y, w, w * 0.3, 0, t * 10 + k, t * 10 + k + Math.PI * 1.5); ctx.stroke();
+            }
+        }
+        ctx.restore();
+    }
+}
+
+// Little gadget + dash icons in the bottom-left corner
+function drawGadgetHud() {
+    const slots = [];
+    if (state.gadget) {
+        const g = GADGETS.find(g => g.id === state.gadget);
+        slots.push({ icon: g.icon, key: lastInput === 'pad' ? 'B' : 'Q', cd: state.gadgetCooldown / g.cooldown });
+    }
+    if (state.hasDash) slots.push({ icon: '💨', key: lastInput === 'pad' ? 'LT' : '⇧', cd: state.dashCooldown / DASH_COOLDOWN });
+    slots.forEach((sl, i) => {
+        const x = 70 + i * 40, y = 574;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.fill();
+        if (sl.cd > 0) {   // cooldown sweep
+            ctx.fillStyle = 'rgba(255,255,255,0.25)';
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, 16, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * sl.cd); ctx.closePath(); ctx.fill();
+        }
+        ctx.strokeStyle = sl.cd > 0 ? '#777' : '#FFD700'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.stroke();
+        ctx.font = '15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#FFF';
+        ctx.fillText(sl.icon, x, y + 1);
+        if (lastInput !== 'touch') { ctx.font = 'bold 8px Arial'; ctx.fillText(sl.key, x + 12, y - 12); }
+        ctx.restore();
+    });
 }
 
 // ── UPDATE: WEATHER ───────────────────────────────────────────
@@ -2058,6 +2327,61 @@ function drawRainbowArc() {
     ctx.globalAlpha = 0.45 * fade; ctx.lineWidth = 7;
     ['#FF3B3B', '#FF9A2E', '#FFE83B', '#4CD964', '#3BA7FF', '#6A5BFF', '#B45BFF'].forEach((c, i) => {
         ctx.strokeStyle = c; ctx.beginPath(); ctx.arc(400, 420, 330 - i * 7, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
+    });
+    ctx.restore();
+}
+
+// What the Blacksmith sells
+function forgeItems() {
+    const items = [];
+    const ammoCost = AMMO_UPGRADE_COST[state.ammoBonus];
+    items.push({ icon: '🎒', name: 'Bigger Ammo Bag', desc: `+1 ammo (you carry ${state.ammoMax})`, cost: ammoCost,
+                 status: ammoCost === undefined ? 'MAXED' : null,
+                 action: () => { if (ammoCost !== undefined && spend(ammoCost)) { state.ammoBonus++; state.ammoMax++; state.ammo = state.ammoMax; showToast(`CLANG! You carry ${state.ammoMax} ammo now!`); } } });
+    const lvCost = WEAPON_LEVEL_COST[state.weaponLevel];
+    items.push({ icon: '⚔', name: `Weapon Level ${Math.min(3, state.weaponLevel + 1)}`, desc: `Every shot hits harder (now Lv ${state.weaponLevel})`, cost: lvCost,
+                 status: lvCost === undefined ? 'MAXED' : null,
+                 action: () => { if (lvCost !== undefined && spend(lvCost)) { state.weaponLevel++; showToast(`⚔ WEAPON LEVEL ${state.weaponLevel}!`); } } });
+    items.push({ icon: '💨', name: 'Super Dash', desc: 'Zoom super fast (Shift / LT)', cost: DASH_COST,
+                 status: state.hasDash ? 'OWNED' : null,
+                 action: () => { if (!state.hasDash && spend(DASH_COST)) { state.hasDash = true; showToast('💨 You can DASH now!'); } } });
+    for (const g of GADGETS) {
+        const owned = state.ownedGadgets[g.id];
+        items.push({ icon: g.icon, name: g.name, desc: g.desc, cost: g.cost,
+                     status: state.gadget === g.id ? 'HOLDING' : owned ? 'OWNED — pick' : null,
+                     action: () => {
+                         if (owned) { state.gadget = g.id; return; }
+                         if (spend(g.cost)) { state.ownedGadgets[g.id] = true; state.gadget = g.id; showToast(`${g.icon} ${g.name}! Use it with Q / B / ⚙`); }
+                     } });
+    }
+    return items;
+}
+
+function drawMenu() {
+    if (!menu) return;
+    const { X, Y, W, H } = MENU;
+    ctx.save();
+    ctx.fillStyle = 'rgba(12,8,24,0.97)'; ctx.fillRect(X, Y, W, H);
+    ctx.strokeStyle = '#FFB347'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
+    ctx.fillStyle = '#FFB347'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(menu.title, 400, Y + 26);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px Arial';
+    ctx.fillText(`Your coins: 🪙${state.coins}   ·   ${lastInput === 'pad' ? 'A to buy, B to close' : lastInput === 'touch' ? 'Tap to buy, tap the title to close' : 'Arrows + SPACE (or click) to buy, E to close'}`, 400, Y + 44);
+    menu.items().forEach((it, i) => {
+        const r = menuItemRect(i);
+        const cursor = i === menu.cursor && lastInput !== 'touch';
+        ctx.fillStyle = it.status ? 'rgba(255,215,0,0.14)' : 'rgba(255,255,255,0.06)';
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeStyle = cursor ? '#FFFFFF' : it.status ? '#C8A040' : '#444'; ctx.lineWidth = cursor ? 2.5 : 1;
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.font = '26px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
+        ctx.fillText(it.icon, r.x + 30, r.y + 46);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#FFE8B0'; ctx.font = 'bold 13px Arial'; ctx.fillText(it.name, r.x + 58, r.y + 24);
+        ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.font = '10px Arial'; ctx.fillText(it.desc, r.x + 58, r.y + 42);
+        ctx.font = 'bold 11px Arial';
+        ctx.fillStyle = it.status ? '#FFD700' : state.coins >= (it.cost || 0) ? '#FFD700' : '#886';
+        ctx.fillText(it.status ? '✓ ' + it.status : `🪙${it.cost}`, r.x + 58, r.y + 62);
     });
     ctx.restore();
 }
@@ -2134,7 +2458,7 @@ function talkLabel(n) {
     if (job && job.kind === 'deliver' && job.stops[0] === n.id) return `Deliver ${job.item}`;
     if (n.door)            return state.housesOwned[n.id] ? 'Rest (free heal)' : `Buy ${n.name} (🪙${n.cost})`;
     if (n.id === 'doctor') return state.playerHp < maxHp ? `Heal (🪙${HEAL_COST})` : 'Talk';
-    if (n.id === 'smith')  return state.ammoBonus < AMMO_UPGRADE_COST.length ? `+1 Ammo (🪙${AMMO_UPGRADE_COST[state.ammoBonus]})` : 'Talk';
+    if (n.id === 'smith')  return 'Open the Forge 🔨';
     if (WORKERS.some(w => w.id === n.id && w.giver)) {
         if (!job) return 'Get a job';
         if (job.giver === n.id && jobDone(job)) return 'Get paid!';
@@ -2199,18 +2523,7 @@ function talkTo(n) {
             sfx('buy');
         }
     } else if (n.id === 'smith') {
-        const cost = AMMO_UPGRADE_COST[state.ammoBonus];
-        if (cost === undefined)       say(n, 'Your ammo bag is the biggest there is!');
-        else if (state.coins < cost)  say(n, `A bigger ammo bag costs 🪙${cost}.`);
-        else {
-            state.coins -= cost;
-            state.ammoBonus++;
-            state.ammoMax++;
-            state.ammo = state.ammoMax;
-            spawnParticles(player.x, player.y, '#FFAA33', 12);
-            say(n, `CLANG! +1 AMMO — now you carry ${state.ammoMax}!`);
-            sfx('found');
-        }
+        openMenu("🔨 THE BLACKSMITH'S FORGE", forgeItems);
     } else if (giver) {
         if (!job) {
             startJob(makeJob(n.id));
@@ -2976,7 +3289,25 @@ function drawHell() {
 }
 
 // ── DRAW: BAD GUYS ────────────────────────────────────────────
+function drawFrog(e) {
+    const hop = Math.hypot(e.dx, e.dy) > 0.5 ? 4 : 0;
+    ctx.save();
+    ctx.translate(e.x, e.y - hop);
+    ctx.fillStyle = '#3FB43F';
+    ctx.beginPath(); ctx.ellipse(0, 3, 11, 8, 0, 0, Math.PI * 2); ctx.fill();          // body
+    ctx.fillStyle = '#2E8F2E';
+    ctx.beginPath(); ctx.ellipse(-9, 8, 5, 3, 0, 0, Math.PI * 2); ctx.ellipse(9, 8, 5, 3, 0, 0, Math.PI * 2); ctx.fill();   // legs
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath(); ctx.arc(-5, -5, 4, 0, Math.PI * 2); ctx.arc(5, -5, 4, 0, Math.PI * 2); ctx.fill();   // big eyes
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(-5, -5, 2, 0, Math.PI * 2); ctx.arc(5, -5, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#1A5A1A'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(0, 3, 5, 0.2, Math.PI - 0.2); ctx.stroke();               // smile
+    ctx.restore();
+}
+
 function drawEnemy(e, t) {
+    if (e.frog) { drawGroundShadow(e.x, e.y + 12, 10, 3); drawFrog(e); return; }
     if (!e.hidden && !(e.emerge > 45)) {
         const flying = e.type === 'ghost' || e.type === 'bat' || e.type === 'imp';
         drawGroundShadow(e.x + 2, e.y + e.r + (flying ? 12 : 2), e.r * (flying ? 0.7 : 1), e.r * 0.3, flying ? 0.15 : 0.3);
@@ -4267,6 +4598,8 @@ function drawHUD() {
     ctx.font = 'bold 12px Arial'; ctx.textAlign = 'right';
     ctx.fillText(`Score ${state.score}   ·   Best 🏆 ${highScore}`, 786, 46);
 
+    drawGadgetHud();
+
     // ── MUTE BUTTON (M) ───────────────────────────────────────
     ctx.save();
     ctx.globalAlpha = 0.6;
@@ -4568,7 +4901,7 @@ function drawControls() {
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
     const hint = lastInput === 'pad'   ? 'Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back'
                : lastInput === 'touch' ? 'Move: joystick  |  Shoot / Dig: button'
-               : 'Move: WASD / Arrows  |  Shoot / Dig: Spacebar  |  Shop: E  |  Sound: M';
+               : 'Move: WASD / Arrows  |  Shoot / Dig: Space  |  Gadget: Q  |  Dash: Shift  |  Shop: E  |  Sound: M';
     ctx.fillText(hint, 792, 592);
 }
 
@@ -4606,7 +4939,10 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
-    for (const [b, icon] of [[VDANCE, '💃'], [VFART, '💨']]) {
+    const touchBtns = [[VDANCE, '💃'], [VFART, '💨']];
+    if (state.gadget) touchBtns.push([VGADGET, GADGETS.find(g => g.id === state.gadget).icon]);
+    if (state.hasDash) touchBtns.push([VDASH, '⚡']);
+    for (const [b, icon] of touchBtns) {
         ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill();
         ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
@@ -4635,6 +4971,7 @@ function update() {
         updateTown();
         updatePet();
         updateDanceAndFart();
+        updateGadgets();
         updateVoidHealing();
         updateAmmo();
     }
@@ -4682,6 +5019,7 @@ function draw() {
     if (state.room === ROOM.UNDERGROUND) drawUnderground();
     drawPlayer();
     drawHeartPickups();
+    drawGadgets();
     drawPet();
     drawProjectiles();
     drawBolts();
@@ -4696,6 +5034,7 @@ function draw() {
     drawVirtualControls();
     drawShop();
     drawAwards();
+    drawMenu();
     drawToast();
     if (state.levelComplete) drawLevelComplete();
     if (state.won)           drawWin();
