@@ -119,7 +119,14 @@ const ENEMY_TYPES = {
     slime: { name: 'Slime',        hp: 3, weakTo: POWER.WATER,     color: '#66DD44' },
     mole:  { name: 'Mole Monster', hp: 3, weakTo: POWER.WATER,     color: '#C08040' },
     king:  { name: 'King Slime',   hp: 15, weakTo: POWER.WATER,    color: '#44CC22' },   // Monster Night 3 boss
+    worm:  { name: 'Lava Worm',    hp: 3, weakTo: POWER.ICE,       color: '#FF5500' },   // Hell: burrows and pops up
+    imp:   { name: 'Mini-Devil',   hp: 3, weakTo: POWER.LIGHTNING, color: '#DD2222' },   // Hell: summoned by the Devil
 };
+const WORM_UNDER_FRAMES  = 150;   // tunnelling toward you (can't be hit)
+const WORM_RISE_FRAMES   = 40;    // rumbling — it's about to pop up!
+const WORM_UP_FRAMES     = 170;   // out of the ground: spits lava, can be hit
+const WORM_SPIT_FRAMES   = 60;
+const IMP_SUMMON_FRAMES  = 420;   // the Devil calls a Mini-Devil every 7 s
 const KING_MAX_MINIS = 6;   // little slimes the King Slime can have out at once
 const DAMAGE_STRONG = 3;   // right weapon for this bad guy
 const DAMAGE_WEAK   = 1;   // any other weapon still does a little
@@ -136,21 +143,21 @@ const LEVEL_CONFIGS = [
     { // Level 1 – Standard
         ammoMax: 5, reloadFrames: 180,
         devilHp: 5, devilR: 28, devilSpeed: 0.9, devilShootRate: 110, devilShotsPerFire: 1,
-        extraFireMonsters: 0, extraGhosts: 0,
+        extraFireMonsters: 0, extraGhosts: 0, worms: 2, maxImps: 1,
         playerMaxHp: 3,
         isBoss: false,
     },
     { // Level 2 – Hard
         ammoMax: 4, reloadFrames: 240,
         devilHp: 10, devilR: 28, devilSpeed: 1.2, devilShootRate: 80,  devilShotsPerFire: 1,
-        extraFireMonsters: 1, extraGhosts: 1,
+        extraFireMonsters: 1, extraGhosts: 1, worms: 3, maxImps: 2,
         playerMaxHp: 3,
         isBoss: false,
     },
     { // Level 3 – BOSS
         ammoMax: 4, reloadFrames: 270,
         devilHp: 20, devilR: 52, devilSpeed: 1.4, devilShootRate: 55,  devilShotsPerFire: 3,
-        extraFireMonsters: 2, extraGhosts: 2,
+        extraFireMonsters: 2, extraGhosts: 2, worms: 4, maxImps: 3,
         playerMaxHp: 2,
         isBoss: true,
     },
@@ -482,12 +489,29 @@ function makeDigSpots() {
     return DIG_SPOTS.map((s, i) => ({ x: s.x, y: s.y, hits: 0, depth: 0, weapon: loot[i] }));
 }
 
+function inAnyCave(x, y, pad = 0) {
+    return HELL_CAVES.some(c => x >= c.x - pad && x <= c.x + c.w + pad && y >= c.y - pad && y <= c.y + c.h + pad);
+}
+
+function makeWorms() {
+    const list = [];
+    const n = LEVEL_CONFIGS[state.level - 1].worms;
+    while (list.length < n) {
+        const x = 80 + Math.random() * 640, y = 90 + Math.random() * 460;
+        if (inAnyCave(x, y, 20) || Math.hypot(x - 100, y - 300) < 180) continue;   // not in caves, not on the entrance
+        list.push({ type: 'worm', x, y, r: 15, hp: 3, maxHp: 3, alive: true, hitFlash: 0, frozen: 0,
+                    hidden: true, wState: 'under', wTimer: WORM_UNDER_FRAMES * (0.5 + Math.random()), spit: WORM_SPIT_FRAMES });
+    }
+    return list;
+}
+
 function makeHell() {
     const cfg = LEVEL_CONFIGS[state.level - 1];
     return {
         digSpots: makeDigSpots(),
         foundMsg: null,   // { text, sub, color, timer } — floats up in the middle after digging
-        enemies:  [],     // bad guys in Hell (mole monsters from dig spots, …)
+        enemies:  [],     // bad guys in Hell (mole monsters, lava worms, mini-devils)
+        summonTimer: IMP_SUMMON_FRAMES,
         devil: {
             x: 660, y: 300, r: cfg.devilR, alive: true, shieldFlash: 0, frozen: 0,
             hp: cfg.devilHp, maxHp: cfg.devilHp,
@@ -664,6 +688,7 @@ const SFX = {
     freeze:   () => { tone(2000, 0.25, 'sine', 0.12, 800); tone(2600, 0.2, 'triangle', 0.08, 1200, 0.05); },
     zap:      () => { noise(0.15, 0.25, 6000); tone(1500, 0.12, 'sawtooth', 0.1, 300); },
     bigBoing: () => tone(80, 0.35, 'sine', 0.3, 260),
+    worm:     () => { noise(0.3, 0.3, 700); tone(120, 0.3, 'sawtooth', 0.12, 300); },
     nightfall:() => [392, 370, 349, 330, 311].forEach((f, i) => tone(f, 0.4, 'triangle', 0.15, null, i * 0.3)),
     // "HA HA HA HA" — the Devil's scary laugh
     laugh:    () => { for (let i = 0; i < 4; i++) { tone(240 - i * 20, 0.14, 'sawtooth', 0.16, 150 - i * 15, i * 0.18);
@@ -913,7 +938,8 @@ function changeRoom(dest) {
         // Weapons are buried again (in new places) each visit
         hell.digSpots = makeDigSpots();
         hell.foundMsg = null;
-        hell.enemies  = [];
+        hell.enemies  = makeWorms();
+        hell.summonTimer = IMP_SUMMON_FRAMES;
     }
     if (dest === ROOM.PARADISE) {
         player.x = 700; player.y = 300;
@@ -1022,7 +1048,7 @@ function roomEnemies() {
 
 // Bad guys you can shoot right now (not defeated, not still climbing out of the ground)
 function targetableEnemies() {
-    return roomEnemies().filter(e => e.alive && !(e.emerge > 0));
+    return roomEnemies().filter(e => e.alive && !(e.emerge > 0) && !e.hidden);
 }
 
 function roomCoins() {
@@ -1084,6 +1110,21 @@ function damageEnemy(e, power, chained = false) {
     if (jumps.length) sfx('zap');
 }
 
+// The Devil calls in Mini-Devils to help him
+function updateDevilMinions() {
+    const d = hell.devil;
+    if (state.room !== ROOM.HELL || !d.alive || d.frozen > 0) return;
+    if (--hell.summonTimer > 0) return;
+    hell.summonTimer = IMP_SUMMON_FRAMES;
+    const imps = hell.enemies.filter(e => e.type === 'imp' && e.alive).length;
+    if (imps >= LEVEL_CONFIGS[state.level - 1].maxImps) return;
+    hell.enemies.push({ type: 'imp', x: d.x + (Math.random() - 0.5) * 60, y: d.y + d.r + 10, r: 11, hp: 3, maxHp: 3,
+                        alive: true, hitFlash: 0, frozen: 0, emerge: 30, dx: 0, dy: 0 });
+    spawnParticles(d.x, d.y + d.r, '#FF2200', 12);
+    spawnFloatText(d.x, d.y - d.r - 20, 'COME, MY MINIONS!', '#FF4444', 80);
+    if (Date.now() - lastDevilLaugh > 3000) { lastDevilLaugh = Date.now(); sfx('laugh'); }
+}
+
 // Moves every bad guy in the room and hurts the player on touch
 function updateRoomEnemies() {
     for (const e of roomEnemies()) {
@@ -1096,7 +1137,7 @@ function updateRoomEnemies() {
         if (e.hitFlash > 0) e.hitFlash--;
         if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
         moveEnemy(e);
-        if (state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
+        if (!e.hidden && state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
             Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
             damagePlayer();
         }
@@ -1106,7 +1147,40 @@ function updateRoomEnemies() {
 }
 
 function moveEnemy(e) {
-    if (e.type === 'mole') {
+    if (e.type === 'worm') {
+        if (--e.wTimer <= 0) {
+            if (e.wState === 'under')      { e.wState = 'rising'; e.wTimer = WORM_RISE_FRAMES; }
+            else if (e.wState === 'rising') { e.wState = 'up'; e.wTimer = WORM_UP_FRAMES; e.hidden = false; e.spit = 30;
+                                              spawnParticles(e.x, e.y, '#FF6600', 12); sfx('worm'); }
+            else                            { e.wState = 'under'; e.wTimer = WORM_UNDER_FRAMES; e.hidden = true;
+                                              spawnParticles(e.x, e.y, '#6B3E1E', 8); }
+        }
+        if (e.wState === 'under') {
+            // Tunnels toward the player — but never into the caves
+            const a = Math.atan2(player.y - e.y, player.x - e.x);
+            const nx = e.x + Math.cos(a) * 1.2, ny = e.y + Math.sin(a) * 1.2;
+            if (!inAnyCave(nx, ny, 20)) { e.x = nx; e.y = ny; }
+            if (Math.random() < 0.3) spawnParticles(e.x, e.y + 6, '#6B3E1E', 1);
+        } else if (e.wState === 'up' && --e.spit <= 0) {
+            e.spit = WORM_SPIT_FRAMES;
+            if (!isPlayerInCave()) {
+                const a = Math.atan2(player.y - e.y, player.x - e.x);
+                enemyProjectiles.push({ x: e.x, y: e.y - 14, dx: Math.cos(a) * 4, dy: Math.sin(a) * 4,
+                                        color: '#FF5500', life: 120, r: 6, enemyType: 'worm' });
+            }
+        }
+        return;   // worms don't bounce around
+    }
+    if (e.type === 'imp') {
+        if (isPlayerInCave()) {
+            // Can't see you in the cave — flutters about
+            e.x += e.dx; e.y += e.dy;
+            if (Math.random() < 0.02) { const a = Math.random() * Math.PI * 2; e.dx = Math.cos(a) * 1.2; e.dy = Math.sin(a) * 1.2; }
+        } else {
+            const a = Math.atan2(player.y - e.y, player.x - e.x);
+            e.x += Math.cos(a) * 1.8; e.y += Math.sin(a) * 1.8;
+        }
+    } else if (e.type === 'mole') {
         // Chases the player — even inside caves (they live underground!)
         const a = Math.atan2(player.y - e.y, player.x - e.x);
         e.x += Math.cos(a) * e.speed;
@@ -2019,7 +2093,7 @@ function drawHell() {
     // Bad guys (mole monsters, …)
     for (const e of hell.enemies) {
         drawEnemy(e, t);
-        if (!(e.emerge > 0)) drawEnemyHp(e);
+        if (!(e.emerge > 0) && !e.hidden) drawEnemyHp(e);
     }
 
     // "You found …!" message floating up
@@ -2179,6 +2253,51 @@ function drawEnemy(e, t) {
         ctx.arc(e.x - 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.arc(e.x + 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.fill();
+    } else if (e.type === 'worm') {
+        if (e.hidden) {
+            // Moving dirt bump — it shakes and glows just before popping up
+            const shake = e.wState === 'rising' ? (Math.random() - 0.5) * 4 : 0;
+            ctx.fillStyle = '#5C3A1E';
+            ctx.beginPath(); ctx.ellipse(e.x + shake, e.y + 6, 16, 7, 0, Math.PI, 0); ctx.fill();
+            if (e.wState === 'rising') {
+                ctx.strokeStyle = '#FF7700'; ctx.lineWidth = 2; ctx.shadowColor = '#FF5500'; ctx.shadowBlur = 10;
+                ctx.beginPath(); ctx.moveTo(e.x - 8, e.y + 4); ctx.lineTo(e.x - 2, e.y); ctx.lineTo(e.x + 3, e.y + 4); ctx.lineTo(e.x + 9, e.y); ctx.stroke();
+            }
+        } else {
+            // Lava worm sticking out of its hole
+            const sway = Math.sin(Date.now() / 150 + e.x) * 3;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.beginPath(); ctx.ellipse(e.x, e.y + 10, 17, 6, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowColor = '#FF5500'; ctx.shadowBlur = 14;
+            [[0, 8, 11], [sway * 0.5, -4, 10], [sway, -16, 9]].forEach(([ox, oy, r], i) => {
+                ctx.fillStyle = i % 2 ? '#FF7722' : '#CC3300';
+                ctx.beginPath(); ctx.arc(e.x + ox, e.y + oy, r, 0, Math.PI * 2); ctx.fill();
+            });
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#FFEE00';   // glowing eyes
+            ctx.beginPath(); ctx.arc(e.x + sway - 4, e.y - 18, 2.5, 0, Math.PI * 2); ctx.arc(e.x + sway + 4, e.y - 18, 2.5, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#330000';   // mouth
+            ctx.beginPath(); ctx.arc(e.x + sway, e.y - 12, 3, 0, Math.PI); ctx.fill();
+        }
+    } else if (e.type === 'imp') {
+        ctx.globalAlpha = e.emerge > 0 ? 1 - e.emerge / 30 : 1;
+        const flap = Math.sin(Date.now() / 70 + e.x) * 4;
+        ctx.fillStyle = '#AA1111';   // little bat wings
+        for (const side of [-1, 1]) {
+            ctx.beginPath(); ctx.moveTo(e.x + side * 6, e.y - 2);
+            ctx.lineTo(e.x + side * 18, e.y - 8 - flap); ctx.lineTo(e.x + side * 13, e.y + 4); ctx.closePath(); ctx.fill();
+        }
+        ctx.fillStyle = '#DD2222'; ctx.shadowColor = '#FF0000'; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#660000';   // horns
+        for (const side of [-1, 1]) {
+            ctx.beginPath(); ctx.moveTo(e.x + side * 4, e.y - e.r + 2); ctx.lineTo(e.x + side * 7, e.y - e.r - 7); ctx.lineTo(e.x + side * 9, e.y - e.r + 3); ctx.fill();
+        }
+        ctx.strokeStyle = '#660000'; ctx.lineWidth = 2;   // pointy tail
+        ctx.beginPath(); ctx.moveTo(e.x, e.y + e.r); ctx.quadraticCurveTo(e.x + 10, e.y + e.r + 8, e.x + 14, e.y + e.r + 2); ctx.stroke();
+        ctx.fillStyle = '#FFEE00';
+        ctx.beginPath(); ctx.arc(e.x - 4, e.y - 2, 2.5, 0, Math.PI * 2); ctx.arc(e.x + 4, e.y - 2, 2.5, 0, Math.PI * 2); ctx.fill();
     } else if (e.type === 'mole') {
         const rise = 1 - (e.emerge || 0) / 45;   // 0 → 1 while climbing out
         const r = e.r * (0.4 + 0.6 * rise);
@@ -2230,9 +2349,9 @@ function drawEnemy(e, t) {
         }
     }
     ctx.restore();
-    if (e.frozen > 0) drawIceBlock(e.x, e.y, e.r, e.frozen);
+    if (e.frozen > 0 && !e.hidden) drawIceBlock(e.x, e.y, e.r, e.frozen);
     // White flash when hit
-    if (e.hitFlash > 0 && !(e.emerge > 0)) {
+    if (e.hitFlash > 0 && !(e.emerge > 0) && !e.hidden) {
         ctx.save();
         ctx.globalAlpha = e.hitFlash / 12;
         ctx.fillStyle = '#FFFFFF';
@@ -3013,6 +3132,7 @@ function update() {
     if (!state.won && !state.levelComplete) {
         updateEnemies();
         updateRoomEnemies();
+        updateDevilMinions();
         updateProjectiles();
         updateEnemyProjectiles();
         checkPickups();
