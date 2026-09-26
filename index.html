@@ -173,6 +173,16 @@ const AVATAR_STYLES      = ['plain', 'plain', 'plain', 'plain', 'plain', 'ninja'
 const AVATAR_UNLOCK_COST = [0, 5, 10, 15, 20, 25, 30, 40];  // coins needed to unlock each skin
 const BUBBLE_COST        = 5;                               // Shield Bubble (shop key 9)
 
+// ── PETS ─────────────────────────────────────────────────────
+// Buy pets in the shop. Your pet follows you everywhere and fights with its own special power.
+const PETS = [
+    { id: 'puppy',  name: 'Puppy',       cost: 15, power: 'Fetches coins, bites', range: 170, speed: 3.5, cooldown: 45  },
+    { id: 'kitten', name: 'Kitten',      cost: 20, power: 'Super-fast scratches', range: 170, speed: 4.5, cooldown: 18  },
+    { id: 'owl',    name: 'Owl',         cost: 25, power: 'Heals you, zaps',      range: 260, speed: 3,   cooldown: 110 },
+    { id: 'dragon', name: 'Baby Dragon', cost: 35, power: 'Shoots fireballs',     range: 260, speed: 3,   cooldown: 80  },
+];
+const OWL_HEAL_FRAMES = 1200;   // the Owl heals 1 heart every 20 s
+
 // ── HELL CAVES (player can hide here; devil switches to WANDER) ──
 const HELL_CAVES = [
     { x: 55,  y: 55,  w: 175, h: 115 },
@@ -256,6 +266,9 @@ let state = {
     job:                null,      // current job from the Mayor (a copy of a JOBS entry + progress)
     houseOwned:         false,
     ammoBonus:          0,         // extra ammo from the Blacksmith
+    // Pets
+    ownedPets:          PETS.map(() => false),
+    activePet:          -1,        // index into PETS, -1 = no pet
     // Score
     score:              0,
     newBest:            false,     // beat the high score this game
@@ -270,7 +283,7 @@ const keys = {};
 
 // Shop layout (shared by drawing and by tap / click hit-testing)
 const SHOP       = { X: 110, Y: 150, W: 580, H: 300 };
-const SHOP_SLOTS = 9;                                        // 0-7 skins, 8 = Shield Bubble
+const SHOP_SLOTS = 13;                                       // 0-7 skins, 8 Shield Bubble, 9-12 pets
 const SHOP_CLOSE = { x: SHOP.X + SHOP.W - 20, y: SHOP.Y + 20, r: 13 };
 const SHOP_BTN   = { x: 340, y: 392, w: 120, h: 32 };        // on-screen SHOP button in the Void
 const END_BTN    = { x: 300, y: 420, w: 200, h: 55 };        // Next Level / Play Again button
@@ -280,7 +293,18 @@ function shopSlotRect(i) {
         const cx = SHOP.X + 46 + i * 70, cy = SHOP.Y + 118;
         return { x: cx - 26, y: cy - 26, w: 52, h: 70, cx, cy };
     }
-    return { x: 280, y: SHOP.Y + 191, w: 240, h: 58 };
+    const j = i - 8, x = SHOP.X + 22 + j * 108;
+    return { x, y: SHOP.Y + 180, w: 100, h: 106, cx: x + 50, cy: SHOP.Y + 212 };
+}
+
+// Arrow keys / D-pad in the shop: left-right along a row, up-down between rows
+function moveShopCursor(dx, dy) {
+    let c = state.shopCursor;
+    const top = c < 8;
+    if (dx) c = top ? (c + dx + 8) % 8 : 8 + ((c - 8 + dx + 5) % 5);
+    if (dy > 0 && top)  c = 8 + Math.round(c * 4 / 7);
+    if (dy < 0 && !top) c = Math.round((c - 8) * 7 / 4);
+    state.shopCursor = c;
 }
 
 function inRect(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
@@ -293,9 +317,23 @@ function toggleShop() {
     else if (canOpenShop()) state.shopOpen = true;
 }
 
-// Buy or wear a shop item: 0-7 skins, 8 Shield Bubble
+// Buy or wear a shop item: 0-7 skins, 8 Shield Bubble, 9-12 pets
 function shopSelect(i) {
     state.shopCursor = i;
+    if (i >= 9) {
+        const j = i - 9;
+        if (state.ownedPets[j]) {
+            state.activePet = j;
+        } else if (state.coins >= PETS[j].cost) {
+            state.coins -= PETS[j].cost;
+            state.ownedPets[j] = true;
+            state.activePet = j;
+            placePetBesidePlayer();
+            spawnParticles(player.x, player.y, '#FFD700', 10);
+            sfx('win');
+        }
+        return;
+    }
     if (i === 8) {
         if (!state.bubble && state.coins >= BUBBLE_COST) {
             state.coins -= BUBBLE_COST;
@@ -350,8 +388,15 @@ document.addEventListener('keydown', e => {
     keys[e.code] = true;
     lastInput = 'keyboard';
     if (e.code === 'KeyM') toggleMute();
-    if (e.code === 'Space') { e.preventDefault(); pressAction(); }
-    if (e.code === 'Enter') pressStart();
+    if (state.shopOpen) {
+        const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
+                      ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] }[e.code];
+        if (nav) { e.preventDefault(); moveShopCursor(nav[0], nav[1]); }
+        if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); shopSelect(state.shopCursor); }
+    } else {
+        if (e.code === 'Space') { e.preventDefault(); pressAction(); }
+        if (e.code === 'Enter') pressStart();
+    }
     if (e.code === 'KeyE' || (e.code === 'Escape' && state.shopOpen)) toggleShop();
     // Number keys in the shop: 1-8 skins, 9 Shield Bubble
     const digit = /^Digit([1-9])$/.exec(e.code);
@@ -394,11 +439,10 @@ function pollGamepad() {
 
     if (state.shopOpen) {
         // D-pad / stick flicks move the shop cursor; A buys
-        const c = state.shopCursor;
-        if (pressed(PAD.LEFT))  state.shopCursor = c === 8 ? 7 : (c + 7) % 8;
-        if (pressed(PAD.RIGHT)) state.shopCursor = c === 8 ? 0 : (c + 1) % 8;
-        if (pressed(PAD.DOWN))  state.shopCursor = 8;
-        if (pressed(PAD.UP) && c === 8) state.shopCursor = state.activeSkin;
+        if (pressed(PAD.LEFT))  moveShopCursor(-1, 0);
+        if (pressed(PAD.RIGHT)) moveShopCursor(1, 0);
+        if (pressed(PAD.UP))    moveShopCursor(0, -1);
+        if (pressed(PAD.DOWN))  moveShopCursor(0, 1);
         if (pressed(PAD.A))     shopSelect(state.shopCursor);
         return;
     }
@@ -689,6 +733,9 @@ const SFX = {
     zap:      () => { noise(0.15, 0.25, 6000); tone(1500, 0.12, 'sawtooth', 0.1, 300); },
     bigBoing: () => tone(80, 0.35, 'sine', 0.3, 260),
     worm:     () => { noise(0.3, 0.3, 700); tone(120, 0.3, 'sawtooth', 0.12, 300); },
+    bark:     () => { tone(520, 0.06, 'square', 0.12, 380); tone(480, 0.08, 'square', 0.12, 330, 0.1); },
+    meow:     () => tone(700, 0.25, 'sine', 0.14, 1100),
+    hoot:     () => { tone(420, 0.15, 'sine', 0.15, 380); tone(380, 0.25, 'sine', 0.15, 340, 0.2); },
     nightfall:() => [392, 370, 349, 330, 311].forEach((f, i) => tone(f, 0.4, 'triangle', 0.15, null, i * 0.3)),
     // "HA HA HA HA" — the Devil's scary laugh
     laugh:    () => { for (let i = 0; i < 4; i++) { tone(240 - i * 20, 0.14, 'sawtooth', 0.16, 150 - i * 15, i * 0.18);
@@ -870,6 +917,7 @@ function resetGame() {
         unlockedSkins: [true, ...Array(AVATAR_COLORS.length - 1).fill(false)], activeSkin: 0,
         bubble: false, score: 0, newBest: false,
         job: null, houseOwned: false, ammoBonus: 0,
+        ownedPets: PETS.map(() => false), activePet: -1,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -944,6 +992,7 @@ function changeRoom(dest) {
     if (dest === ROOM.PARADISE) {
         player.x = 700; player.y = 300;
     }
+    placePetBesidePlayer();
 }
 
 // ── UPDATE: PLAYER ────────────────────────────────────────────
@@ -1524,6 +1573,80 @@ function updateDigging() {
     if (hell.foundMsg && --hell.foundMsg.timer <= 0) hell.foundMsg = null;
 }
 
+// ── UPDATE: PET ───────────────────────────────────────────────
+const pet = { x: 370, y: 320, cooldown: 0, healTimer: 0, face: 1 };
+
+function placePetBesidePlayer() {
+    pet.x = player.x - 28; pet.y = player.y + 16; pet.cooldown = 30;
+}
+
+function updatePet() {
+    if (state.activePet < 0 || state.gamePhase !== 'playing' || state.won || state.levelComplete) return;
+    const info = PETS[state.activePet];
+    if (pet.cooldown > 0) pet.cooldown--;
+
+    // Nearest bad guy close to YOU (pets don't wander off across the map)
+    let target = null, best = info.range;
+    for (const e of targetableEnemies()) {
+        const d = Math.hypot(e.x - player.x, e.y - player.y);
+        if (d < best) { best = d; target = e; }
+    }
+
+    // Where the pet wants to be: next to you, or chasing something
+    let goal = { x: player.x - 28 * pet.face, y: player.y + 16 };
+    if (info.id === 'puppy') {
+        // Fetch! Runs to coins near you and picks them up
+        const coin = roomCoins().find(c => !c.picked && Math.hypot(c.x - player.x, c.y - player.y) < 220);
+        if (coin) {
+            goal = coin;
+            if (Math.hypot(coin.x - pet.x, coin.y - pet.y) < 16) { coin.picked = true; collectCoin(); }
+        } else if (target) goal = target;
+    } else if (info.id === 'kitten' && target) {
+        goal = target;
+    }
+
+    const dx = goal.x - pet.x, dy = goal.y - pet.y, dist = Math.hypot(dx, dy);
+    if (dist > 4) {
+        const spd = Math.min(info.speed * (dist > 150 ? 2 : 1), dist);   // hurries to catch up
+        pet.x += dx / dist * spd; pet.y += dy / dist * spd;
+        if (Math.abs(dx) > 1) pet.face = dx > 0 ? -1 : 1;
+    }
+    pet.x = Math.max(12, Math.min(788, pet.x));
+    pet.y = Math.max(56, Math.min(588, pet.y));
+
+    // Attacks — every pet does a little damage (1), except its own element's strong hits
+    if (target && pet.cooldown === 0) {
+        if (info.id === 'puppy' || info.id === 'kitten') {
+            if (Math.hypot(target.x - pet.x, target.y - pet.y) < target.r + 12) {
+                pet.cooldown = info.cooldown;
+                spawnParticles(target.x, target.y, '#FFFFFF', 4);
+                sfx(info.id === 'puppy' ? 'bark' : 'meow');
+                damageEnemy(target, POWER.NONE);
+            }
+        } else {
+            // Owl zaps with lightning feathers, Dragon breathes fireballs
+            pet.cooldown = info.cooldown;
+            const power = info.id === 'owl' ? POWER.LIGHTNING : POWER.BRIMSTONE;
+            const a = Math.atan2(target.y - pet.y, target.x - pet.x);
+            projectiles.push({ x: pet.x, y: pet.y, dx: Math.cos(a) * 8, dy: Math.sin(a) * 8,
+                               color: WEAPON_INFO[power].color, power, life: 60, r: 5, fromPet: true });
+            sfx(info.id === 'owl' ? 'hoot' : 'shoot');
+        }
+    }
+
+    // The Owl heals you now and then
+    if (info.id === 'owl') {
+        const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+        if (state.playerHp < maxHp && ++pet.healTimer >= OWL_HEAL_FRAMES) {
+            pet.healTimer = 0;
+            state.playerHp++;
+            spawnFloatText(player.x, player.y - 30, '+1 ❤ from Owl!', '#FF88AA', 70);
+            spawnParticles(player.x, player.y, '#FF88AA', 10);
+            sfx('buy');
+        }
+    }
+}
+
 // ── UPDATE: PARADISE TOWN ─────────────────────────────────────
 function townNpcs() {
     return NPCS.filter(n => n.id === 'home' ? state.houseOwned : n.id === 'seller' ? !state.houseOwned : true);
@@ -1965,13 +2088,14 @@ function drawVoid() {
     // Which weapon beats which bad guy
     const chart = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER].map(w => {
         const beats = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].weakTo === w).map(k => ENEMY_TYPES[k].name + 's');
-        return `${WEAPON_INFO[w].icon} ${WEAPON_INFO[w].label} beats ${beats.join(' & ')}`;
+        const list = beats.length > 1 ? beats.slice(0, -1).join(', ') + ' & ' + beats[beats.length - 1] : beats[0];
+        return `${WEAPON_INFO[w].icon} ${WEAPON_INFO[w].label} beats ${list}`;
     });
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.font = 'bold 12px Arial';
-    ctx.fillText('WHAT BEATS WHAT (every weapon still does a little damage to everything)', 400, 450);
+    ctx.fillText('WHAT BEATS WHAT (every weapon still does a little damage to everything)', 400, 446);
     ctx.font = '12px Arial';
-    chart.forEach((line, i) => ctx.fillText(line, i % 2 === 0 ? 270 : 530, 472 + Math.floor(i / 2) * 18));
-    ctx.fillText('🌈 RAINBOW POWER beats everything!', 400, 512);
+    chart.forEach((line, i) => ctx.fillText(line, 400, 464 + i * 16));
+    ctx.fillText('🌈 RAINBOW POWER beats everything!', 400, 464 + chart.length * 16);
 
     // Void enemies
     const t = Date.now() / 400;
@@ -2672,6 +2796,77 @@ function drawAvatar(x, y, size, color, style) {
     }
 }
 
+// Draws a pet (also used for the shop previews). s = size scale, face = 1 left / -1 right
+function drawPetShape(id, x, y, s = 1, face = 1) {
+    const t = Date.now();
+    ctx.save();
+    ctx.translate(x, y); ctx.scale(s * face, s);
+    if (id === 'puppy') {
+        ctx.strokeStyle = '#8B5A2B'; ctx.lineWidth = 3;   // wagging tail
+        ctx.beginPath(); ctx.moveTo(9, -1); ctx.lineTo(15, -7 + Math.sin(t / 60) * 4); ctx.stroke();
+        ctx.fillStyle = '#C8904A';
+        ctx.beginPath(); ctx.ellipse(2, 0, 10, 7, 0, 0, Math.PI * 2); ctx.fill();   // body
+        ctx.fillRect(-6, 4, 3, 5); ctx.fillRect(6, 4, 3, 5);                       // legs
+        ctx.beginPath(); ctx.arc(-9, -6, 7, 0, Math.PI * 2); ctx.fill();            // head
+        ctx.fillStyle = '#6B3E1E';
+        ctx.beginPath(); ctx.ellipse(-12, -8, 3, 6, 0.4, 0, Math.PI * 2); ctx.ellipse(-5, -9, 3, 6, -0.4, 0, Math.PI * 2); ctx.fill();   // floppy ears
+        ctx.fillStyle = '#000';
+        ctx.fillRect(-11, -8, 2, 2); ctx.beginPath(); ctx.arc(-15, -5, 1.8, 0, Math.PI * 2); ctx.fill();   // eye + nose
+    } else if (id === 'kitten') {
+        ctx.strokeStyle = '#E07A1A'; ctx.lineWidth = 3;   // curly tail
+        ctx.beginPath(); ctx.moveTo(9, 0); ctx.quadraticCurveTo(18, -4, 14, -12 + Math.sin(t / 150) * 2); ctx.stroke();
+        ctx.fillStyle = '#FF9933';
+        ctx.beginPath(); ctx.ellipse(2, 1, 9, 6, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(-5, 4, 3, 5); ctx.fillRect(5, 4, 3, 5);
+        ctx.beginPath(); ctx.arc(-8, -5, 6.5, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-14, -8); ctx.lineTo(-13, -15); ctx.lineTo(-9, -10); ctx.moveTo(-7, -10); ctx.lineTo(-3, -15); ctx.lineTo(-2, -8); ctx.fill();   // ears
+        ctx.fillStyle = '#000'; ctx.fillRect(-11, -7, 2, 2); ctx.fillRect(-6, -7, 2, 2);
+        ctx.strokeStyle = '#FFF'; ctx.lineWidth = 0.8;   // whiskers
+        ctx.beginPath(); ctx.moveTo(-10, -3); ctx.lineTo(-17, -4); ctx.moveTo(-10, -2); ctx.lineTo(-17, -1); ctx.stroke();
+    } else if (id === 'owl') {
+        const flap = Math.sin(t / 90) * 5;
+        ctx.translate(0, Math.sin(t / 300) * 2 - 6);   // hovers
+        ctx.fillStyle = '#7A5A3A';
+        ctx.beginPath(); ctx.moveTo(-7, -2); ctx.lineTo(-16, -6 - flap); ctx.lineTo(-8, 6); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(7, -2); ctx.lineTo(16, -6 - flap); ctx.lineTo(8, 6); ctx.fill();
+        ctx.fillStyle = '#9A7A5A';
+        ctx.beginPath(); ctx.ellipse(0, 0, 9, 11, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-8, -8); ctx.lineTo(-7, -14); ctx.lineTo(-3, -10); ctx.moveTo(8, -8); ctx.lineTo(7, -14); ctx.lineTo(3, -10); ctx.fill();   // ear tufts
+        ctx.fillStyle = '#FFF';
+        ctx.beginPath(); ctx.arc(-4, -4, 4, 0, Math.PI * 2); ctx.arc(4, -4, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.beginPath(); ctx.arc(-4, -4, 2, 0, Math.PI * 2); ctx.arc(4, -4, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFAA22';
+        ctx.beginPath(); ctx.moveTo(-2, 0); ctx.lineTo(2, 0); ctx.lineTo(0, 4); ctx.fill();   // beak
+    } else if (id === 'dragon') {
+        const flap = Math.sin(t / 100) * 4;
+        ctx.fillStyle = '#2E8B3E';
+        ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(8, -16 - flap); ctx.lineTo(12, -3); ctx.fill();   // wing
+        ctx.strokeStyle = '#44BB55'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(9, 2); ctx.quadraticCurveTo(16, 4, 18, -2); ctx.stroke();           // tail
+        ctx.fillStyle = '#44BB55';
+        ctx.beginPath(); ctx.ellipse(2, 1, 10, 7, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFCC66';
+        ctx.beginPath(); ctx.ellipse(1, 4, 6, 3, 0, 0, Math.PI * 2); ctx.fill();                        // belly
+        ctx.fillStyle = '#44BB55';
+        ctx.beginPath(); ctx.arc(-9, -5, 6.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFAA22';
+        ctx.beginPath(); ctx.moveTo(-10, -11); ctx.lineTo(-8, -16); ctx.lineTo(-6, -11); ctx.fill();    // horn
+        ctx.fillStyle = '#FFEE33'; ctx.fillRect(-12, -7, 3, 3);
+        ctx.fillStyle = '#000'; ctx.fillRect(-11, -7, 1, 3);
+    }
+    ctx.restore();
+}
+
+function drawPet() {
+    if (state.activePet < 0 || state.gamePhase !== 'playing') return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath(); ctx.ellipse(pet.x, pet.y + 10, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    drawPetShape(PETS[state.activePet].id, pet.x, pet.y, 1, pet.face);
+}
+
 // ── DRAW: PROJECTILES ─────────────────────────────────────────
 function drawProjectiles() {
     for (const p of projectiles) {
@@ -2996,7 +3191,7 @@ function drawShop() {
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.fillText(lastInput === 'pad'   ? 'D-pad to choose  |  A to buy / wear  |  B to close'
                : lastInput === 'touch' ? 'Tap an item to buy or wear it  |  ✕ to close'
-               : 'Click an item or press 1-8 for skins, 9 for a Shield Bubble  |  E to close', 400, SY + 68);
+               : 'Arrows to choose, SPACE to buy / wear (or click)  |  1-8 skins, 9 bubble  |  E to close', 400, SY + 68);
 
     // Close button
     ctx.beginPath(); ctx.arc(SHOP_CLOSE.x, SHOP_CLOSE.y, SHOP_CLOSE.r, 0, Math.PI * 2);
@@ -3006,7 +3201,7 @@ function drawShop() {
     ctx.textBaseline = 'alphabetic';
 
     // Controller cursor
-    if (lastInput === 'pad') {
+    if (lastInput !== 'touch') {
         const r = shopSlotRect(state.shopCursor);
         ctx.save();
         ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]);
@@ -3058,20 +3253,35 @@ function drawShop() {
         }
     }
 
-    // Items
-    const bx = 400, by = SY + 215;
-    ctx.fillStyle = state.bubble ? 'rgba(170,230,255,0.2)' : 'rgba(255,255,255,0.06)';
-    ctx.strokeStyle = state.bubble ? '#AEE8FF' : '#666'; ctx.lineWidth = 1;
-    ctx.fillRect(bx - 120, by - 24, 240, 58);
-    ctx.strokeRect(bx - 120, by - 24, 240, 58);
-    ctx.beginPath(); ctx.arc(bx - 90, by + 5, 16, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(170,230,255,0.25)'; ctx.fill();
-    ctx.strokeStyle = '#CCF0FF'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#AEE8FF'; ctx.font = 'bold 13px Arial';
-    ctx.fillText(lastInput === 'keyboard' ? '[9] Shield Bubble' : 'Shield Bubble', bx - 64, by);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '11px Arial';
-    ctx.fillText(state.bubble ? '✓ You have one! It blocks 1 hit.' : `Blocks 1 hit  ·  🪙${BUBBLE_COST}`, bx - 64, by + 18);
+    // Bottom row: Shield Bubble, then pets
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'left';
+    ctx.fillText('ITEMS & PETS — pets follow you and fight with their own powers!', SX + 22, SY + 174);
+    for (let i = 8; i < SHOP_SLOTS; i++) {
+        const r = shopSlotRect(i);
+        const isPet = i >= 9, j = i - 9;
+        const owned  = isPet ? state.ownedPets[j] : state.bubble;
+        const active = isPet && state.activePet === j;
+        ctx.fillStyle = active ? 'rgba(255,215,0,0.22)' : owned ? 'rgba(170,230,255,0.14)' : 'rgba(255,255,255,0.06)';
+        ctx.strokeStyle = active ? '#FFD700' : owned ? '#AEE8FF' : '#555'; ctx.lineWidth = active ? 2 : 1;
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+        if (isPet) {
+            drawPetShape(PETS[j].id, r.cx, r.cy, 1.6, 1);
+        } else {
+            ctx.beginPath(); ctx.arc(r.cx, r.cy, 16, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(170,230,255,0.25)'; ctx.fill();
+            ctx.strokeStyle = '#CCF0FF'; ctx.lineWidth = 2; ctx.stroke();
+        }
+        ctx.textAlign = 'center';
+        ctx.fillStyle = isPet ? '#FFE8B0' : '#AEE8FF'; ctx.font = 'bold 11px Arial';
+        ctx.fillText(isPet ? PETS[j].name : 'Shield Bubble', r.cx, r.y + 66);
+        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '9px Arial';
+        ctx.fillText(isPet ? PETS[j].power : (lastInput === 'keyboard' ? 'Blocks 1 hit (key 9)' : 'Blocks 1 hit'), r.cx, r.y + 80);
+        const cost = isPet ? PETS[j].cost : BUBBLE_COST;
+        ctx.font = 'bold 10px Arial';
+        ctx.fillStyle = active ? '#FFD700' : owned ? '#AEE8FF' : state.coins >= cost ? '#FFD700' : '#886';
+        ctx.fillText(active ? '✓ WITH YOU' : owned ? (isPet ? 'OWNED — choose' : '✓ HAVE ONE') : `🪙${cost}`, r.cx, r.y + 97);
+    }
     ctx.restore();
 }
 
@@ -3138,6 +3348,7 @@ function update() {
         checkPickups();
         updateDigging();
         updateTown();
+        updatePet();
         updateVoidHealing();
         updateAmmo();
     }
@@ -3186,6 +3397,7 @@ function draw() {
     if (state.room === ROOM.PARADISE) drawParadise();
     drawPlayer();
     drawHeartPickups();
+    drawPet();
     drawProjectiles();
     drawBolts();
     drawEnemyProjectiles();
