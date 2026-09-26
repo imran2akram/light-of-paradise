@@ -98,7 +98,29 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 
 // ── CONSTANTS ────────────────────────────────────────────────
 const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise' };
-const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', RAINBOW: 'Rainbow' };
+const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', LIGHTNING: 'Lightning', WATER: 'Water', RAINBOW: 'Rainbow' };
+
+// ── WEAPONS ──────────────────────────────────────────────────
+const WEAPON_INFO = {
+    Ice:       { label: 'ICE',           icon: '❄', color: '#4488FF', speed: 9,  size: 6 },
+    Brimstone: { label: 'FIRE',          icon: '🔥', color: '#FF4422', speed: 9,  size: 6 },
+    Lightning: { label: 'LIGHTNING',     icon: '⚡', color: '#FFE033', speed: 13, size: 5 },   // fastest shots
+    Water:     { label: 'WATER',         icon: '💧', color: '#33CCDD', speed: 8,  size: 8 },   // biggest shots
+    Rainbow:   { label: 'RAINBOW POWER', icon: '🌈', color: '#FF66FF', speed: 10, size: 7 },
+};
+
+// ── BAD GUYS ─────────────────────────────────────────────────
+// Every weapon hurts every bad guy a little; the weapon it's weak to hurts a LOT.
+// Your weapon also shields you from the bad guys it's strong against.
+const ENEMY_TYPES = {
+    fire:  { name: 'Fire Monster', hp: 3, weakTo: POWER.ICE,       color: '#FF6600' },
+    ghost: { name: 'Ghost',        hp: 3, weakTo: POWER.BRIMSTONE, color: '#CC88FF' },
+    bat:   { name: 'Bat',          hp: 3, weakTo: POWER.LIGHTNING, color: '#9966CC' },
+    slime: { name: 'Slime',        hp: 3, weakTo: POWER.WATER,     color: '#66DD44' },
+    mole:  { name: 'Mole Monster', hp: 3, weakTo: POWER.WATER,     color: '#C08040' },
+};
+const DAMAGE_STRONG = 3;   // right weapon for this bad guy
+const DAMAGE_WEAK   = 1;   // any other weapon still does a little
 const BASE_SPEED = 4;
 
 // ── LEVEL CONFIGURATIONS ─────────────────────────────────────
@@ -148,7 +170,7 @@ const DIG_MAX_DEPTH       = 3;                 // layers in each dig spot
 const DIG_HITS_PER_LAYER  = [3, 4, 5];         // Space / DIG presses per layer (deeper = harder)
 const DIG_MOLE_CHANCE     = [0.3, 0.6, 1.0];   // chance a mole monster pops out of each layer
 const DIG_RANGE           = 24;                // how close the player must stand to a dig spot
-// Layer 1: Ice / Fire · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (beats fire AND ghosts)
+// Layer 1: Ice / Fire / Lightning / Water · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (strong vs everything)
 
 // ── STATE ────────────────────────────────────────────────────
 let state = {
@@ -301,8 +323,8 @@ function makeCoins(count) {
 }
 
 function makeDigSpots() {
-    // Two ICE and two FIRE weapons, shuffled so every visit is a surprise
-    const loot = [POWER.ICE, POWER.ICE, POWER.BRIMSTONE, POWER.BRIMSTONE];
+    // One of each weapon, shuffled so every visit is a surprise
+    const loot = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER];
     for (let i = loot.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [loot[i], loot[j]] = [loot[j], loot[i]];
@@ -314,7 +336,7 @@ function makeHell() {
     const cfg = LEVEL_CONFIGS[state.level - 1];
     return {
         digSpots: makeDigSpots(),
-        foundMsg: null,   // { text, sub, color, x, y, timer } — floats up after digging
+        foundMsg: null,   // { text, sub, color, timer } — floats up in the middle after digging
         moles:    [],     // mole monsters that popped out of dig spots
         devil: {
             x: 660, y: 300, r: cfg.devilR, alive: true, shieldFlash: 0,
@@ -330,27 +352,34 @@ function makeHell() {
     };
 }
 
+function makeEnemy(type, x, y, dx, dy) {
+    const hp = ENEMY_TYPES[type].hp;
+    return { type, x, y, dx, dy, r: 16, hp, maxHp: hp, alive: true, hitFlash: 0, hopTimer: 0,
+             home: { x, y, dx, dy } };   // where to respawn for the next wave
+}
+
 function makeParadise() {
     const cfg = LEVEL_CONFIGS[state.level - 1];
-    const baseFireMonsters = [
-        { x: 200, y: 150, r: 16, alive: true, dx: 1.2,  dy: 0.8  },
-        { x: 550, y: 200, r: 16, alive: true, dx: -0.9, dy: 1.1  },
-        { x: 350, y: 400, r: 16, alive: true, dx: 1.0,  dy: -1.0 },
-    ];
-    const baseGhosts = [
-        { x: 300, y: 250, r: 16, alive: true, dx: -0.7, dy: 0.9  },
-        { x: 600, y: 350, r: 16, alive: true, dx: 0.8,  dy: -0.8 },
+    const enemies = [
+        makeEnemy('fire',  200, 150,  1.2,  0.8),
+        makeEnemy('fire',  550, 200, -0.9,  1.1),
+        makeEnemy('fire',  350, 400,  1.0, -1.0),
+        makeEnemy('ghost', 300, 250, -0.7,  0.9),
+        makeEnemy('ghost', 600, 350,  0.8, -0.8),
+        makeEnemy('bat',   150, 350,  2.0,  1.4),
+        makeEnemy('slime', 450, 150,  0,    0),
     ];
     // Extra enemies for harder levels
     for (let i = 0; i < cfg.extraFireMonsters; i++) {
-        baseFireMonsters.push({ x: 150 + i * 200, y: 100 + i * 80, r: 16, alive: true, dx: 1.1 + i * 0.2, dy: -0.9 - i * 0.15 });
+        enemies.push(makeEnemy('fire', 150 + i * 200, 100 + i * 80, 1.1 + i * 0.2, -0.9 - i * 0.15));
+        enemies.push(makeEnemy('bat',  250 + i * 150, 450 - i * 60, -1.8 - i * 0.2, 1.2));
     }
     for (let i = 0; i < cfg.extraGhosts; i++) {
-        baseGhosts.push({ x: 450 + i * 150, y: 150 + i * 100, r: 16, alive: true, dx: -0.8 - i * 0.2, dy: 1.0 + i * 0.2 });
+        enemies.push(makeEnemy('ghost', 450 + i * 150, 150 + i * 100, -0.8 - i * 0.2, 1.0 + i * 0.2));
+        enemies.push(makeEnemy('slime', 200 + i * 250, 300 + i * 50, 0, 0));
     }
     return {
-        fireMonsters: baseFireMonsters,
-        ghosts:       baseGhosts,
+        enemies,
         chests: [
             { x: 200, y: 480, w: 30, h: 24, opened: false },
             { x: 400, y: 480, w: 30, h: 24, opened: false },
@@ -373,19 +402,38 @@ let paradise  = makeParadise();
 let voidRoom  = makeVoidRoom();
 
 // ── PORTALS ───────────────────────────────────────────────────
+// Every portal is a mystery: it takes you to a random room (never the one you're in)
+// Kept clear of the caves, chests, spawn points and touch controls.
+const PORTAL_R = 26;
 const PORTALS = {
-    void:     [
-        { x: 30,  y: 260, w: 32, h: 80, dest: ROOM.HELL,    color: '#CC2200', label: 'HELL'     },
-        { x: 738, y: 260, w: 32, h: 80, dest: ROOM.PARADISE, color: '#FFD700', label: 'PARADISE' },
+    void: [
+        { x: 60,  y: 300, shape: 'circle'   },
+        { x: 740, y: 300, shape: 'diamond'  },
+        { x: 400, y: 110, shape: 'star'     },
+        { x: 740, y: 110, shape: 'hexagon'  },
     ],
-    hell:     [{ x: 738, y: 260, w: 32, h: 80, dest: ROOM.VOID, color: '#888888', label: 'VOID' }],
-    paradise: [{ x: 30,  y: 260, w: 32, h: 80, dest: ROOM.VOID, color: '#888888', label: 'VOID' }],
+    hell: [
+        { x: 740, y: 300, shape: 'star'     },
+        { x: 420, y: 95,  shape: 'triangle' },
+        { x: 300, y: 545, shape: 'circle'   },
+    ],
+    paradise: [
+        { x: 60,  y: 300, shape: 'hexagon'  },
+        { x: 260, y: 95,  shape: 'diamond'  },
+        { x: 560, y: 95,  shape: 'triangle' },
+    ],
 };
+
+function randomDoorDestination() {
+    const rooms = Object.values(ROOM).filter(r => r !== state.room);
+    return rooms[Math.floor(Math.random() * rooms.length)];
+}
 
 // ── DYNAMIC LISTS ─────────────────────────────────────────────
 let projectiles      = [];
 let enemyProjectiles = [];
 let particles        = [];
+let floatTexts       = [];   // "-3 SUPER HIT!" numbers that float up
 
 // ── HELPERS ───────────────────────────────────────────────────
 function triggerShake(amount = 12) { state.screenShake = amount; }
@@ -401,6 +449,10 @@ function spawnParticles(x, y, color, count = 8) {
             color, r: 4 + Math.random() * 4,
         });
     }
+}
+
+function spawnFloatText(x, y, text, color) {
+    floatTexts.push({ x, y, text, color, life: 45 });
 }
 
 function spawnConfetti() {
@@ -442,15 +494,13 @@ function isPlayerPhysicallyInCave() {
 }
 
 function allMonstersDefeated() {
-    return paradise.fireMonsters.every(e => !e.alive)
-        && paradise.ghosts.every(e => !e.alive);
+    return paradise.enemies.every(e => !e.alive);
 }
 
 function getPlayerColor() {
     if (state.playerFlash > 0) return '#FFFF00';
-    if (state.power === POWER.ICE)       return '#4488FF';
-    if (state.power === POWER.BRIMSTONE) return '#FF4422';
     if (state.power === POWER.RAINBOW)   return `hsl(${(Date.now() / 5) % 360}, 100%, 60%)`;
+    if (state.power !== POWER.NONE)      return WEAPON_INFO[state.power].color;
     return AVATAR_COLORS[state.activeSkin];
 }
 
@@ -492,6 +542,7 @@ function resetGame() {
     projectiles      = [];
     enemyProjectiles = [];
     particles        = [];
+    floatTexts       = [];
 }
 
 function advanceLevel() {
@@ -520,20 +571,15 @@ function advanceLevel() {
     projectiles      = [];
     enemyProjectiles = [];
     particles        = [];
+    floatTexts       = [];
 }
 
 // ── ROOM CHANGE ───────────────────────────────────────────────
 function respawnParadiseWave() {
-    paradise.fireMonsters.forEach((e, i) => {
-        e.alive = true;
-        e.x = [200, 550, 350][i]; e.y = [150, 200, 400][i];
-        e.dx = [1.2, -0.9, 1.0][i]; e.dy = [0.8, 1.1, -1.0][i];
-    });
-    paradise.ghosts.forEach((e, i) => {
-        e.alive = true;
-        e.x = [300, 600][i]; e.y = [250, 350][i];
-        e.dx = [-0.7, 0.8][i]; e.dy = [0.9, -0.8][i];
-    });
+    for (const e of paradise.enemies) {
+        Object.assign(e, { alive: true, hp: e.maxHp, hitFlash: 0, hopTimer: 0,
+                           x: e.home.x, y: e.home.y, dx: e.home.dx, dy: e.home.dy });
+    }
 }
 
 function changeRoom(dest) {
@@ -577,9 +623,8 @@ function updatePlayer() {
     player.y = Math.max(52, Math.min(canvas.height - 18, player.y + dy));
 
     for (const p of PORTALS[state.room]) {
-        if (player.x > p.x && player.x < p.x + p.w &&
-            player.y > p.y && player.y < p.y + p.h) {
-            changeRoom(p.dest);
+        if (Math.hypot(player.x - p.x, player.y - p.y) < PORTAL_R * 0.75) {
+            changeRoom(randomDoorDestination());
             return;
         }
     }
@@ -616,12 +661,57 @@ function updatePlayer() {
 }
 
 // ── UPDATE: ENEMIES ───────────────────────────────────────────
-// Shield logic: ICE power blocks fire-type attacks; BRIMSTONE blocks ghost-type attacks
+function weaponDamage(power, enemyType) {
+    if (power === POWER.RAINBOW || ENEMY_TYPES[enemyType].weakTo === power) return DAMAGE_STRONG;
+    return DAMAGE_WEAK;
+}
+
+// Your weapon shields you from the bad guys it's strong against (never the Devil)
 function isShieldedAgainst(enemyType) {
-    if (enemyType === 'fire'  && state.power === POWER.ICE)       return true;
-    if (enemyType === 'ghost' && state.power === POWER.BRIMSTONE) return true;
-    if ((enemyType === 'fire' || enemyType === 'ghost') && state.power === POWER.RAINBOW) return true;
-    return false;
+    if (state.power === POWER.NONE || !ENEMY_TYPES[enemyType]) return false;
+    return weaponDamage(state.power, enemyType) === DAMAGE_STRONG;
+}
+
+// Hurts a bad guy; returns true if it was defeated
+function hitEnemy(e, power) {
+    const dmg = weaponDamage(power, e.type);
+    e.hp -= dmg;
+    e.hitFlash = 8;
+    spawnFloatText(e.x, e.y - e.r - 8, dmg === DAMAGE_STRONG ? `-${dmg} SUPER HIT!` : `-${dmg}`,
+                   dmg === DAMAGE_STRONG ? '#FFEE44' : '#FFFFFF');
+    spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, dmg === DAMAGE_STRONG ? 10 : 4);
+    if (e.hp > 0) return false;
+    spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, 16);
+    triggerShake();
+    return true;
+}
+
+function moveEnemy(e) {
+    if (e.type === 'fire') {
+        e.x += e.dx; e.y += e.dy;
+    } else if (e.type === 'ghost') {
+        // Drifts slowly toward the player
+        const a = Math.atan2(player.y - e.y, player.x - e.x);
+        e.x += Math.cos(a) * 0.5 + e.dx * 0.25;
+        e.y += Math.sin(a) * 0.5 + e.dy * 0.25;
+    } else if (e.type === 'bat') {
+        // Fast and flappy — zig-zags up and down
+        e.x += e.dx;
+        e.y += e.dy + Math.sin(Date.now() / 120 + e.home.x) * 1.8;
+    } else if (e.type === 'slime') {
+        // Sits still, then hops toward the player
+        if (--e.hopTimer <= 0) {
+            e.hopTimer = 70;
+            const a = Math.atan2(player.y - e.y, player.x - e.x);
+            e.dx = Math.cos(a) * 4; e.dy = Math.sin(a) * 4;
+        }
+        e.x += e.dx; e.y += e.dy;
+        e.dx *= 0.92; e.dy *= 0.92;
+    }
+    if (e.x < 60 || e.x > 740) e.dx *= -1;
+    if (e.y < 60 || e.y > 540) e.dy *= -1;
+    e.x = Math.max(40, Math.min(760, e.x));
+    e.y = Math.max(60, Math.min(560, e.y));
 }
 
 function updateEnemies() {
@@ -658,24 +748,11 @@ function updateEnemies() {
         // After all 3 crystals are collected paradise is peaceful — no more enemies
         if (state.lightCrystals >= 3) return;
 
-        for (const e of paradise.fireMonsters) {
+        for (const e of paradise.enemies) {
             if (!e.alive) continue;
-            e.x += e.dx; e.y += e.dy;
-            if (e.x < 60 || e.x > 740) e.dx *= -1;
-            if (e.y < 60 || e.y > 540) e.dy *= -1;
-            if (state.playerInvincible === 0 && !isShieldedAgainst('fire') &&
-                Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
-                damagePlayer();
-            }
-        }
-        for (const e of paradise.ghosts) {
-            if (!e.alive) continue;
-            const a = Math.atan2(player.y - e.y, player.x - e.x);
-            e.x += Math.cos(a) * 0.5 + e.dx * 0.25;
-            e.y += Math.sin(a) * 0.5 + e.dy * 0.25;
-            if (e.x < 60 || e.x > 740) e.dx *= -1;
-            if (e.y < 60 || e.y > 540) e.dy *= -1;
-            if (state.playerInvincible === 0 && !isShieldedAgainst('ghost') &&
+            if (e.hitFlash > 0) e.hitFlash--;
+            moveEnemy(e);
+            if (state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
                 Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
                 damagePlayer();
             }
@@ -785,8 +862,7 @@ function shoot() {
 
     const enemies = [];
     if (state.room === ROOM.PARADISE && state.lightCrystals < 3) {
-        paradise.fireMonsters.filter(e => e.alive).forEach(e => enemies.push(e));
-        paradise.ghosts.filter(e => e.alive).forEach(e => enemies.push(e));
+        paradise.enemies.filter(e => e.alive).forEach(e => enemies.push(e));
     }
     if (state.room === ROOM.HELL) {
         hell.moles.filter(m => m.emerge === 0).forEach(m => enemies.push(m));
@@ -801,13 +877,13 @@ function shoot() {
 
     if (!target) return;
     const a = Math.atan2(target.y - player.y, target.x - player.x);
-    const color = state.power === POWER.RAINBOW ? `hsl(${Math.random() * 360}, 100%, 60%)`
-                : state.power === POWER.ICE     ? '#4488FF' : '#FF4422';
+    const w     = WEAPON_INFO[state.power];
+    const color = state.power === POWER.RAINBOW ? `hsl(${Math.random() * 360}, 100%, 60%)` : w.color;
     // SUPER and RAINBOW weapons fire 3 shots in a spread for the same ammo
     const spread = state.powerTier >= 2 ? [-0.2, 0, 0.2] : [0];
     for (const off of spread) {
-        projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a + off) * 9, dy: Math.sin(a + off) * 9,
-            color, power: state.power, life: 90, r: 6 });
+        projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a + off) * w.speed, dy: Math.sin(a + off) * w.speed,
+            color, power: state.power, life: 90, r: w.size });
     }
 
     state.ammo--;
@@ -840,35 +916,20 @@ function updateProjectiles() {
         let hit = false;
 
         if (state.room === ROOM.PARADISE) {
-            for (const e of paradise.fireMonsters) {
-                if (!e.alive) continue;
-                if (Math.hypot(p.x - e.x, p.y - e.y) < e.r + p.r) {
-                    if (p.power === POWER.ICE || p.power === POWER.RAINBOW) { e.alive = false; spawnParticles(e.x, e.y, '#FF6600'); triggerShake(); }
-                    hit = true; break;
-                }
-            }
-            if (!hit) {
-                for (const e of paradise.ghosts) {
-                    if (!e.alive) continue;
-                    if (Math.hypot(p.x - e.x, p.y - e.y) < e.r + p.r) {
-                        if (p.power === POWER.BRIMSTONE || p.power === POWER.RAINBOW) { e.alive = false; spawnParticles(e.x, e.y, '#CC88FF'); triggerShake(); }
-                        hit = true; break;
-                    }
-                }
+            for (const e of paradise.enemies) {
+                if (!e.alive || Math.hypot(p.x - e.x, p.y - e.y) >= e.r + p.r) continue;
+                if (hitEnemy(e, p.power)) e.alive = false;
+                hit = true; break;
             }
         }
 
-        // Mole monsters — any power hurts them
+        // Mole monsters
         if (!hit && state.room === ROOM.HELL) {
             for (let j = hell.moles.length - 1; j >= 0; j--) {
                 const m = hell.moles[j];
                 if (m.emerge > 0 || Math.hypot(p.x - m.x, p.y - m.y) >= m.r + p.r) continue;
-                m.hp--;
-                spawnParticles(m.x, m.y, '#8B5A2B', 6);
-                if (m.hp <= 0) {
+                if (hitEnemy(m, p.power)) {
                     hell.moles.splice(j, 1);
-                    spawnParticles(m.x, m.y, '#C08040', 14);
-                    triggerShake(6);
                     collectCoin();   // moles drop a coin as a reward
                 }
                 hit = true; break;
@@ -930,8 +991,9 @@ function spawnMole(s) {
     // Pops out a little way from the player so it doesn't hit them straight away
     const a = Math.random() * Math.PI * 2;
     hell.moles.push({
-        x: s.x + Math.cos(a) * 45, y: s.y + Math.sin(a) * 45,
-        r: 13 + s.depth * 2, hp: s.depth, speed: 0.8 + s.depth * 0.25,
+        type: 'mole', x: s.x + Math.cos(a) * 45, y: s.y + Math.sin(a) * 45,
+        r: 13 + s.depth * 2, hp: s.depth * 2 + 1, maxHp: s.depth * 2 + 1, hitFlash: 0,
+        speed: 0.8 + s.depth * 0.25,
         emerge: 45,   // frames spent climbing out (harmless while emerging)
     });
 }
@@ -951,9 +1013,8 @@ function tryDig() {
     s.depth++;
     const tier   = s.depth;
     const weapon = tier === 3 ? POWER.RAINBOW : s.weapon;
-    const color  = weapon === POWER.RAINBOW ? '#FF66FF' : weapon === POWER.ICE ? '#4488FF' : '#FF4422';
-    const name   = weapon === POWER.RAINBOW ? 'RAINBOW POWER'
-                 : (tier >= 2 ? 'SUPER ' : '') + (weapon === POWER.ICE ? 'ICE' : 'FIRE');
+    const color  = WEAPON_INFO[weapon].color;
+    const name   = (tier === 2 ? 'SUPER ' : '') + WEAPON_INFO[weapon].label;
     let text;
     if (state.power !== POWER.NONE && tier < state.powerTier) {
         text = `Found ${name} — yours is better!`;
@@ -971,7 +1032,7 @@ function tryDig() {
         spawnMole(s);
         sub = 'Look out — a MOLE MONSTER!';
     }
-    hell.foundMsg = { text, sub, color, x: s.x, y: s.y - 20, timer: 120 };
+    hell.foundMsg = { text, sub, color, timer: 120 };
     return true;
 }
 
@@ -986,10 +1047,12 @@ function updateDigging() {
             if (Math.random() < 0.4) spawnParticles(m.x, m.y + 8, '#6B3E1E', 1);
             continue;
         }
+        if (m.hitFlash > 0) m.hitFlash--;
         const a = Math.atan2(player.y - m.y, player.x - m.x);
         m.x += Math.cos(a) * m.speed;
         m.y += Math.sin(a) * m.speed;
-        if (state.playerInvincible === 0 && Math.hypot(m.x - player.x, m.y - player.y) < m.r + 16) {
+        if (state.playerInvincible === 0 && !isShieldedAgainst('mole') &&
+            Math.hypot(m.x - player.x, m.y - player.y) < m.r + 16) {
             damagePlayer();
         }
     }
@@ -1078,6 +1141,10 @@ function updateParticles() {
         }
         p.life--;
         if (p.life <= 0) particles.splice(i, 1);
+    }
+    for (let i = floatTexts.length - 1; i >= 0; i--) {
+        floatTexts[i].y -= 0.8;
+        if (--floatTexts[i].life <= 0) floatTexts.splice(i, 1);
     }
 }
 
@@ -1174,21 +1241,80 @@ function drawIntro() {
 
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = '11px Arial';
-    ctx.fillText('Move: WASD / Arrows  |  Shoot nearest enemy: Spacebar  |  Walk into portals to travel', 400, 562);
+    ctx.fillText('Move: WASD / Arrows  |  Shoot nearest enemy: Spacebar  |  Mystery portals go anywhere!', 400, 562);
 }
 
 // ── DRAW: PORTALS ─────────────────────────────────────────────
+function portalPath(shape, x, y, r, spin) {
+    ctx.beginPath();
+    if (shape === 'circle') { ctx.arc(x, y, r, 0, Math.PI * 2); return; }
+    // Pointy shapes: [number of points, inner radius ratio]
+    const [n, inner] = { diamond: [4, 1], triangle: [3, 1], hexagon: [6, 1], star: [5, 0.5] }[shape];
+    const pts = inner < 1 ? n * 2 : n;
+    for (let i = 0; i < pts; i++) {
+        const a  = spin - Math.PI / 2 + (i / pts) * Math.PI * 2;
+        const rr = inner < 1 && i % 2 ? r * inner : r;
+        ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+}
+
 function drawPortals() {
-    const t = Date.now() / 600;
+    const t = Date.now() / 1000;
     for (const p of PORTALS[state.room]) {
+        // Colour keeps shifting — you never know where it goes!
+        const hue  = (t * 60 + p.x + p.y) % 360;
+        const spin = t * 0.6 + p.x;   // the whole shape slowly turns
+        const r    = PORTAL_R + Math.sin(t * 3 + p.x) * 2;
         ctx.save();
-        ctx.shadowColor = p.color; ctx.shadowBlur = 20 + Math.sin(t) * 8;
-        ctx.fillStyle   = p.color;
-        ctx.fillRect(p.x, p.y, p.w, p.h);
+
+        // Dark swirling middle
+        portalPath(p.shape, p.x, p.y, r, spin);
+        const grad = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, r);
+        grad.addColorStop(0, '#FFFFFF');
+        grad.addColorStop(0.35, `hsl(${hue}, 90%, 45%)`);
+        grad.addColorStop(1, `hsl(${(hue + 120) % 360}, 90%, 15%)`);
+        ctx.fillStyle = grad;
+        ctx.shadowColor = `hsl(${hue}, 100%, 60%)`; ctx.shadowBlur = 25;
+        ctx.fill();
+
+        // Spiral arms spinning into the centre
+        ctx.save();
+        portalPath(p.shape, p.x, p.y, r, spin);
+        ctx.clip();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = `hsla(${(hue + 60) % 360}, 100%, 80%, 0.7)`;
+        ctx.lineWidth = 2;
+        for (let arm = 0; arm < 3; arm++) {
+            ctx.beginPath();
+            for (let k = 0; k <= 20; k++) {
+                const a  = -t * 4 + arm * (Math.PI * 2 / 3) + k * 0.3;
+                const rr = (k / 20) * r;
+                ctx.lineTo(p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr);
+            }
+            ctx.stroke();
+        }
         ctx.restore();
+
+        // Glowing outline
+        portalPath(p.shape, p.x, p.y, r, spin);
+        ctx.strokeStyle = `hsl(${hue}, 100%, 70%)`;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Sparkles orbiting the edge
+        for (let k = 0; k < 3; k++) {
+            const a = t * 2 + k * (Math.PI * 2 / 3) + p.y;
+            drawStar(p.x + Math.cos(a) * (r + 7), p.y + Math.sin(a) * (r + 7), 2.5, '#FFFFFF');
+        }
+        ctx.restore();
+
         ctx.fillStyle = '#FFF';
-        ctx.font      = 'bold 10px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(p.label, p.x + p.w / 2, p.y - 6);
+        ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('?', p.x, p.y);
+        ctx.textBaseline = 'alphabetic';
+        ctx.font = 'bold 9px Arial';
+        ctx.fillText('MYSTERY', p.x, p.y + PORTAL_R + 14);
     }
 }
 
@@ -1199,17 +1325,27 @@ function drawVoid() {
     ctx.fillText('~ THE VOID ~', 400, 295);
     ctx.font      = '14px Arial';
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillText('Enter a portal to begin your journey', 400, 328);
+    ctx.fillText('Every portal is a mystery — where will it take you?', 400, 328);
 
     // Shield hint
     if (state.power !== POWER.NONE) {
-        const shielded = state.power === POWER.RAINBOW ? 'FIRE & GHOST'
-                       : state.power === POWER.ICE     ? 'FIRE' : 'GHOST';
-        ctx.fillStyle = state.power === POWER.RAINBOW ? 'rgba(255,120,255,0.8)'
-                      : state.power === POWER.ICE     ? 'rgba(80,160,255,0.75)' : 'rgba(255,100,60,0.75)';
+        const shielded = state.power === POWER.RAINBOW ? 'EVERY MONSTER (not the Devil!)'
+            : Object.keys(ENEMY_TYPES).filter(isShieldedAgainst).map(k => ENEMY_TYPES[k].name.toUpperCase() + 'S').join(' & ');
+        ctx.fillStyle = WEAPON_INFO[state.power].color;
         ctx.font = 'bold 12px Arial';
-        ctx.fillText(`🛡 ${state.power.toUpperCase()} SHIELD active — blocks ${shielded} attacks`, 400, 360);
+        ctx.fillText(`🛡 ${WEAPON_INFO[state.power].label} SHIELD — protects you from ${shielded}`, 400, 360);
     }
+
+    // Which weapon beats which bad guy
+    const chart = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER].map(w => {
+        const beats = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].weakTo === w).map(k => ENEMY_TYPES[k].name + 's');
+        return `${WEAPON_INFO[w].icon} ${WEAPON_INFO[w].label} beats ${beats.join(' & ')}`;
+    });
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.font = 'bold 12px Arial';
+    ctx.fillText('WHAT BEATS WHAT (every weapon still does a little damage to everything)', 400, 450);
+    ctx.font = '12px Arial';
+    chart.forEach((line, i) => ctx.fillText(line, i % 2 === 0 ? 270 : 530, 472 + Math.floor(i / 2) * 18));
+    ctx.fillText('🌈 RAINBOW POWER beats everything!', 400, 512);
 
     // Void enemies
     const t = Date.now() / 400;
@@ -1344,21 +1480,28 @@ function drawHell() {
             }
         }
         ctx.restore();
+        if (m.emerge === 0) {
+            if (m.hitFlash > 0) {
+                ctx.save(); ctx.globalAlpha = m.hitFlash / 12; ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+            }
+            drawEnemyHp(m);
+        }
     }
 
     // "You found …!" message floating up
     if (hell.foundMsg) {
         const m = hell.foundMsg;
-        const y = m.y - (120 - m.timer) * 0.3;
+        const x = 400, y = 250 - (120 - m.timer) * 0.3;   // big, in the middle of the screen
         ctx.save();
         ctx.globalAlpha = Math.min(1, m.timer / 30);
         ctx.fillStyle = m.color; ctx.shadowColor = m.color; ctx.shadowBlur = 12;
-        ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(m.text, m.x, y);
+        ctx.font = 'bold 26px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(m.text, x, y);
         if (m.sub) {
             ctx.fillStyle = m.sub.startsWith('Look out') ? '#FF6666' : '#FFE08A';
-            ctx.shadowBlur = 6; ctx.font = 'bold 12px Arial';
-            ctx.fillText(m.sub, m.x, y + 18);
+            ctx.shadowBlur = 6; ctx.font = 'bold 15px Arial';
+            ctx.fillText(m.sub, x, y + 24);
         }
         ctx.restore();
     }
@@ -1449,47 +1592,105 @@ function drawHell() {
     }
 }
 
+// ── DRAW: BAD GUYS ────────────────────────────────────────────
+function drawEnemy(e, t) {
+    ctx.save();
+    if (e.type === 'fire') {
+        ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFAA00';
+        for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + t;
+            ctx.beginPath();
+            ctx.arc(e.x + Math.cos(a) * e.r * 0.9, e.y + Math.sin(a) * e.r * 0.9, 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    } else if (e.type === 'ghost') {
+        ctx.globalAlpha = 0.78;
+        ctx.fillStyle = '#CC88FF'; ctx.shadowColor = '#AA44FF'; ctx.shadowBlur = 18;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r, Math.PI, 0);
+        ctx.lineTo(e.x + e.r,       e.y + e.r * 0.7);
+        ctx.lineTo(e.x + e.r * 0.5, e.y + e.r * 0.25);
+        ctx.lineTo(e.x,             e.y + e.r * 0.7);
+        ctx.lineTo(e.x - e.r * 0.5, e.y + e.r * 0.25);
+        ctx.lineTo(e.x - e.r,       e.y + e.r * 0.7);
+        ctx.closePath(); ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#330055';
+        ctx.beginPath();
+        ctx.arc(e.x - 5, e.y - 3, 3.5, 0, Math.PI * 2);
+        ctx.arc(e.x + 5, e.y - 3, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+    } else if (e.type === 'bat') {
+        // Flapping wings
+        const flap = Math.sin(Date.now() / 60 + e.home.x) * 8;
+        ctx.fillStyle = '#5A3A7A'; ctx.shadowColor = '#9966CC'; ctx.shadowBlur = 10;
+        for (const side of [-1, 1]) {
+            ctx.beginPath();
+            ctx.moveTo(e.x + side * 5, e.y - 2);
+            ctx.lineTo(e.x + side * 24, e.y - 6 - flap);
+            ctx.lineTo(e.x + side * 18, e.y + 4);
+            ctx.lineTo(e.x + side * 11, e.y + 1);
+            ctx.closePath(); ctx.fill();
+        }
+        ctx.fillStyle = '#7A4A9A';
+        ctx.beginPath(); ctx.arc(e.x, e.y, 9, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath();   // ears
+        ctx.moveTo(e.x - 7, e.y - 5); ctx.lineTo(e.x - 5, e.y - 14); ctx.lineTo(e.x - 1, e.y - 7);
+        ctx.moveTo(e.x + 7, e.y - 5); ctx.lineTo(e.x + 5, e.y - 14); ctx.lineTo(e.x + 1, e.y - 7);
+        ctx.fill();
+        ctx.fillStyle = '#FFEE00';
+        ctx.beginPath();
+        ctx.arc(e.x - 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
+        ctx.arc(e.x + 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+    } else if (e.type === 'slime') {
+        // Squishes flat while resting, stretches tall mid-hop
+        const speed   = Math.hypot(e.dx, e.dy);
+        const stretch = Math.min(1, speed / 4);
+        const w = e.r * (1.2 - stretch * 0.3), h = e.r * (0.8 + stretch * 0.4);
+        ctx.fillStyle = 'rgba(100,220,70,0.85)'; ctx.shadowColor = '#66DD44'; ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.ellipse(e.x, e.y + e.r - h, w, h, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(200,255,180,0.7)';   // shine
+        ctx.beginPath(); ctx.ellipse(e.x - w * 0.4, e.y + e.r - h * 1.5, w * 0.2, h * 0.15, -0.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#113311';
+        ctx.beginPath();
+        ctx.arc(e.x - 5, e.y + e.r - h * 1.1, 3, 0, Math.PI * 2);
+        ctx.arc(e.x + 5, e.y + e.r - h * 1.1, 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+    // White flash when hit
+    if (e.hitFlash > 0) {
+        ctx.save();
+        ctx.globalAlpha = e.hitFlash / 12;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    }
+}
+
+// Little health bar, only once a bad guy has been hurt
+function drawEnemyHp(e) {
+    if (e.hp >= e.maxHp) return;
+    const bw = 30, bh = 4, bx = e.x - bw / 2, by = e.y - e.r - 10;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+    ctx.fillStyle = `hsl(${(e.hp / e.maxHp) * 120}, 100%, 45%)`;
+    ctx.fillRect(bx, by, bw * (e.hp / e.maxHp), bh);
+}
+
 // ── DRAW: PARADISE ────────────────────────────────────────────
 function drawParadise() {
     const t = Date.now() / 400;
 
     // Only draw enemies before all 3 crystals are collected
     if (state.lightCrystals < 3) {
-        for (const e of paradise.fireMonsters) {
+        for (const e of paradise.enemies) {
             if (!e.alive) continue;
-            ctx.save();
-            ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
-            ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#FFAA00';
-            for (let i = 0; i < 6; i++) {
-                const a = (i / 6) * Math.PI * 2 + t;
-                ctx.beginPath();
-                ctx.arc(e.x + Math.cos(a) * e.r * 0.9, e.y + Math.sin(a) * e.r * 0.9, 4, 0, Math.PI * 2);
-                ctx.fill();
-            }
-            ctx.restore();
-        }
-
-        for (const e of paradise.ghosts) {
-            if (!e.alive) continue;
-            ctx.save();
-            ctx.globalAlpha = 0.78;
-            ctx.fillStyle = '#CC88FF'; ctx.shadowColor = '#AA44FF'; ctx.shadowBlur = 18;
-            ctx.beginPath();
-            ctx.arc(e.x, e.y, e.r, Math.PI, 0);
-            ctx.lineTo(e.x + e.r,       e.y + e.r * 0.7);
-            ctx.lineTo(e.x + e.r * 0.5, e.y + e.r * 0.25);
-            ctx.lineTo(e.x,             e.y + e.r * 0.7);
-            ctx.lineTo(e.x - e.r * 0.5, e.y + e.r * 0.25);
-            ctx.lineTo(e.x - e.r,       e.y + e.r * 0.7);
-            ctx.closePath(); ctx.fill();
-            ctx.globalAlpha = 1;
-            ctx.fillStyle = '#330055';
-            ctx.beginPath();
-            ctx.arc(e.x - 5, e.y - 3, 3.5, 0, Math.PI * 2);
-            ctx.arc(e.x + 5, e.y - 3, 3.5, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
+            drawEnemy(e, t);
+            drawEnemyHp(e);
         }
     }
 
@@ -1604,6 +1805,17 @@ function drawParticles() {
     }
 }
 
+function drawFloatTexts() {
+    for (const f of floatTexts) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, f.life / 20);
+        ctx.fillStyle = f.color; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+        ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(f.text, f.x, f.y);
+        ctx.restore();
+    }
+}
+
 // ── DRAW: HUD ─────────────────────────────────────────────────
 function drawHUD() {
     // Taller HUD when ammo bar is shown
@@ -1637,10 +1849,10 @@ function drawHUD() {
     ctx.fillText(`${names[state.room]} · ${lvlLabel}`, 400, 38);
 
     // Power
-    const pc = { None: '#888', Ice: '#4488FF', Brimstone: '#FF4422' };
-    ctx.fillStyle = state.power === POWER.RAINBOW ? getPlayerColor() : pc[state.power];
+    ctx.fillStyle = state.power === POWER.RAINBOW ? getPlayerColor()
+                  : state.power === POWER.NONE    ? '#888' : WEAPON_INFO[state.power].color;
     ctx.font = 'bold 17px Arial'; ctx.textAlign = 'right';
-    ctx.fillText(`Power: ${powerName()}`, 786, 28);
+    ctx.fillText(`Power: ${state.power === POWER.NONE ? '' : WEAPON_INFO[state.power].icon + ' '}${powerName()}`, 786, 28);
 
     // ── AMMO BAR ──────────────────────────────────────────────
     if (state.power !== POWER.NONE && state.room !== ROOM.VOID) {
@@ -1964,6 +2176,7 @@ function draw() {
     drawProjectiles();
     drawEnemyProjectiles();
     drawParticles();
+    drawFloatTexts();
     drawHUD();
     drawControls();
     drawVirtualControls();
