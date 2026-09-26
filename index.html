@@ -97,8 +97,8 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 })();
 
 // ── CONSTANTS ────────────────────────────────────────────────
-const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground' };
-const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE];   // where mystery portals can take you
+const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven' };
+const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
 // A super-rare golden portal sometimes appears → the Secret Golden Room.
@@ -106,7 +106,7 @@ const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE];   // where mystery por
 const SECRET_PORTAL_CHANCE = 0.06;   // super rare — and almost invisible until you're close
 const SECRET_REVEAL_DIST   = 110;    // how close you must be to see the golden portal clearly
 const RAINBOW_CHANCE       = 0.3;    // chance the bottom of a dig spot (or the Secret Room) has Rainbow Power
-const GOLDEN_PORTAL_SPOTS  = { void: { x: 400, y: 205 }, hell: { x: 250, y: 450 }, paradise: { x: 250, y: 275 } };
+const GOLDEN_PORTAL_SPOTS  = { void: { x: 400, y: 205 }, hell: { x: 250, y: 450 }, paradise: { x: 250, y: 275 }, heaven: { x: 620, y: 470 } };
 const GEM_HITS             = 3;    // presses to mine a gem in the Underground Caves
 const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', LIGHTNING: 'Lightning', WATER: 'Water', RAINBOW: 'Rainbow' };
 
@@ -136,7 +136,10 @@ const ENEMY_TYPES = {
     ghostking: { name: 'Ghost King', hp: 14, weakTo: POWER.BRIMSTONE, color: '#DDAAFF' },  // Monster Night 2 boss: turns invisible
     dragon:    { name: 'Cave Dragon',hp: 22, weakTo: POWER.ICE,       color: '#AA3355' },  // Underground boss: breathes fire
     shadow:    { name: 'Shadow You', hp: 6,  weakTo: POWER.LIGHTNING, color: '#442266' },  // Hell: copies your every move
+    zombie:    { name: 'Zombie',     hp: 4,  weakTo: POWER.BRIMSTONE, color: '#6A9A5A' },  // Paradise nights & Underground
+    creeper:   { name: 'Creeper',    hp: 3,  weakTo: POWER.ICE,       color: '#4CAF50' },  // hisss… BOOM!
 };
+const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
 const WORM_UNDER_FRAMES  = 150;   // tunnelling toward you (can't be hit)
 const WORM_RISE_FRAMES   = 40;    // rumbling — it's about to pop up!
@@ -183,10 +186,11 @@ const DEVIL_BULLET_SPEED = 7.5;   // px/frame (player moves 4)
 const CAVE_MAX_FRAMES  = 3600;  // 1 minute at 60 fps — same for all levels
 
 // ── AVATAR SKINS ─────────────────────────────────────────────
-const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700', '#2A2A2A', '#B8C4CC', '#44BB55'];
-const AVATAR_NAMES       = ['White', 'Blue', 'Green', 'Red', 'Gold', 'Ninja', 'Robot', 'Dragon'];
-const AVATAR_STYLES      = ['plain', 'plain', 'plain', 'plain', 'plain', 'ninja', 'robot', 'dragon'];
-const AVATAR_UNLOCK_COST = [0, 5, 10, 15, 20, 25, 30, 40];  // coins needed to unlock each skin
+const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700', '#2A2A2A', '#B8C4CC', '#44BB55', '#3AB0C0'];
+const AVATAR_NAMES       = ['White', 'Blue', 'Green', 'Red', 'Gold', 'Ninja', 'Robot', 'Dragon', 'Blocky'];
+const AVATAR_STYLES      = ['plain', 'plain', 'plain', 'plain', 'plain', 'ninja', 'robot', 'dragon', 'blocky'];
+const AVATAR_UNLOCK_COST = [0, 5, 10, 15, 20, 25, 30, 40, 0];  // coins needed to unlock each skin (Blocky is crafted)
+const SHOP_SKINS         = 8;                                 // skins sold in the shop
 const BUBBLE_COST        = 5;                               // Shield Bubble (shop key 9)
 
 // ── PETS ─────────────────────────────────────────────────────
@@ -268,6 +272,7 @@ const VILLAGER_CHAT = [
 const FARM       = { x: 40, y: 440, w: 200, h: 92 };
 const FARM_CROPS = [70, 118, 166, 214].flatMap(x => [{ x, y: 468 }, { x, y: 508 }]);
 const FISH_SPOT  = { x: 640, y: 574 };   // the end of the pier
+const CRAFTING_TABLE = { id: 'crafting', name: 'Crafting Table', x: 520, y: 432, table: true };
 const NIGHT_MONSTER_CHANCE = 0.7;         // some nights are quiet… (but never two quiet nights in a row)
 const QUIET_NIGHT_FRAMES   = 600;         // a quiet night lasts 10 s
 const AMBUSH_FRAMES        = [700, 1500]; // daytime: monsters sometimes pop up every 12–25 s
@@ -331,6 +336,13 @@ let state = {
     weaponLevel:        1,
     faceX:              1,         // last direction you moved (for dashing / throwing)
     walkPhase:          0,         // swings your arms and legs while you walk
+    // Minecraft-style building
+    buildMode:          false,
+    hotbar:             0,         // which block you're holding
+    inv:                {},        // blocks and materials you've collected, e.g. { log: 3, iron: 1 }
+    armor:              0,         // +hearts from crafted armor
+    diamondPickaxe:     false,
+    heavenWishes:       3,
     faceY:              0,
     // Score
     score:              0,
@@ -425,12 +437,12 @@ function shopSelect(i) {
 // A menu is a title plus a function that returns the items, so prices and ticks are always up to date.
 // Each item: { icon, name, desc, cost?, status?, action() }
 let menu = null;   // { title, items, cursor }
-const MENU = { X: 130, Y: 100, W: 540, H: 400 };
+const MENU = { X: 130, Y: 80, W: 540, H: 420 };
 
 function openMenu(title, items) { menu = { title, items, cursor: 0 }; }
 function menuItemRect(i) {
     const col = i % 2, row = Math.floor(i / 2);
-    return { x: MENU.X + 14 + col * 262, y: MENU.Y + 58 + row * 82, w: 250, h: 74 };
+    return { x: MENU.X + 14 + col * 262, y: MENU.Y + 56 + row * 68, w: 250, h: 62 };
 }
 function menuSelect(i) {
     const list = menu.items();
@@ -454,6 +466,11 @@ function spend(cost) {
 // The main button: Space, A on a controller, or the on-screen SHOOT / DIG button
 function pressAction() {
     if (menu) return;
+    if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
+        const { cx, cy } = buildTargetCell();
+        buildAt(cx, cy);
+        return;
+    }
     if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
     else if (!tryDig() && !tryTalk() && !tryTownAction()) shoot();
@@ -482,6 +499,8 @@ function handleTap(x, y) {
         return true;
     }
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
+        if (Math.hypot(x - VBUILD.x, y - VBUILD.y) < VBUILD.r * 1.3) { toggleBuild(); return true; }
+        if (state.buildMode && Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { nextBlock(); return true; }
         if (Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { useGadget(); return true; }
         if (Math.hypot(x - VDASH.x,   y - VDASH.y)   < VDASH.r * 1.3)   { dash();      return true; }
     }
@@ -517,7 +536,10 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Escape' || e.code === 'KeyE') menu = null;
         return;
     }
-    if (e.code === 'KeyQ') useGadget();
+    if (e.code === 'KeyB') toggleBuild();
+    if (e.code === 'KeyQ') { if (state.buildMode) nextBlock(); else useGadget(); }
+    const hb = /^Digit([1-9])$/.exec(e.code);
+    if (hb && state.buildMode && !state.shopOpen) state.hotbar = Math.min(HOTBAR.length - 1, Number(hb[1]) - 1);
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') dash();
     if (state.shopOpen) {
         const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
@@ -529,6 +551,7 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Enter') pressStart();
     }
     if (e.code === 'KeyE' || (e.code === 'Escape' && state.shopOpen)) toggleShop();
+    if (e.code === 'KeyC' && state.room === ROOM.PARADISE && !state.shopOpen) { /* handled by walking up to the table */ }
     if (e.code === 'KeyH' && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
     if (e.code === 'Escape') state.awardsOpen = false;
     if (e.code === 'KeyN' && state.gamePhase === 'intro') startFromIntro(true);
@@ -543,11 +566,15 @@ document.addEventListener('keyup', e => { keys[e.code] = false; });
 canvas.addEventListener('click', e => {
     initAudio();
     const p = canvasPos(e.clientX, e.clientY);
-    handleTap(p.x, p.y);
+    if (handleTap(p.x, p.y)) return;
+    // Build mode: click a spot near you to mine / place there
+    if (state.buildMode && state.gamePhase === 'playing' && !menu && !state.shopOpen && Math.hypot(p.x - player.x, p.y - player.y) < BUILD_REACH) {
+        buildAt(Math.floor(p.x / CELL), Math.floor(p.y / CELL));
+    }
 });
 
 // ── GAME CONTROLLER (Xbox, PlayStation, Switch Pro… anything the browser maps as "standard") ──
-const PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START: 9, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+const PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START: 9, L3: 10, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
 const PAD_DEADZONE    = 0.3;   // ignore tiny stick wobbles
 const PAD_AUTOFIRE    = 10;    // frames between shots while A is held
 let   lastInput       = 'keyboard';   // 'keyboard' | 'touch' | 'pad' — picks which hints to show
@@ -579,7 +606,8 @@ function pollGamepad() {
         if (pressed(PAD.B) || pressed(PAD.Y)) menu = null;
         return;
     }
-    if (pressed(PAD.B) && !state.shopOpen && !state.awardsOpen) useGadget();
+    if (pressed(PAD.B) && !state.shopOpen && !state.awardsOpen) { if (state.buildMode) nextBlock(); else useGadget(); }
+    if (pressed(PAD.L3)) toggleBuild();
     if (pressed(PAD.LT)) dash();
     if (pressed(PAD.LB))    dance();
     if (pressed(PAD.RB))    fart();
@@ -758,6 +786,8 @@ function makeParadise() {
     const ghostKing = makeEnemy('ghostking', 400, 250, 0, 0);
     Object.assign(ghostKing, { r: 34, minNight: 2, onlyNight: 2, coinDrop: 12, phase: 0 });
     enemies.push(ghostKing);
+    // Minecraft monsters come out every Monster Night
+    enemies.push(makeEnemy('zombie', 200, 400, 0, 0), makeEnemy('zombie', 600, 200, 0, 0), makeEnemy('creeper', 500, 450, 0, 0));
     // A robot army marches in on nights 2 and 3
     for (let i = 0; i < 4; i++) {
         const bot = makeEnemy('robot', 90 + i * 42, 140, 1.3, 0);
@@ -815,6 +845,7 @@ function makeUnderground() {
                        speed: 1.1, emerge: 45 + i * 60 });
     }
     enemies.push(...makeWorms().slice(0, 2));
+    enemies.push(makeEnemy('zombie', 300, 450, 0, 0), makeEnemy('zombie', 500, 150, 0, 0), makeEnemy('creeper', 450, 420, 0, 0));
     // Spiders wait on the ceiling, then drop down on a thread
     for (let i = 0; i < 3; i++) {
         enemies.push({ type: 'spider', x: 200 + i * 180, y: 50, ty: 180 + Math.random() * 260, r: 12, hp: 3, maxHp: 3,
@@ -834,6 +865,111 @@ function makeUnderground() {
         // Glowing mushrooms (just for looks)
         shrooms: Array.from({ length: 14 }, (_, i) => ({ x: 40 + (i * 97) % 720, y: 80 + (i * 211) % 480, h: (i * 53) % 360 })),
     };
+}
+
+// ── HEAVEN: the opposite of Hell. No monsters, it heals you, 3 wishes, unlimited blocks ──
+const WISH_ANGEL = { id: 'angel', name: 'Angel of Wishes', x: 400, y: 232 };
+function makeHeaven() {
+    state.heavenWishes = 3;
+    return { angels: [0, 1, 2].map(i => ({ x: 150 + i * 250, y: 380 + (i % 2) * 60, t: i * 2 })) };
+}
+let heaven = makeHeaven();
+
+function updateHeaven() {
+    if (state.room !== ROOM.HEAVEN) return;
+    for (const a of heaven.angels) { a.t += 0.01; a.x = 400 + Math.sin(a.t + a.y) * 300; a.y += Math.sin(a.t * 3) * 0.3; }
+}
+
+function nearWishAngel() {
+    return state.room === ROOM.HEAVEN && Math.hypot(player.x - WISH_ANGEL.x, player.y - WISH_ANGEL.y) < 44;
+}
+
+function wishItems() {
+    const wish = (icon, name, desc, give) => ({
+        icon, name, desc, cost: 0, status: state.heavenWishes > 0 ? `${state.heavenWishes} wish${state.heavenWishes > 1 ? 'es' : ''} left` : null,
+        action: () => {
+            if (state.heavenWishes <= 0) { showToast('No wishes left — come back to Heaven another time!', '#AACCFF', 140); return; }
+            state.heavenWishes--; give(); sfx('magic'); spawnParticles(player.x, player.y, '#FFF4B0', 20);
+        },
+    });
+    const petWish = () => {
+        const free = PETS.map((p, i) => i).filter(i => !state.ownedPets[i]);
+        if (!free.length) { showToast('You already have every pet!'); state.heavenWishes++; return; }
+        const j = free[Math.floor(Math.random() * free.length)];
+        state.ownedPets[j] = true; state.activePet = j; placePetBesidePlayer();
+        showToast(`🐾 A ${PETS[j].name} flew down from the clouds for you!`); giveAward('pet');
+        if (state.ownedPets.every(Boolean)) giveAward('allPets');
+    };
+    const weapon = (pw) => () => { state.power = pw; state.powerTier = 2; showToast(`✨ SUPER ${WEAPON_INFO[pw].label}!`); };
+    return [
+        wish('❤', 'Full hearts + Bubble', 'All your hearts and a Shield Bubble', () => { state.playerHp = fullHearts(); state.bubble = true; showToast('❤ All better — and a Shield Bubble!'); }),
+        wish('🌈', 'Rainbow Power', 'The rarest weapon of all', () => { state.power = POWER.RAINBOW; state.powerTier = 3; giveAward('rainbow'); showToast('🌈 RAINBOW POWER!'); }),
+        wish('❄', 'Super Ice', 'Beats Fire Monsters, freezes things', weapon(POWER.ICE)),
+        wish('🔥', 'Super Fire', 'Beats Ghosts, Spiders & Zombies', weapon(POWER.BRIMSTONE)),
+        wish('⚡', 'Super Lightning', 'Beats Bats and jumps between monsters', weapon(POWER.LIGHTNING)),
+        wish('💧', 'Super Water', 'Beats Slimes, Moles & Robots', weapon(POWER.WATER)),
+        wish('🐾', 'A New Pet', 'A pet you don\'t have yet', petWish),
+        wish('🧱', 'Stack of Blocks', '+16 of every block to build with', () => { for (const b of HOTBAR) state.inv[b] = invCount(b) + 16; showToast('🧱 +16 of every block!'); }),
+    ];
+}
+
+// Sky, light rays and the pearly gates (under everything else)
+function drawHeavenBack() {
+    const t = Date.now() / 1000;
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    for (let k = 0; k < 7; k++) {   // soft rays of light from the gates
+        const a = Math.PI / 2 + (k - 3) * 0.28 + Math.sin(t / 3 + k) * 0.03;
+        ctx.fillStyle = '#FFF6C8';
+        ctx.beginPath(); ctx.moveTo(400, 150); ctx.lineTo(400 + Math.cos(a - 0.06) * 700, 150 + Math.sin(a - 0.06) * 700); ctx.lineTo(400 + Math.cos(a + 0.06) * 700, 150 + Math.sin(a + 0.06) * 700); ctx.fill();
+    }
+    ctx.restore();
+    // Pearly gates
+    ctx.save();
+    ctx.shadowColor = '#FFE680'; ctx.shadowBlur = 25;
+    ctx.strokeStyle = '#E8C04A'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(400, 170, 70, Math.PI, 0); ctx.stroke();                              // arch
+    ctx.fillStyle = '#F4F0E8'; ctx.fillRect(322, 160, 14, 60); ctx.fillRect(464, 160, 14, 60);   // pillars
+    ctx.shadowBlur = 0; ctx.lineWidth = 3;
+    for (let k = 0; k < 6; k++) {                                                                 // golden bars
+        const gx = 345 + k * 22;
+        ctx.beginPath(); ctx.moveTo(gx, 128 + Math.abs(k - 2.5) * 6); ctx.lineTo(gx, 215); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.moveTo(338, 170); ctx.lineTo(462, 170); ctx.stroke();
+    ctx.fillStyle = '#E8C04A'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('✨ HEAVEN ✨', 400, 92);
+    ctx.restore();
+}
+
+function drawAngel(x, y, big = false) {
+    const t = Date.now() / 1000, k = big ? 1.2 : 1, flap = Math.sin(t * 6 + x) * 5;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';                                            // wings
+    for (const side of [-1, 1]) {
+        ctx.beginPath(); ctx.moveTo(x + side * 5 * k, y - 6 * k);
+        ctx.quadraticCurveTo(x + side * 26 * k, y - 22 * k - flap, x + side * 22 * k, y + 4 * k);
+        ctx.quadraticCurveTo(x + side * 14 * k, y, x + side * 5 * k, y + 2 * k); ctx.fill();
+    }
+    drawHuman(x, y, k, { shirt: '#FFFFFF', sleeves: '#F4F4FF', pants: '#FFFFFF', shoes: '#F4E8C8', hair: '#F2D060', hairStyle: 'long' });
+    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 10;   // halo
+    ctx.beginPath(); ctx.ellipse(x, y - 27 * k, 7 * k, 2.5 * k, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+}
+
+function drawHeaven() {
+    for (const a of heaven.angels) { drawGroundShadow(a.x, a.y + 30, 10, 3, 0.12); drawAngel(a.x, a.y - 10 + Math.sin(Date.now() / 400 + a.x) * 5); }
+    drawGroundShadow(WISH_ANGEL.x, WISH_ANGEL.y + 20, 12, 4, 0.2);
+    drawAngel(WISH_ANGEL.x, WISH_ANGEL.y, true);
+    ctx.fillStyle = '#7A5A10'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`Angel of Wishes — ${state.heavenWishes} wish${state.heavenWishes === 1 ? '' : 'es'} left`, WISH_ANGEL.x, WISH_ANGEL.y + 34);
+    if (nearWishAngel() && !menu) {
+        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        drawSpeech(WISH_ANGEL, `${verb}: Make a wish! ✨`);
+    }
+    if (!state.buildMode) {
+        ctx.fillStyle = 'rgba(90,70,20,0.75)'; ctx.font = 'bold 12px Arial';
+        ctx.fillText('No monsters up here — it heals you! Press B to build anything with UNLIMITED blocks.', 400, 590);
+    }
 }
 
 let secretRoom   = makeSecretRoom();
@@ -860,6 +996,11 @@ const PORTALS = {
     underground: [
         { x: 740, y: 300, shape: 'circle'   },
         { x: 400, y: 545, shape: 'hexagon'  },
+    ],
+    heaven: [
+        { x: 60,  y: 330, shape: 'circle'   },
+        { x: 740, y: 330, shape: 'star'     },
+        { x: 400, y: 545, shape: 'diamond'  },
     ],
     hell: [
         { x: 740, y: 300, shape: 'star'     },
@@ -964,6 +1105,9 @@ const SFX = {
     splash:   () => { noise(0.25, 0.2, 1800); tone(900, 0.15, 'sine', 0.08, 400); },
     bite:     () => { tone(1200, 0.08, 'square', 0.15); tone(1500, 0.1, 'square', 0.15, null, 0.1); },
     dragonRoar: () => { noise(0.8, 0.35, 400); tone(110, 0.8, 'sawtooth', 0.25, 60); },
+    place:    () => { tone(200, 0.06, 'square', 0.15, 120); noise(0.05, 0.2, 800); },
+    groan:    () => { tone(140, 0.6, 'sawtooth', 0.08, 90); },
+    hiss:     () => noise(0.8, 0.25, 5000),
     whoosh:   () => { noise(0.2, 0.2, 2500); tone(300, 0.2, 'sine', 0.08, 900); },
     boom:     () => { noise(0.6, 0.5, 600); tone(80, 0.5, 'sawtooth', 0.3, 30); },
     magic:    () => [880, 1175, 1568, 2093].forEach((f, i) => tone(f, 0.12, 'sine', 0.12, null, i * 0.05)),
@@ -990,6 +1134,9 @@ const SONGS = {
     secret: { bpm: 100, lead: 'triangle',   // sparkly treasure music
         melody: [84, 88, 91, 88, 96, 0, 91, 0, 86, 89, 93, 89, 98, 0, 93, 0,  84, 88, 91, 96, 95, 91, 88, 0, 86, 91, 95, 98, 96, 0, 0, 0],
         bass:   [48, 0, 55, 0, 52, 0, 55, 0, 50, 0, 57, 0, 53, 0, 57, 0,  48, 0, 55, 0, 52, 0, 55, 0, 55, 0, 50, 0, 48, 0, 0, 0] },
+    heaven: { bpm: 72, lead: 'triangle',   // gentle harp
+        melody: [72, 76, 79, 84, 79, 76, 72, 0, 74, 77, 81, 86, 81, 77, 74, 0,  76, 79, 84, 88, 84, 79, 76, 0, 77, 81, 84, 89, 84, 81, 77, 0],
+        bass:   [48, 0, 0, 0, 55, 0, 0, 0, 50, 0, 0, 0, 57, 0, 0, 0,  52, 0, 0, 0, 55, 0, 0, 0, 53, 0, 0, 0, 57, 0, 0, 0] },
     underground: { bpm: 76, lead: 'sine',   // slow, drippy and echoey
         melody: [64, 0, 0, 67, 0, 0, 71, 0, 69, 0, 0, 0, 67, 0, 64, 0,  62, 0, 0, 64, 0, 0, 67, 0, 66, 0, 0, 0, 0, 0, 0, 0],
         bass:   [40, 0, 0, 0, 0, 0, 0, 0, 43, 0, 0, 0, 0, 0, 0, 0,  38, 0, 0, 0, 0, 0, 0, 0, 35, 0, 0, 0, 0, 0, 0, 0] },
@@ -1058,6 +1205,10 @@ const AWARDS = [
     { id: 'ghostking',   icon: '👻', name: 'Ghostbuster',      desc: 'Beat the Ghost King' },
     { id: 'dragon',      icon: '🐉', name: 'Dragon Slayer',    desc: 'Beat the Cave Dragon' },
     { id: 'shadow',      icon: '👤', name: 'Beat Yourself',    desc: 'Beat Shadow You' },
+    { id: 'heaven',      icon: '😇', name: 'Heavenly',         desc: 'Visit Heaven' },
+    { id: 'builder',     icon: '🧱', name: 'Builder',          desc: 'Place a block' },
+    { id: 'crafter',     icon: '⚒',  name: 'Crafter',          desc: 'Craft something' },
+    { id: 'diamond',     icon: '💎', name: 'DIAMONDS!',        desc: 'Mine a diamond' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -1087,7 +1238,7 @@ function countStat(stat) {
 const SAVE_KEY    = 'lop_save';
 const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'powerTier', 'playerHp', 'coins',
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
-                     'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel'];
+                     'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -1105,7 +1256,7 @@ function clearSave() {
 // Leaving the title screen: carry on from the save if there is one
 function startFromIntro(fresh = false) {
     if (fresh || !savedGame) {
-        if (fresh) clearSave();
+        if (fresh) { clearSave(); worldBlocks = {}; saveWorld(); }
         state.gamePhase = 'playing';
         return;
     }
@@ -1135,7 +1286,295 @@ function addScore(points) {
     }
 }
 
+// ── BLOCKS (Minecraft-style building & mining, in every room) ──
+const CELL = 24;   // one block is 24×24
+const BLOCKS = {
+    grass:      { name: 'Grass',       hits: 2, drop: 'dirt'    },
+    dirt:       { name: 'Dirt',        hits: 2, drop: 'dirt'    },
+    stone:      { name: 'Stone',       hits: 4, drop: 'stone'   },
+    log:        { name: 'Wood Log',    hits: 3, drop: 'log'     },
+    leaves:     { name: 'Leaves',      hits: 1, drop: 'leaves'  },
+    planks:     { name: 'Planks',      hits: 3, drop: 'planks'  },
+    brick:      { name: 'Bricks',      hits: 4, drop: 'brick'   },
+    glass:      { name: 'Glass',       hits: 1, drop: 'glass'   },
+    gold:       { name: 'Gold Block',  hits: 4, drop: 'gold'    },
+    cloud:      { name: 'Cloud',       hits: 1, drop: 'cloud'   },
+    tnt:        { name: 'TNT',         hits: 1, drop: 'tnt'     },
+    netherrack: { name: 'Netherrack',  hits: 2, drop: 'stone'   },
+    ironOre:    { name: 'Iron Ore',    hits: 5, drop: 'iron'    },
+    goldOre:    { name: 'Gold Ore',    hits: 5, drop: 'gold'    },
+    diamondOre: { name: 'Diamond Ore', hits: 6, drop: 'diamond' },
+};
+const HOTBAR = ['dirt', 'grass', 'stone', 'log', 'planks', 'brick', 'glass', 'leaves', 'gold', 'cloud', 'tnt'];   // blocks you can place
+const MATERIALS = { iron: '⛓ Iron', diamond: '💎 Diamond' };
+const BUILD_REACH   = 170;    // how far away you can click to build
+const TNT_FUSE      = 90;
+const SAVED_WORLDS  = ['void', 'hell', 'paradise', 'heaven'];   // rooms whose blocks are remembered
+
+let worldBlocks = {};   // room → { "cx,cy": { type, hits } }
+let litTnt = [];        // { room, cx, cy, t }
+try { worldBlocks = JSON.parse(localStorage.getItem('lop_world')) || {}; } catch (e) {}
+let worldDirty = false;
+
+function saveWorld() {
+    const keep = {};
+    for (const r of SAVED_WORLDS) if (worldBlocks[r]) keep[r] = worldBlocks[r];
+    try { localStorage.setItem('lop_world', JSON.stringify(keep)); } catch (e) {}
+    worldDirty = false;
+}
+
+function cellKey(cx, cy) { return cx + ',' + cy; }
+function roomBlocks(room = state.room) {
+    if (!worldBlocks[room]) worldBlocks[room] = makeWorldBlocks(room);
+    return worldBlocks[room];
+}
+function blockAtCell(cx, cy) { return roomBlocks()[cellKey(cx, cy)]; }
+function solidAt(x, y) { return !!blockAtCell(Math.floor(x / CELL), Math.floor(y / CELL)); }
+
+// Your body touches a block? (feet-and-body box, a bit smaller than you look)
+function playerHitsBlock(px, py) {
+    for (const [ox, oy] of [[-8, -6], [8, -6], [-8, 16], [8, 16], [0, 5]]) if (solidAt(px + ox, py + oy)) return true;
+    return false;
+}
+
+// The starting blocks in each room: trees in Paradise, ores in Hell and the Underground
+function makeWorldBlocks(room) {
+    const b = {};
+    const put = (cx, cy, type) => { b[cellKey(cx, cy)] = { type, hits: 0 }; };
+    const R = Math.random;
+    const clear = (x, y) => (PORTALS[room] || []).every(p => Math.hypot(p.x - x, p.y - y) > PORTAL_R + 30)
+        && Math.hypot(x - 100, y - 300) > 70 && Math.hypot(x - 400, y - 300) > 70;
+    if (room === 'paradise') {
+        for (const [tx, ty] of [[13, 15], [29, 16]]) {   // block trees: a log with leaves all around
+            for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) put(tx + dx, ty + dy, dx || dy ? 'leaves' : 'log');
+            put(tx, ty + 2, 'log');                      // the trunk you can reach
+        }
+        put(22, 19, 'stone'); put(23, 19, 'stone'); put(22, 20, 'stone');
+    } else if (room === 'hell') {
+        let n = 0;
+        while (n < 26) {
+            const cx = Math.floor(R() * 33), cy = 3 + Math.floor(R() * 22), x = cx * CELL + 12, y = cy * CELL + 12;
+            if (!clear(x, y) || inAnyCave(x, y, 10) || b[cellKey(cx, cy)]) continue;
+            put(cx, cy, n < 4 ? 'goldOre' : 'netherrack'); n++;
+        }
+    } else if (room === 'underground') {
+        let n = 0;
+        while (n < 44) {
+            const cx = Math.floor(R() * 33), cy = 3 + Math.floor(R() * 22), x = cx * CELL + 12, y = cy * CELL + 12;
+            if (!clear(x, y) || b[cellKey(cx, cy)] || Math.abs(x - 640) < 70) continue;   // leave the dragon room open
+            if ([[180, 130], [620, 140], [560, 470]].some(([gx, gy]) => Math.hypot(gx - x, gy - y) < 44)) continue;   // not on the gems
+            put(cx, cy, n < 8 ? 'ironOre' : n < 12 ? 'diamondOre' : 'stone'); n++;
+        }
+    }
+    return b;
+}
+
+function isCreative() { return state.room === ROOM.HEAVEN; }   // unlimited blocks in Heaven!
+function invCount(type) { return state.inv[type] || 0; }
+
+// Is it OK to put a block here? (not on you, portals, people, doors, chests or dig spots)
+function canPlaceAt(cx, cy) {
+    const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
+    if (x < 0 || x > 800 || y < 56 || y > 600) return false;
+    if (Math.abs(x - player.x) < CELL / 2 + 8 && y + CELL / 2 > player.y - 6 && y - CELL / 2 < player.y + 16) return false;   // not on top of you
+    for (const p of PORTALS[state.room] || []) if (Math.hypot(p.x - x, p.y - y) < PORTAL_R + 16) return false;
+    if (goldenPortal && Math.hypot(goldenPortal.x - x, goldenPortal.y - y) < PORTAL_R + 16) return false;
+    if (state.room === ROOM.PARADISE) {
+        for (const n of townNpcs()) if (Math.hypot(n.x - x, n.y - y) < 28) return false;
+        for (const c of paradise.chests) if (Math.hypot(c.x - x, c.y - y) < 30) return false;
+        if (Math.hypot(CRAFTING_TABLE.x - x, CRAFTING_TABLE.y - y) < 30) return false;
+    }
+    if (state.room === ROOM.HELL) for (const d of hell.digSpots) if (Math.hypot(d.x - x, d.y - y) < 30) return false;
+    if (state.room === ROOM.HEAVEN && Math.hypot(WISH_ANGEL.x - x, WISH_ANGEL.y - y) < 34) return false;
+    return true;
+}
+
+// The block you're aiming at: one step in front of you
+function buildTargetCell() {
+    return { cx: Math.floor((player.x + state.faceX * 30) / CELL), cy: Math.floor((player.y + 5 + state.faceY * 30) / CELL) };
+}
+
+// Hit the block there (mine it), or place your block if it's empty
+function buildAt(cx, cy) {
+    const blocks = roomBlocks(), key = cellKey(cx, cy), b = blocks[key];
+    const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
+    state.digAnim = 14;
+    if (b) {
+        b.hits++;
+        const need = state.diamondPickaxe || isCreative() ? 1 : BLOCKS[b.type].hits;
+        spawnParticles(x, y, blockColor(b.type), 4);
+        sfx('dig');
+        if (b.hits < need) return;
+        delete blocks[key];
+        worldDirty = true;
+        const drop = BLOCKS[b.type].drop;
+        if (!isCreative() && drop) {
+            state.inv[drop] = invCount(drop) + 1;
+            spawnFloatText(x, y - 10, `+1 ${drop === 'iron' || drop === 'diamond' ? MATERIALS[drop] : BLOCKS[drop].name}`, '#FFFFFF', 50);
+            if (drop === 'diamond') { sfx('found'); giveAward('diamond'); }
+        }
+        if (b.type === 'leaves' && Math.random() < 0.2 && state.playerHp < fullHearts()) {   // an apple fell out!
+            state.playerHp++;
+            spawnFloatText(x, y - 24, '🍎 +1 ❤', '#FF6666', 60);
+        }
+        litTnt = litTnt.filter(t => !(t.room === state.room && t.cx === cx && t.cy === cy));
+        return;
+    }
+    const type = HOTBAR[state.hotbar];
+    if (!canPlaceAt(cx, cy)) { spawnFloatText(x, y, '✖', '#FF8888', 30); return; }
+    if (!isCreative()) {
+        if (invCount(type) <= 0) { showToast(`You don't have any ${BLOCKS[type].name} — mine or craft some!`, '#FF9988', 120); return; }
+        state.inv[type]--;
+    }
+    blocks[key] = { type, hits: 0 };
+    worldDirty = true;
+    sfx('place');
+    if (type === 'tnt') { litTnt.push({ room: state.room, cx, cy, t: TNT_FUSE }); sfx('hiss'); }
+    giveAward('builder');
+}
+
+// TNT and creepers blow up nearby blocks
+function blastBlocks(x, y, radius) {
+    const blocks = roomBlocks(), ccx = Math.floor(x / CELL), ccy = Math.floor(y / CELL);
+    for (let dx = -radius; dx <= radius; dx++) for (let dy = -radius; dy <= radius; dy++) {
+        if (dx * dx + dy * dy > radius * radius) continue;
+        const k = cellKey(ccx + dx, ccy + dy), b = blocks[k];
+        if (!b) continue;
+        if (b.type === 'tnt' && !litTnt.some(t => t.cx === ccx + dx && t.cy === ccy + dy)) {
+            litTnt.push({ room: state.room, cx: ccx + dx, cy: ccy + dy, t: 12 });   // chain reaction!
+            continue;
+        }
+        if (b.type !== 'tnt') delete blocks[k];
+    }
+    worldDirty = true;
+}
+
+function updateBlocks() {
+    for (let i = litTnt.length - 1; i >= 0; i--) {
+        const t = litTnt[i];
+        if (t.room !== state.room) continue;
+        if (--t.t > 0) continue;
+        litTnt.splice(i, 1);
+        const blocks = roomBlocks();
+        delete blocks[cellKey(t.cx, t.cy)];
+        const x = t.cx * CELL + CELL / 2, y = t.cy * CELL + CELL / 2;
+        blastBlocks(x, y, 2);
+        for (const e of targetableEnemies()) if (Math.hypot(e.x - x, e.y - y) < 85) damageEnemy(e, POWER.NONE, false, 2);
+        for (let k = 0; k < 3; k++) spawnParticles(x, y, ['#FFEE66', '#FF7700', '#555555'][k], 18);
+        triggerShake(20);
+        sfx('boom');
+    }
+}
+
+// ── Block pictures (tiny pixel-art, made once and reused) ──
+const blockArt = {};
+function blockColor(type) {
+    return { grass: '#5DA84A', dirt: '#8A5A34', stone: '#8A8A8A', log: '#7A5230', leaves: '#3F8F2F', planks: '#B88A50', brick: '#A0442E',
+             glass: '#BFE8FF', gold: '#F2C82E', cloud: '#FFFFFF', tnt: '#D23A2A', netherrack: '#7A2A26', ironOre: '#8A8A8A',
+             goldOre: '#7A2A26', diamondOre: '#8A8A8A' }[type];
+}
+function blockCanvas(type) {
+    if (blockArt[type]) return blockArt[type];
+    const c = document.createElement('canvas');
+    c.width = CELL; c.height = CELL;
+    const g = c.getContext('2d');
+    const R = seededRandom(type.length * 131 + type.charCodeAt(0));
+    const px = 3;   // chunky Minecraft pixels
+    const shade = (hex, amt) => {
+        const n = parseInt(hex.slice(1), 16);
+        const f = v => Math.max(0, Math.min(255, Math.round(v + amt)));
+        return `rgb(${f(n >> 16)},${f((n >> 8) & 255)},${f(n & 255)})`;
+    };
+    const base = blockColor(type);
+    for (let yy = 0; yy < CELL; yy += px) for (let xx = 0; xx < CELL; xx += px) {
+        g.fillStyle = shade(base, (R() - 0.5) * 40);
+        g.fillRect(xx, yy, px, px);
+    }
+    const spots = (col, n) => { for (let i = 0; i < n; i++) { g.fillStyle = col; g.fillRect(Math.floor(R() * 7) * px, Math.floor(R() * 7) * px, px * 2, px); } };
+    if (type === 'grass') { g.fillStyle = '#4A8F3A'; for (let i = 0; i < 10; i++) g.fillRect(Math.floor(R() * 8) * px, Math.floor(R() * 8) * px, px, px * 2); }
+    if (type === 'log')   { g.fillStyle = '#5A3A1E'; for (let xx = 2; xx < CELL; xx += 6) g.fillRect(xx, 0, 2, CELL); g.fillStyle = '#C8A070'; g.fillRect(8, 8, 8, 8); g.fillStyle = '#9A7040'; g.fillRect(10, 10, 4, 4); }
+    if (type === 'planks'){ g.fillStyle = '#8A6030'; for (let yy = 5; yy < CELL; yy += 6) g.fillRect(0, yy, CELL, 1); g.fillRect(11, 0, 1, 6); g.fillRect(4, 6, 1, 6); g.fillRect(16, 12, 1, 6); }
+    if (type === 'brick') { g.fillStyle = '#D8D0C0'; for (let yy = 5; yy < CELL; yy += 6) g.fillRect(0, yy, CELL, 1); for (let yy = 0; yy < CELL; yy += 6) for (let xx = (yy / 6) % 2 ? 6 : 0; xx < CELL; xx += 12) g.fillRect(xx, yy, 1, 6); }
+    if (type === 'glass') { g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillRect(0, 0, CELL, 2); g.fillRect(0, 0, 2, CELL); g.fillRect(5, 5, 2, 7); g.fillRect(8, 5, 2, 3); }
+    if (type === 'gold')  { g.fillStyle = '#FFF0A0'; g.fillRect(3, 3, 6, 3); g.fillStyle = '#C89A10'; g.fillRect(0, CELL - 3, CELL, 3); }
+    if (type === 'cloud') { g.fillStyle = '#E8F4FF'; g.fillRect(0, CELL - 4, CELL, 4); }
+    if (type === 'leaves'){ g.fillStyle = 'rgba(0,40,0,0.5)'; for (let i = 0; i < 8; i++) g.fillRect(Math.floor(R() * 8) * px, Math.floor(R() * 8) * px, px, px); }
+    if (type === 'tnt')   { g.fillStyle = '#F2F2F2'; g.fillRect(0, 8, CELL, 8); g.fillStyle = '#222'; g.font = 'bold 8px Arial'; g.textAlign = 'center'; g.fillText('TNT', CELL / 2, 15); }
+    if (type === 'ironOre')    spots('#D8B890', 6);
+    if (type === 'goldOre')    spots('#FFD84A', 6);
+    if (type === 'diamondOre') spots('#5AF0F0', 6);
+    g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 1; g.strokeRect(0.5, 0.5, CELL - 1, CELL - 1);
+    blockArt[type] = c;
+    return c;
+}
+
+function drawBlocks() {
+    const blocks = roomBlocks();
+    for (const key in blocks) {
+        const [cx, cy] = key.split(',').map(Number), b = blocks[key];
+        const x = cx * CELL, y = cy * CELL;
+        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x + 3, y + 3, CELL, CELL);   // little shadow
+        ctx.drawImage(blockCanvas(b.type), x, y);
+        if (b.hits > 0) {   // cracks as you mine it
+            ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.moveTo(x + 4, y + 5); ctx.lineTo(x + 11, y + 12); ctx.lineTo(x + 9, y + 19);
+            if (b.hits > 1) { ctx.moveTo(x + 11, y + 12); ctx.lineTo(x + 19, y + 9); }
+            if (b.hits > 2) { ctx.moveTo(x + 11, y + 12); ctx.lineTo(x + 18, y + 20); }
+            ctx.stroke();
+        }
+    }
+    for (const t of litTnt) {   // lit TNT flashes white
+        if (t.room !== state.room || Math.floor(t.t / 6) % 2) continue;
+        ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(t.cx * CELL, t.cy * CELL, CELL, CELL);
+    }
+    if (state.buildMode && state.gamePhase === 'playing') {   // which block you're aiming at
+        const { cx, cy } = buildTargetCell();
+        ctx.strokeStyle = blockAtCell(cx, cy) ? '#FFFFFF' : canPlaceAt(cx, cy) ? '#FFE066' : '#FF6666';
+        ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+        ctx.strokeRect(cx * CELL + 1, cy * CELL + 1, CELL - 2, CELL - 2);
+        ctx.setLineDash([]);
+    }
+}
+
+// Minecraft-style hotbar along the bottom while building
+function drawHotbar() {
+    if (!state.buildMode) return;
+    const n = HOTBAR.length, W = 34, x0 = 400 - (n * W) / 2, y0 = 548;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(x0 - 6, y0 - 26, n * W + 12, W + 32);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap BUILD' : 'SPACE / click';
+    const cyc  = lastInput === 'pad' ? 'B' : lastInput === 'touch' ? '🔄' : 'Q or 1-9';
+    ctx.fillText(`🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${verb}: place / mine   ${cyc}: pick block`, 400, y0 - 12);
+    HOTBAR.forEach((type, i) => {
+        const x = x0 + i * W, count = invCount(type);
+        ctx.fillStyle = i === state.hotbar ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.08)';
+        ctx.fillRect(x, y0, W - 2, W - 2);
+        ctx.globalAlpha = isCreative() || count > 0 ? 1 : 0.3;
+        ctx.drawImage(blockCanvas(type), x + 4, y0 + 4, W - 10, W - 10);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = i === state.hotbar ? '#FFFFFF' : '#555'; ctx.lineWidth = i === state.hotbar ? 2.5 : 1;
+        ctx.strokeRect(x, y0, W - 2, W - 2);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'right';
+        ctx.fillText(isCreative() ? '∞' : String(count), x + W - 5, y0 + W - 5);
+    });
+    const mats = Object.keys(MATERIALS).filter(m => invCount(m) > 0).map(m => `${MATERIALS[m]} ${invCount(m)}`).join('   ');
+    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = '10px Arial';
+    ctx.fillText(`${BLOCKS[HOTBAR[state.hotbar]].name}${mats ? '   ·   ' + mats : ''}${state.diamondPickaxe ? '   ·   ⛏ Diamond Pickaxe' : ''}`, 400, y0 + W + 6);
+    ctx.restore();
+}
+
+function toggleBuild() {
+    if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return;
+    state.buildMode = !state.buildMode;
+    showToast(state.buildMode ? '🧱 Build mode ON — mine and place blocks!' : '⚔ Build mode OFF — back to fighting!', '#FFE066', 110);
+}
+function nextBlock(step = 1) { state.hotbar = (state.hotbar + step + HOTBAR.length) % HOTBAR.length; }
+
 // ── HELPERS ───────────────────────────────────────────────────
+// Your most hearts: the level's hearts plus any armor you've crafted
+function fullHearts() { return LEVEL_CONFIGS[state.level - 1].playerMaxHp + (state.armor || 0); }
+
 function triggerShake(amount = 12) { state.screenShake = amount; }
 
 function spawnParticles(x, y, color, count = 8) {
@@ -1233,7 +1672,7 @@ function damagePlayer() {
 }
 
 function respawnPlayer() {
-    const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+    const maxHp = fullHearts();
     state.power           = POWER.NONE;
     state.powerTier       = 1;
     state.playerHp        = maxHp;
@@ -1257,6 +1696,7 @@ function resetGame() {
         job: null, housesOwned: {}, ammoBonus: 0,
         ownedPets: PETS.map(() => false), activePet: -1,
         ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
+        buildMode: false, hotbar: 0, inv: {}, armor: 0, diamondPickaxe: false,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -1285,7 +1725,7 @@ function advanceLevel() {
     Object.assign(state, {
         room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE, powerTier: 1,
         won: false, levelComplete: false, screenShake: 0, playerFlash: 0,
-        gamePhase: 'playing', playerHp: cfg.playerMaxHp, playerInvincible: 0,
+        gamePhase: 'playing', playerHp: cfg.playerMaxHp + state.armor, playerInvincible: 0,
         confettiSpawned: false, paradiseClearCount: 0, voidHealTimer: 0,
         ammo: cfg.ammoMax + state.ammoBonus, ammoMax: cfg.ammoMax + state.ammoBonus, ammoReloading: false, ammoReloadTimer: 0,
         caveTimer: 0, caveProtectionExpired: false,
@@ -1347,6 +1787,9 @@ function changeRoom(dest) {
     state.awardsOpen = false;
     menu = null;
     gadgetObjs = [];
+    if (dest === ROOM.UNDERGROUND) worldBlocks.underground = makeWorldBlocks('underground');   // a fresh cave every time
+    if (dest === ROOM.SECRET)      worldBlocks.secret = {};
+    if (worldDirty) saveWorld();
     projectiles      = [];
     enemyProjectiles = [];
     heartPickups     = [];
@@ -1370,6 +1813,7 @@ function changeRoom(dest) {
     }
     if (dest === ROOM.SECRET)      { player.x = 400; player.y = 420; secretRoom = makeSecretRoom(); giveAward('secret'); }
     if (dest === ROOM.UNDERGROUND) { player.x = 100; player.y = 300; underground = makeUnderground(); giveAward('underground'); }
+    if (dest === ROOM.HEAVEN)      { player.x = 400; player.y = 330; heaven = makeHeaven(); giveAward('heaven'); }
     if (state.gamePhase === 'playing') saveGame();
     goldenPortal = MAIN_ROOMS.includes(dest) && Math.random() < SECRET_PORTAL_CHANCE
         ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
@@ -1406,8 +1850,11 @@ function updatePlayer() {
         particles.push({ x: player.x, y: player.y, dx: 0, dy: 0, life: 12, maxLife: 12, color: 'rgba(255,255,255,0.6)', r: 12 });
     }
 
-    player.x = Math.max(18, Math.min(canvas.width  - 18, player.x + dx));
-    player.y = Math.max(52, Math.min(canvas.height - 18, player.y + dy));
+    // Move, but blocks are solid (try each direction separately so you slide along walls)
+    const nx = Math.max(18, Math.min(canvas.width  - 18, player.x + dx));
+    const ny = Math.max(52, Math.min(canvas.height - 18, player.y + dy));
+    if (!playerHitsBlock(nx, player.y)) player.x = nx;
+    if (!playerHitsBlock(player.x, ny)) player.y = ny;
 
     for (const p of PORTALS[state.room]) {
         if (Math.hypot(player.x - p.x, player.y - p.y) < PORTAL_R * 0.75) {
@@ -1586,6 +2033,16 @@ function updateDevilMinions() {
     if (Date.now() - lastDevilLaugh > 3000) { lastDevilLaugh = Date.now(); sfx('laugh'); }
 }
 
+// A creeper explodes: hurts you if you're close and blows up blocks
+function creeperBoom(e) {
+    e.alive = false;
+    for (let k = 0; k < 3; k++) spawnParticles(e.x, e.y, ['#FFFFFF', '#888888', '#4CAF50'][k], 16);
+    triggerShake(20);
+    sfx('boom');
+    blastBlocks(e.x, e.y, 2);
+    if (Math.hypot(player.x - e.x, player.y - e.y) < 75) damagePlayer();
+}
+
 // Moves every bad guy in the room and hurts the player on touch
 function updateRoomEnemies() {
     for (const e of roomEnemies()) {
@@ -1599,7 +2056,7 @@ function updateRoomEnemies() {
         if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
         if (e.frog) { moveFrog(e); continue; }   // frogs are harmless
         moveEnemy(e);
-        if ((!e.hidden || e.type === 'ghostking') && state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
+        if ((!e.hidden || e.type === 'ghostking') && e.type !== 'creeper' && state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
             Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
             damagePlayer();
         }
@@ -1622,6 +2079,26 @@ function moveFrog(e) {
 }
 
 function moveEnemy(e) {
+    if (e.type === 'zombie') {   // shuffles slowly toward you… "Uuurgh…"
+        const a = Math.atan2(player.y - e.y, player.x - e.x);
+        e.x += Math.cos(a) * 0.75; e.y += Math.sin(a) * 0.75;
+        e.walk = (e.walk || 0) + 0.12;
+        if (Math.random() < 0.003) sfx('groan');
+        return;
+    }
+    if (e.type === 'creeper') {
+        const d = Math.hypot(player.x - e.x, player.y - e.y);
+        if (e.fuse > 0) {   // hissing!
+            if (d > 110) { e.fuse = 0; return; }   // you got away
+            if (--e.fuse <= 0) creeperBoom(e);
+            return;
+        }
+        if (d < 42) { e.fuse = CREEPER_FUSE; sfx('hiss'); return; }
+        const a = Math.atan2(player.y - e.y, player.x - e.x);
+        e.x += Math.cos(a) * 1.1; e.y += Math.sin(a) * 1.1;
+        e.walk = (e.walk || 0) + 0.2;
+        return;
+    }
     if (e.type === 'spider') {
         if (e.hidden) {   // waiting on the ceiling…
             if (--e.dropTimer <= 0) { e.hidden = false; e.dropping = true; e.x = Math.max(60, Math.min(740, player.x + (Math.random() - 0.5) * 120)); sfx('whoosh'); }
@@ -2035,7 +2512,7 @@ function tryMine() {
     spawnParticles(gem.x, gem.y, gem.color, 5);
     if (gem.hits >= GEM_HITS) {
         gem.mined = true;
-        const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+        const maxHp = fullHearts();
         if (state.playerHp < maxHp) state.playerHp++;
         addScore(50);
         spawnFloatText(gem.x, gem.y - 26, '💎 +50  +1 ❤', gem.color, 90);
@@ -2160,7 +2637,7 @@ function updatePet() {
 
     // The Owl heals you now and then
     if (info.id === 'owl') {
-        const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+        const maxHp = fullHearts();
         if (state.playerHp < maxHp && ++pet.healTimer >= OWL_HEAL_FRAMES) {
             pet.healTimer = 0;
             state.playerHp++;
@@ -2222,6 +2699,7 @@ function updateDanceAndFart() {
 
 // ── GADGETS & DASH ────────────────────────────────────────────
 const VGADGET = { x: 600, y: 540, r: 22 };   // touch buttons
+const VBUILD  = { x: 530, y: 560, r: 20 };
 const VDASH   = { x: 700, y: 385, r: 20 };
 let gadgetObjs = [];   // boomerangs, bombs and tornadoes flying about
 
@@ -2433,6 +2911,40 @@ function drawRainbowArc() {
     ctx.restore();
 }
 
+// Crafting recipes: turn what you've mined into new things
+function craftItems() {
+    const has = (need) => Object.entries(need).every(([k, v]) => invCount(k) >= v);
+    const take = (need) => { for (const [k, v] of Object.entries(need)) state.inv[k] -= v; };
+    const needText = (need) => Object.entries(need).map(([k, v]) => `${v} ${MATERIALS[k] || BLOCKS[k].name}`).join(' + ');
+    const recipe = (icon, name, need, give, doneIf, extraDesc) => ({
+        icon, name, desc: `${needText(need)}${extraDesc ? ' — ' + extraDesc : ''}`,
+        cost: 0, status: doneIf && doneIf() ? 'DONE' : has(need) ? 'CRAFT!' : null,
+        action: () => {
+            if (doneIf && doneIf()) return;
+            if (!has(need)) { showToast(`You need ${needText(need)}`, '#FF9988', 120); sfx('hurt'); return; }
+            take(need); give(); sfx('found');
+            giveAward('crafter');
+        },
+    });
+    const add = (k, n) => () => { state.inv[k] = invCount(k) + n; showToast(`⚒ Crafted ${n} ${BLOCKS[k].name}!`); };
+    return [
+        recipe('🪵', '4 Planks', { log: 1 }, add('planks', 4)),
+        recipe('🧱', '4 Bricks', { stone: 2 }, add('brick', 4)),
+        recipe('🪟', '2 Glass', { stone: 1, leaves: 1 }, add('glass', 2)),
+        recipe('💥', '2 TNT', { stone: 2, log: 1 }, add('tnt', 2)),
+        recipe('⛏', 'Diamond Pickaxe', { diamond: 3, log: 2 }, () => { state.diamondPickaxe = true; showToast('⛏ DIAMOND PICKAXE — mine anything in one hit!'); },
+               () => state.diamondPickaxe, 'mine in 1 hit'),
+        recipe('🗡', 'Diamond Sword', { diamond: 2, log: 1 }, () => { state.weaponLevel = Math.min(3, state.weaponLevel + 1); showToast(`🗡 Weapon Level ${state.weaponLevel}!`); },
+               () => state.weaponLevel >= 3, '+1 weapon level'),
+        recipe('🛡', 'Iron Armor', { iron: 5 }, () => { state.armor = Math.max(state.armor, 1); state.playerHp++; showToast('🛡 IRON ARMOR — +1 heart!'); },
+               () => state.armor >= 1, '+1 heart'),
+        recipe('💠', 'Diamond Armor', { diamond: 5 }, () => { const was = state.armor; state.armor = 2; state.playerHp += 2 - was; showToast('💠 DIAMOND ARMOR — +2 hearts!'); },
+               () => state.armor >= 2, '+2 hearts'),
+        recipe('🟫', 'Blocky Outfit', { planks: 3, dirt: 2 }, () => { state.unlockedSkins[8] = true; state.activeSkin = 8; showToast('🟫 You look BLOCKY now!'); },
+               () => state.unlockedSkins[8], 'a Minecraft look'),
+    ];
+}
+
 // What the Blacksmith sells
 function forgeItems() {
     const items = [];
@@ -2476,14 +2988,14 @@ function drawMenu() {
         ctx.fillRect(r.x, r.y, r.w, r.h);
         ctx.strokeStyle = cursor ? '#FFFFFF' : it.status ? '#C8A040' : '#444'; ctx.lineWidth = cursor ? 2.5 : 1;
         ctx.strokeRect(r.x, r.y, r.w, r.h);
-        ctx.font = '26px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(it.icon, r.x + 30, r.y + 46);
+        ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
+        ctx.fillText(it.icon, r.x + 28, r.y + 40);
         ctx.textAlign = 'left';
-        ctx.fillStyle = '#FFE8B0'; ctx.font = 'bold 13px Arial'; ctx.fillText(it.name, r.x + 58, r.y + 24);
-        ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.font = '10px Arial'; ctx.fillText(it.desc, r.x + 58, r.y + 42);
+        ctx.fillStyle = '#FFE8B0'; ctx.font = 'bold 13px Arial'; ctx.fillText(it.name, r.x + 56, r.y + 20);
+        ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.font = '10px Arial'; ctx.fillText(it.desc, r.x + 56, r.y + 36);
         ctx.font = 'bold 11px Arial';
         ctx.fillStyle = it.status ? '#FFD700' : state.coins >= (it.cost || 0) ? '#FFD700' : '#886';
-        ctx.fillText(it.status ? '✓ ' + it.status : `🪙${it.cost}`, r.x + 58, r.y + 62);
+        ctx.fillText(it.status ? '✓ ' + it.status : it.cost ? `🪙${it.cost}` : 'Need more…', r.x + 56, r.y + 53);
     });
     ctx.restore();
 }
@@ -2494,7 +3006,7 @@ function houseDoors() {
 }
 
 function townNpcs() {
-    return [...WORKERS, ...paradise.villagers, ...houseDoors()];
+    return [...WORKERS, ...paradise.villagers, ...houseDoors(), CRAFTING_TABLE];
 }
 
 function personName(id) {
@@ -2556,9 +3068,10 @@ function startJob(job) {
 
 // What pressing the button will do, shown above the townsperson
 function talkLabel(n) {
-    const job = state.job, maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+    const job = state.job, maxHp = fullHearts();
     if (job && job.kind === 'deliver' && job.stops[0] === n.id) return `Deliver ${job.item}`;
     if (n.door)            return state.housesOwned[n.id] ? 'Rest (free heal)' : `Buy ${n.name} (🪙${n.cost})`;
+    if (n.table)           return 'Craft things ⚒';
     if (n.id === 'doctor') return state.playerHp < maxHp ? `Heal (🪙${HEAL_COST})` : 'Talk';
     if (n.id === 'smith')  return 'Open the Forge 🔨';
     if (WORKERS.some(w => w.id === n.id && w.giver)) {
@@ -2584,7 +3097,7 @@ function payJob(n) {
 }
 
 function talkTo(n) {
-    const job = state.job, maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+    const job = state.job, maxHp = fullHearts();
     if (job && job.kind === 'deliver' && job.stops[0] === n.id) {
         job.stops.shift();
         if (job.stops.length === 0) { payJob(n); return; }
@@ -2595,6 +3108,7 @@ function talkTo(n) {
     }
     const giver = WORKERS.find(w => w.id === n.id && w.giver);
 
+    if (n.table) { openMenu('⚒ CRAFTING TABLE', craftItems); return; }
     if (n.door) {
         const b = BUILDINGS.find(b => b.id === n.id);
         if (state.housesOwned[n.id]) {
@@ -2646,6 +3160,7 @@ function talkTo(n) {
 // Returns true if the player talked to someone (so the button doesn't also shoot)
 function tryTalk() {
     if (state.gamePhase !== 'playing' || state.won || state.levelComplete) return false;
+    if (nearWishAngel()) { openMenu(`✨ MAKE A WISH — ${state.heavenWishes} left`, wishItems); return true; }
     const n = nearbyNpc();
     if (!n) return false;
     talkTo(n);
@@ -2768,7 +3283,7 @@ function checkPickups() {
         for (const tr of secretRoom.treasures) {
             if (tr.picked || Math.hypot(player.x - tr.x, player.y - tr.y) > 26) continue;
             tr.picked = true;
-            const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+            const maxHp = fullHearts();
             let text;
             if (tr.kind === 'rainbow') {
                 state.power = POWER.RAINBOW; state.powerTier = 3;
@@ -2799,7 +3314,7 @@ function checkPickups() {
         const h = heartPickups[i];
         if (Math.hypot(player.x - h.x, player.y - h.y) > 22) continue;
         heartPickups.splice(i, 1);
-        const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+        const maxHp = fullHearts();
         if (state.playerHp < maxHp) { state.playerHp++; spawnFloatText(player.x, player.y - 28, '+1 ❤', '#FF6688'); }
         else                        { addScore(10);     spawnFloatText(player.x, player.y - 28, '+10',   '#FFFFFF'); }
         spawnParticles(h.x, h.y, '#FF6688', 8);
@@ -2864,13 +3379,13 @@ function collectCoin() {
 
 // ── UPDATE: VOID HEALING ──────────────────────────────────────
 function updateVoidHealing() {
-    const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
-    if (state.room !== ROOM.VOID || state.playerHp >= maxHp) {
+    const maxHp = fullHearts();
+    if ((state.room !== ROOM.VOID && state.room !== ROOM.HEAVEN) || state.playerHp >= maxHp) {
         state.voidHealTimer = 0;
         return;
     }
     state.voidHealTimer++;
-    if (state.voidHealTimer >= 300) {   // 300 frames ≈ 5 seconds at 60 fps
+    if (state.voidHealTimer >= (state.room === ROOM.HEAVEN ? 120 : 300)) {   // Void: 5 s, Heaven: 2 s
         state.playerHp = Math.min(maxHp, state.playerHp + 1);
         state.voidHealTimer = 0;
         state.playerFlash = 25;
@@ -3441,6 +3956,32 @@ function drawEnemy(e, t) {
         ctx.arc(e.x - 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.arc(e.x + 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.fill();
+    } else if (e.type === 'zombie') {
+        drawHuman(e.x, e.y, 1, { shirt: '#2E9A9A', sleeves: '#2E9A9A', pants: '#3A3A8A', shoes: '#333', skin: '#6A9A5A', hands: '#6A9A5A',
+                                 hair: '#2A3A1A', hairStyle: 'short', walk: e.walk, noFace: true });
+        ctx.fillStyle = '#111';   // blank zombie eyes and mouth
+        ctx.fillRect(e.x - 4, e.y - 17, 3, 2); ctx.fillRect(e.x + 1, e.y - 17, 3, 2); ctx.fillRect(e.x - 2, e.y - 12, 4, 1.5);
+        ctx.fillStyle = '#6A9A5A';   // arms stuck out in front
+        ctx.fillRect(e.x - 11, e.y - 5, 5, 3); ctx.fillRect(e.x + 6, e.y - 5, 5, 3);
+    } else if (e.type === 'creeper') {
+        const flash = e.fuse > 0 && Math.floor(e.fuse / 5) % 2 === 0;
+        const swell = e.fuse > 0 ? 1 + (1 - e.fuse / CREEPER_FUSE) * 0.25 : 1;
+        ctx.translate(e.x, e.y); ctx.scale(swell, swell);
+        const step = Math.sin(e.walk || 0) * 2;
+        ctx.fillStyle = flash ? '#FFFFFF' : '#2E7D32';                       // little feet
+        ctx.fillRect(-9, 10 + step, 7, 6); ctx.fillRect(2, 10 - step, 7, 6);
+        ctx.fillStyle = flash ? '#FFFFFF' : '#4CAF50';                       // tall body
+        ctx.fillRect(-8, -8, 16, 20);
+        ctx.fillRect(-9, -24, 18, 17);                                       // square head
+        if (!flash) {
+            for (let k = 0; k < 14; k++) {                                   // blocky camouflage texture
+                ctx.fillStyle = k % 2 ? 'rgba(20,80,20,0.35)' : 'rgba(180,255,180,0.25)';
+                ctx.fillRect(-9 + ((k * 7) % 16), -24 + ((k * 11) % 34), 3, 3);
+            }
+        }
+        ctx.fillStyle = '#111';                                              // the famous sad face
+        ctx.fillRect(-6, -20, 4, 4); ctx.fillRect(2, -20, 4, 4);
+        ctx.fillRect(-2, -16, 4, 4); ctx.fillRect(-4, -13, 8, 4); ctx.fillRect(-4, -10, 2, 2); ctx.fillRect(2, -10, 2, 2);
     } else if (e.type === 'spider') {
         if (e.hidden) { ctx.restore(); return; }
         if (e.dropping || e.y - 50 < 400) {   // silk thread from the ceiling
@@ -3970,8 +4511,19 @@ function drawBuildingStyle(b, x, y, w, h, peak, night) {
 }
 
 // A townsperson or villager, with little walking legs
+function drawCraftingTable() {
+    const { x, y } = CRAFTING_TABLE;
+    drawGroundShadow(x + 3, y + 14, 16, 5);
+    ctx.drawImage(blockCanvas('planks'), x - 12, y - 12);
+    ctx.fillStyle = '#6A4424'; ctx.fillRect(x - 12, y - 12, 24, 5);
+    ctx.fillStyle = '#AAAAAA'; ctx.fillRect(x - 8, y - 4, 7, 2); ctx.fillRect(x - 5, y - 7, 2, 8);   // hammer
+    ctx.fillStyle = '#C8A070'; ctx.fillRect(x + 3, y - 6, 2, 10); ctx.fillStyle = '#888'; ctx.fillRect(x + 1, y - 7, 6, 3);   // saw
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('Crafting Table', x, y + 24);
+}
+
 function drawPerson(n) {
-    if (n.door) return;
+    if (n.door || n.table) return;
     const small = n.small ? 0.8 : 1;
     const walking = n.walk !== undefined && Math.hypot(n.tx - n.x, n.ty - n.y) > 3;
     const bob = walking ? Math.abs(Math.sin(n.walk)) * 2 : Math.sin(Date.now() / 350 + n.x) * 1.2;
@@ -4092,6 +4644,7 @@ function drawParadise() {
         // Townspeople, apples, speech and prompts (everyone hides indoors at night)
         const people = [...WORKERS, ...P.villagers].sort((a, b) => a.y - b.y);
         for (const n of people) drawPerson(n);
+        drawCraftingTable();
         for (const a of P.apples) {
             drawGroundShadow(a.x, a.y + 7, 6, 2);
             ctx.fillStyle = '#E02020';
@@ -4152,6 +4705,7 @@ function drawParadise() {
     ctx.save();
     ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
     ctx.fillStyle = color; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+    if (state.buildMode) ctx.globalAlpha = 0;   // the hotbar is showing instead
     ctx.fillText(status, 400, 544);
     if (state.job) {
         ctx.fillStyle = 'rgba(255,235,160,0.95)'; ctx.font = 'bold 12px Arial';
@@ -4175,13 +4729,25 @@ function seededRandom(seed) {
     };
 }
 
+function paintHeaven(g, R) {
+    const sky = g.createLinearGradient(0, 0, 0, 600);
+    sky.addColorStop(0, '#8FD0FF'); sky.addColorStop(0.55, '#DDF1FF'); sky.addColorStop(1, '#FFFFFF');
+    g.fillStyle = sky; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 70; i++) {   // fluffy cloud floor
+        const x = R() * 800, y = 250 + R() * 360, r = 30 + R() * 60;
+        const c = g.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+        c.addColorStop(0, 'rgba(255,255,255,0.95)'); c.addColorStop(1, 'rgba(230,240,255,0)');
+        g.fillStyle = c; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+}
+
 const bgCache = {};
 function roomBackground(room) {
     if (!bgCache[room]) {
         const c = document.createElement('canvas');
         c.width = 800; c.height = 600;
         if (room === 'void') { c.width = 900; c.height = 700; }   // fog is bigger than the screen so it can drift
-        const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog };
+        const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
@@ -4472,6 +5038,29 @@ function drawUnderground() {
     drawCoins(underground.coins);
 }
 
+// Hiding in a Hell cave: you only see inside the cave — everything outside goes dark
+function drawInsideCave() {
+    const c = HELL_CAVES.find(c => player.x >= c.x && player.x <= c.x + c.w && player.y >= c.y && player.y <= c.y + c.h);
+    if (!c) return;
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, 800, 600);
+    ctx.ellipse(cx, cy, c.w / 2 + 14, c.h / 2 + 14, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.94)';
+    ctx.fill('evenodd');
+    // A warm glow inside the cave
+    const glow = ctx.createRadialGradient(player.x, player.y, 10, player.x, player.y, 120);
+    glow.addColorStop(0, 'rgba(255,170,90,0.12)'); glow.addColorStop(1, 'rgba(255,170,90,0)');
+    ctx.fillStyle = glow; ctx.fillRect(c.x - 20, c.y - 20, c.w + 40, c.h + 40);
+    // How long you can stay hidden
+    const secs = Math.max(0, Math.ceil((CAVE_MAX_FRAMES - state.caveTimer) / 60));
+    ctx.fillStyle = state.caveProtectionExpired ? '#FF7744' : '#FFD08A'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(state.caveProtectionExpired ? '⚠ The Devil found you — get out of the cave!' : `🕳 Hiding in the cave… the Devil can't see you (${secs}s)`,
+                 400, c.y > 300 ? c.y - 24 : c.y + c.h + 34);
+    ctx.restore();
+}
+
 // Dark caves: you can only see near your lantern (drawn on top of the room, under the HUD)
 function drawCaveDarkness() {
     const flicker = Math.sin(Date.now() / 90) * 4;
@@ -4702,6 +5291,21 @@ function drawAvatar(x, y, size, color, style, walk = 0) {
         ctx.beginPath(); ctx.arc(x, hy - 14 * k, 2 * k, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = color; ctx.fillRect(x - 3 * k, y - 5 * k, 6 * k, 4 * k);                           // chest light (glows your power colour)
         ctx.fillStyle = '#555'; for (let i = -1; i <= 1; i++) ctx.fillRect(x + i * 3 * k - 0.8 * k, hy + 3 * k, 1.6 * k, 2.5 * k);
+    } else if (style === 'blocky') {
+        // Minecraft-style: everything is square!
+        ctx.shadowBlur = 0;
+        const step = Math.sin(walk) * 3 * k;
+        ctx.fillStyle = '#3A3AA0'; ctx.fillRect(x - 6 * k, y + 4 * k, 5 * k, 14 * k - Math.max(0, step)); ctx.fillRect(x + 1 * k, y + 4 * k, 5 * k, 14 * k - Math.max(0, -step));
+        ctx.fillStyle = '#3AB0C0'; ctx.fillRect(x - 12 * k, y - 8 * k + step, 5 * k, 12 * k); ctx.fillRect(x + 7 * k, y - 8 * k - step, 5 * k, 12 * k);
+        ctx.fillStyle = '#C8966A'; ctx.fillRect(x - 12 * k, y + 3 * k + step, 5 * k, 3 * k); ctx.fillRect(x + 7 * k, y + 3 * k - step, 5 * k, 3 * k);
+        ctx.fillStyle = '#3AB0C0'; ctx.fillRect(x - 7 * k, y - 8 * k, 14 * k, 13 * k);          // shirt
+        ctx.fillStyle = color; ctx.globalAlpha = 0.35; ctx.fillRect(x - 7 * k, y - 8 * k, 14 * k, 13 * k); ctx.globalAlpha = 1;
+        ctx.fillStyle = '#C8966A'; ctx.fillRect(x - 7 * k, y - 23 * k, 14 * k, 14 * k);         // square head
+        ctx.fillStyle = '#4A2E1A'; ctx.fillRect(x - 7 * k, y - 23 * k, 14 * k, 4 * k); ctx.fillRect(x - 7 * k, y - 19 * k, 2 * k, 3 * k); ctx.fillRect(x + 5 * k, y - 19 * k, 2 * k, 3 * k);
+        ctx.fillStyle = '#FFFFFF'; ctx.fillRect(x - 5 * k, y - 17 * k, 4 * k, 2 * k); ctx.fillRect(x + 1 * k, y - 17 * k, 4 * k, 2 * k);
+        ctx.fillStyle = '#3A3AA0'; ctx.fillRect(x - 3 * k, y - 17 * k, 2 * k, 2 * k); ctx.fillRect(x + 1 * k, y - 17 * k, 2 * k, 2 * k);
+        ctx.fillStyle = '#8A5A3A'; ctx.fillRect(x - 2 * k, y - 14 * k, 4 * k, 2 * k);
+        ctx.fillStyle = '#5A3A2A'; ctx.fillRect(x - 3 * k, y - 12 * k, 6 * k, 1.5 * k);
     } else if (style === 'ninja') {
         drawHuman(x, y, k, { shirt: '#222', sleeves: '#1A1A1A', pants: '#1A1A1A', shoes: '#111', walk, noFace: true });
         ctx.shadowBlur = 0;
@@ -4950,13 +5554,13 @@ function drawHUD() {
     // HP hearts
     ctx.font = '18px Arial'; ctx.textAlign = 'center';
     let hearts = '';
-    const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+    const maxHp = fullHearts();
     for (let i = 0; i < maxHp; i++) hearts += i < state.playerHp ? '❤' : '♡';
     ctx.fillStyle = '#FF4444';
     ctx.fillText(hearts, 400, 20);
 
     // Room name + Level
-    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES' };
+    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES', heaven: '☁ HEAVEN ☁' };
     const cfg    = LEVEL_CONFIGS[state.level - 1];
     const lvlLabel = cfg.isBoss ? `LEVEL ${state.level} — BOSS!` : `LEVEL ${state.level}`;
     ctx.fillStyle = cfg.isBoss ? 'rgba(255,100,50,0.85)' : 'rgba(255,255,255,0.5)';
@@ -5157,7 +5761,7 @@ function drawWin() {
 // ── DRAW: AWARDS ──────────────────────────────────────────────
 function drawAwards() {
     if (!state.awardsOpen) return;
-    const X = 90, Y = 110, W = 620, H = 400;
+    const X = 90, Y = 70, W = 620, H = 470;
     ctx.save();
     ctx.fillStyle = 'rgba(10,5,25,0.97)'; ctx.fillRect(X, Y, W, H);
     ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
@@ -5168,20 +5772,20 @@ function drawAwards() {
     ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
     AWARDS.forEach((a, i) => {
         const col = i % 3, row = Math.floor(i / 3);
-        const x = X + 16 + col * 200, y = Y + 62 + row * 55;
+        const x = X + 16 + col * 200, y = Y + 58 + row * 46;
         const has = awards.got[a.id];
         ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
-        ctx.fillRect(x, y, 188, 49);
-        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 49);
+        ctx.fillRect(x, y, 188, 42);
+        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 42);
         ctx.globalAlpha = has ? 1 : 0.35;
         ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(a.icon, x + 24, y + 33);
+        ctx.fillText(a.icon, x + 24, y + 30);
         ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
         ctx.fillStyle = has ? '#FFE680' : '#888'; ctx.font = 'bold 12px Arial';
-        ctx.fillText(a.name, x + 48, y + 21);
+        ctx.fillText(a.name, x + 48, y + 18);
         ctx.fillStyle = has ? 'rgba(255,255,255,0.75)' : '#666'; ctx.font = '10px Arial';
-        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 48, y + 37);
+        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 48, y + 33);
     });
     ctx.restore();
 }
@@ -5228,7 +5832,7 @@ function drawShop() {
         ctx.restore();
     }
 
-    for (let i = 0; i < AVATAR_COLORS.length; i++) {
+    for (let i = 0; i < SHOP_SKINS; i++) {
         const col = AVATAR_COLORS[i];
         const name = AVATAR_NAMES[i];
         const cost = AVATAR_UNLOCK_COST[i];
@@ -5310,7 +5914,7 @@ function drawControls() {
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
     const hint = lastInput === 'pad'   ? 'Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back'
                : lastInput === 'touch' ? 'Move: joystick  |  Shoot / Dig: button'
-               : 'Move: WASD / Arrows  |  Shoot / Dig: Space  |  Gadget: Q  |  Dash: Shift  |  Shop: E  |  Sound: M';
+               : 'Move: WASD  |  Shoot / Dig: Space  |  Build: B  |  Gadget: Q  |  Dash: Shift  |  Shop: E  |  Sound: M';
     ctx.fillText(hint, 792, 592);
 }
 
@@ -5349,7 +5953,9 @@ function drawVirtualControls() {
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
     const touchBtns = [[VDANCE, '💃'], [VFART, '💨']];
-    if (state.gadget) touchBtns.push([VGADGET, GADGETS.find(g => g.id === state.gadget).icon]);
+    touchBtns.push([VBUILD, state.buildMode ? '⚔' : '🧱']);
+    if (state.buildMode) touchBtns.push([VGADGET, '🔄']);
+    else if (state.gadget) touchBtns.push([VGADGET, GADGETS.find(g => g.id === state.gadget).icon]);
     if (state.hasDash) touchBtns.push([VDASH, '⚡']);
     for (const [b, icon] of touchBtns) {
         ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
@@ -5358,7 +5964,7 @@ function drawVirtualControls() {
         ctx.fillStyle = '#FFF'; ctx.font = '16px Arial'; ctx.fillText(icon, b.x, b.y + 1);
     }
     ctx.font = 'bold 13px Arial';
-    ctx.fillText((nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK'
+    ctx.fillText(state.buildMode ? 'BUILD' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK'
                  : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
@@ -5381,6 +5987,8 @@ function update() {
         updatePet();
         updateDanceAndFart();
         updateGadgets();
+        updateBlocks();
+        updateHeaven();
         updateVoidHealing();
         updateAmmo();
     }
@@ -5395,7 +6003,7 @@ function update() {
         if (state.won) { giveAward('hero'); clearSave(); }
     }
     // Save now and then
-    if (state.gamePhase === 'playing' && !state.won && Date.now() - lastSave > 5000) { lastSave = Date.now(); saveGame(); }
+    if (state.gamePhase === 'playing' && !state.won && Date.now() - lastSave > 5000) { lastSave = Date.now(); saveGame(); if (worldDirty) saveWorld(); }
 }
 let lastSave = 0;
 
@@ -5420,12 +6028,15 @@ function draw() {
     }
 
     if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawParadiseSky();
+    if (!state.won && !state.levelComplete && state.room === ROOM.HEAVEN) drawHeavenBack();
+    if (!state.won && !state.levelComplete) drawBlocks();
     if (!state.won && !state.levelComplete) drawPortals();
     if (state.room === ROOM.VOID)     drawVoid();
     if (state.room === ROOM.HELL)     drawHell();
     if (state.room === ROOM.PARADISE) drawParadise();
     if (state.room === ROOM.SECRET)   drawSecretRoom();
     if (state.room === ROOM.UNDERGROUND) drawUnderground();
+    if (state.room === ROOM.HEAVEN)   drawHeaven();
     drawPlayer();
     drawHeartPickups();
     drawGadgets();
@@ -5436,11 +6047,13 @@ function draw() {
     drawParticles();
     if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawWeather();
     if (state.room === ROOM.UNDERGROUND) drawCaveDarkness();
+    else if (state.room === ROOM.HELL && isPlayerPhysicallyInCave() && !state.won && !state.levelComplete) drawInsideCave();
     else if (!state.won && !state.levelComplete) drawVignette();
     drawFloatTexts();
     drawHUD();
     drawControls();
     drawVirtualControls();
+    drawHotbar();
     drawShop();
     drawAwards();
     drawMenu();
