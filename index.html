@@ -98,7 +98,7 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 
 // ── CONSTANTS ────────────────────────────────────────────────
 const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house',
-                SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space' };
+                SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space', ARENA: 'arena' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -380,6 +380,7 @@ let state = {
     diamondPickaxe:     false,
     heavenWishes:       3,
     placesSeen:         {},
+    treasure:           null,      // { spots, step, hits } while you follow a treasure map
     gotStarterBlocks:   true,
     // Island life
     furniture:          { bed: true },   // what's in your house
@@ -521,7 +522,7 @@ function pressAction() {
     }
     if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
-    else if (!tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction() && !tryMineNearby() && !tryDigGround()) shoot();
+    else if (!tryTreasureDig() && !tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction() && !tryMineNearby() && !tryDigGround()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
@@ -587,6 +588,7 @@ document.addEventListener('keydown', e => {
         return;
     }
     if (e.code === 'KeyB') toggleBuild();
+    if (e.code === 'KeyP') toggleP2();
     if (e.code === 'KeyQ') { if (state.buildMode) nextBlock(); else useGadget(); }
     const hb = /^Digit([1-9])$/.exec(e.code);
     if (hb && state.buildMode && !state.shopOpen) state.hotbar = Math.min(HOTBAR.length - 1, Number(hb[1]) - 1);
@@ -598,7 +600,8 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); shopSelect(state.shopCursor); }
     } else {
         if (e.code === 'Space') { e.preventDefault(); pressAction(); }
-        if (e.code === 'Enter') pressStart();
+        if (e.code === 'Enter' && !p2.active) pressStart();
+        if (e.code === 'Enter' && p2.active && (state.won || state.levelComplete)) pressStart();
     }
     if (e.code === 'KeyE' || (e.code === 'Escape' && state.shopOpen)) toggleShop();
     if (e.code === 'KeyC' && state.room === ROOM.PARADISE && !state.shopOpen) { /* handled by walking up to the table */ }
@@ -633,19 +636,113 @@ canvas.addEventListener('contextmenu', e => {
     if (!blockAtCell(cx, cy)) buildAt(cx, cy, -9999, -9999);   // (far-away aim so it never chops a tree by accident)
 });
 
+// ── PLAYER 2 (press P to join: arrow keys + Enter, or a second controller) ──
+const p2 = { active: false, x: 0, y: 0, hp: 3, inv: 0, down: 0, cooldown: 0, walk: 0, faceX: 1, faceY: 0 };
+const P2_DOWN_FRAMES = 600;   // if Player 2 runs out of hearts they rest for 10 s, then pop back up
+
+function toggleP2() {
+    if (state.gamePhase !== 'playing') return;
+    p2.active = !p2.active;
+    if (p2.active) { Object.assign(p2, { x: player.x + 30, y: player.y, hp: 3, inv: 60, down: 0 }); showToast('👫 PLAYER 2 JOINED! Arrow keys to move, ENTER to shoot', '#88DDFF', 240); }
+    else showToast('Player 2 left the game. Bye!', '#88DDFF', 120);
+}
+
+function hurtP2() {
+    if (!p2.active || p2.down > 0 || p2.inv > 0) return;
+    p2.hp--; p2.inv = 90;
+    spawnParticles(p2.x, p2.y, '#FF4444', 8); sfx('hurt');
+    if (p2.hp <= 0) { p2.down = P2_DOWN_FRAMES; showToast('Player 2 needs a rest… back in 10 s!', '#FFAA88', 150); }
+}
+
+function p2Shoot() {
+    if (!p2.active || p2.down > 0 || p2.cooldown > 0 || state.power === POWER.NONE) return;
+    let target = null, best = 500;
+    for (const e of targetableEnemies()) { const d = Math.hypot(e.x - p2.x, e.y - p2.y); if (d < best) { best = d; target = e; } }
+    if (!target && state.room === ROOM.HELL && hell.devil.alive) target = hell.devil;
+    if (!target) return;
+    p2.cooldown = 16;
+    const a = Math.atan2(target.y - p2.y, target.x - p2.x), w = WEAPON_INFO[state.power];
+    const color = state.power === POWER.RAINBOW ? `hsl(${Math.random() * 360}, 100%, 60%)` : w.color;
+    for (const off of (state.powerTier >= 2 ? [-0.2, 0, 0.2] : [0])) {
+        projectiles.push({ x: p2.x, y: p2.y, dx: Math.cos(a + off) * w.speed, dy: Math.sin(a + off) * w.speed, color, power: state.power, life: 90, r: w.size });
+    }
+    sfx('shoot');
+}
+
+function updateP2() {
+    if (!p2.active) return;
+    if (p2.cooldown > 0) p2.cooldown--;
+    if (p2.inv > 0) p2.inv--;
+    if (p2.down > 0) {
+        if (--p2.down === 0) { p2.hp = 3; p2.inv = 120; p2.x = player.x + 30; p2.y = player.y; showToast('Player 2 is back! 💪', '#88DDFF', 120); }
+        return;
+    }
+    let dx = 0, dy = 0;
+    if (keys['ArrowLeft'])  dx -= 1;
+    if (keys['ArrowRight']) dx += 1;
+    if (keys['ArrowUp'])    dy -= 1;
+    if (keys['ArrowDown'])  dy += 1;
+    if (keys['Enter'] || keys['NumpadEnter'] || keys['Numpad0']) p2Shoot();
+    // A second game controller drives Player 2
+    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(p => p && p.connected) : [];
+    if (pads[1]) {
+        const gp = pads[1];
+        if (Math.abs(gp.axes[0] || 0) > PAD_DEADZONE) dx += gp.axes[0];
+        if (Math.abs(gp.axes[1] || 0) > PAD_DEADZONE) dy += gp.axes[1];
+        if (gp.buttons[PAD.A] && gp.buttons[PAD.A].pressed) p2Shoot();
+    }
+    const len = Math.hypot(dx, dy);
+    if (len > 1) { dx /= len; dy /= len; }
+    if (len > 0.2) { p2.faceX = dx; p2.faceY = dy; p2.walk += 0.32; }
+    const spd = BASE_SPEED * (state.room === ROOM.PARADISE ? 1.2 : 1);
+    const nx = Math.max(18, Math.min(782, p2.x + dx * spd)), ny = Math.max(52, Math.min(582, p2.y + dy * spd));
+    if (!playerHitsBlock(nx, p2.y)) p2.x = nx;
+    if (!playerHitsBlock(p2.x, ny)) p2.y = ny;
+    // Bad guys hurt Player 2 too
+    for (const e of targetableEnemies()) {
+        if (e.frog || e.type === 'creeper' || isShieldedAgainst(e.type)) continue;
+        if (Math.hypot(e.x - p2.x, e.y - p2.y) < e.r + 16) hurtP2();
+    }
+    if (state.room === ROOM.HELL && hell.devil.alive && Math.hypot(hell.devil.x - p2.x, hell.devil.y - p2.y) < hell.devil.r + 16) hurtP2();
+}
+
+function drawP2() {
+    if (!p2.active) return;
+    if (p2.down > 0) {   // resting
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(`💤 P2 back in ${Math.ceil(p2.down / 60)}s`, p2.x, p2.y);
+        return;
+    }
+    if (p2.inv > 0 && Math.floor(Date.now() / 80) % 2 === 0) return;
+    drawGroundShadow(p2.x + 3, p2.y + 19, 16, 5);
+    const color = state.power === POWER.NONE ? '#FF8844' : getPlayerColor();
+    ctx.save(); ctx.shadowColor = '#FF8844'; ctx.shadowBlur = 10;
+    drawAvatar(p2.x, p2.y, player.w, color, 'plain', p2.walk);
+    ctx.restore();
+    ctx.fillStyle = '#FF8844'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('P2', p2.x, p2.y - 30);
+}
+
 // ── GAME CONTROLLER (Xbox, PlayStation, Switch Pro… anything the browser maps as "standard") ──
 const PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START: 9, L3: 10, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
 const PAD_DEADZONE    = 0.3;   // ignore tiny stick wobbles
 const PAD_AUTOFIRE    = 10;    // frames between shots while A is held
 let   lastInput       = 'keyboard';   // 'keyboard' | 'touch' | 'pad' — picks which hints to show
 let   padPrev         = [];
+let   pad2StartHeld   = false;
 let   padHold         = 0;
 const padMove         = { x: 0, y: 0 };
 
 function pollGamepad() {
     padMove.x = padMove.y = 0;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = Array.from(pads).find(p => p && p.connected);
+    const connected = Array.from(pads).filter(p => p && p.connected);
+    const gp = connected[0];
+    if (connected[1]) {
+        const start = connected[1].buttons[PAD.START] && connected[1].buttons[PAD.START].pressed;
+        if (start && !pad2StartHeld && state.gamePhase === 'playing') toggleP2();
+        pad2StartHeld = start;
+    }
     if (!gp) { padPrev = []; return; }
     const held = gp.buttons.map(b => b.pressed);
     const was  = padPrev;
@@ -1090,7 +1187,7 @@ const VOYAGE_FRAMES = 1200;   // 20 s at sea
 const CAPTAIN = { id: 'captain', name: 'Captain Salty', x: 705, y: 545, coat: '#1A2A5A', hat: 'captain' };
 const DOCK    = { x: 70, y: 540 };    // on each island: sail back to Paradise
 const SKY_STAIRS = { x: 650, y: 170 };   // in Heaven
-const ROCKET  = { x: 120, y: 470 };   // in the Void
+const ROCKET  = { x: 70, y: 470 };    // in the Void
 const ISLANDS = [ROOM.CANDY, ROOM.ICE, ROOM.HAUNTED];
 
 const e0 = (type, x, y, extra = {}) => ({ type, x, y, r: 15, hp: ENEMY_TYPES[type].hp, maxHp: ENEMY_TYPES[type].hp, alive: true,
@@ -1120,6 +1217,52 @@ const PLACES = {
                    enemies: [e0('alien', 300, 380), e0('alien', 500, 420), e0('alien', 650, 360),
                              e0('mothership', 400, 130, { r: 44, coinDrop: 20, beamTimer: 140, dropTimer: 300 })] }) },
 };
+// ⚔ BOSS RUSH: every boss, one after another (the gate is in the Void)
+const ARENA_GATE  = { x: 270, y: 545 };
+const ARENA_EXIT  = { x: 400, y: 578 };
+const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership'];
+const BOSS_RUSH   = [
+    () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
+    () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
+    () => e0('frostgiant',  400, 250, { r: 40, coinDrop: 5, stompTimer: 160 }),
+    () => e0('thunderbird', 400, 200, { r: 34, coinDrop: 5, zapTimer: 120, t: 0 }),
+    () => e0('dragon',      600, 300, { r: 40, coinDrop: 5, breath: 150, dy: 0.6 }),
+    () => e0('mothership',  400, 130, { r: 44, coinDrop: 5, beamTimer: 140, dropTimer: 300 }),
+];
+PLACES.arena = { name: '⚔ BOSS RUSH ARENA', spawn: [400, 470],
+                 make: () => ({ enemies: [], coins: [], wave: 0, rest: 150, done: false }) };
+
+function updateArena() {
+    const A = place();
+    if (A.done) return;
+    const bossAlive = A.enemies.some(e => e.alive && BOSS_TYPES.includes(e.type));
+    if (bossAlive) return;
+    if (A.wave >= BOSS_RUSH.length) {   // beat them all!
+        A.done = true;
+        A.enemies.forEach(e => { e.alive = false; });
+        addScore(500); giveAward('bossRush');
+        showToast('🏆 YOU BEAT THE BOSS RUSH! You are a CHAMPION! 🏆', '#FFD700', 300);
+        sfx('win'); spawnConfettiAt(400, 300);
+        return;
+    }
+    if (--A.rest > 0) return;
+    const boss = BOSS_RUSH[A.wave++]();
+    A.enemies.push(boss);
+    A.rest = 150;
+    if (state.playerHp < fullHearts()) state.playerHp++;   // a little heal between bosses
+    showToast(`⚔ BOSS ${A.wave}/${BOSS_RUSH.length}: THE ${ENEMY_TYPES[boss.type].name.toUpperCase()}!`, '#FF8866', 180);
+    sfx('laugh');
+}
+
+function paintArena(g, R) {
+    g.fillStyle = '#C8A870'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 600; i++) { g.fillStyle = `rgba(${140 + R() * 60},${110 + R() * 40},70,0.5)`; g.fillRect(R() * 800, R() * 600, 3, 2); }   // sand
+    g.strokeStyle = 'rgba(120,80,40,0.5)'; g.lineWidth = 4; g.beginPath(); g.ellipse(400, 330, 330, 230, 0, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = '#8A7A6A'; g.fillRect(0, 46, 800, 40);                       // stands full of cheering crowd
+    for (let x = 6; x < 800; x += 12) { g.fillStyle = `hsl(${R() * 360}, 60%, 55%)`; g.beginPath(); g.arc(x, 60 + (x % 24 ? 0 : 8), 5, 0, Math.PI * 2); g.fill(); }
+    for (const px of [20, 780]) { g.fillStyle = '#9A8A7A'; g.fillRect(px - 16, 86, 32, 514); }   // pillars
+}
+
 const HAUNTED_SHELVES = [{ x: 180, y: 118 }, { x: 400, y: 118 }, { x: 620, y: 118 }];   // one is a secret door!
 let placeState = {};
 function place(room = state.room) { return placeState[room]; }
@@ -1130,6 +1273,8 @@ function updatePlaceExits() {
     if (state.room === ROOM.VOID && near(ROCKET, 28))        { showToast('🚀 3… 2… 1… BLAST OFF!', '#FFE066'); sfx('boom'); changeRoom(ROOM.SPACE); return true; }
     if (state.room === ROOM.SPACE && near(ROCKET, 28))       { showToast('🚀 Back home to the Void!', '#FFE066'); changeRoom(ROOM.VOID); player.x = ROCKET.x + 60; return true; }
     if (state.room === ROOM.HEAVEN && near(SKY_STAIRS, 30))  { changeRoom(ROOM.SKY); return true; }
+    if (state.room === ROOM.VOID && near(ARENA_GATE, 26))    { changeRoom(ROOM.ARENA); showToast('⚔ BOSS RUSH! Beat all 6 bosses in a row!', '#FF8866', 200); return true; }
+    if (state.room === ROOM.ARENA && near(ARENA_EXIT, 26))   { changeRoom(ROOM.VOID); player.x = ARENA_GATE.x + 50; player.y = ARENA_GATE.y - 30; return true; }
     if (state.room === ROOM.SKY && near({ x: 400, y: 575 }, 30)) { changeRoom(ROOM.HEAVEN); player.x = SKY_STAIRS.x - 50; player.y = SKY_STAIRS.y + 40; return true; }
     if (PLACES[state.room] && PLACES[state.room].island && near(DOCK, 32)) {
         showToast('⛵ Sailing back to Paradise Island…', '#88CCFF');
@@ -1139,10 +1284,78 @@ function updatePlaceExits() {
     return false;
 }
 
+// 🗺 A treasure map from Captain Salty: follow 3 clues, dig at each spot
+const TREASURE_SPOTS = [
+    { room: 'paradise', x: 400, y: 400, clue: 'Dig just below the fountain in Paradise' },
+    { room: 'paradise', x: 140, y: 420, clue: 'Dig by the gate of the farm in Paradise' },
+    { room: 'paradise', x: 480, y: 575, clue: 'Dig on the sandy beach in Paradise' },
+    { room: 'void',     x: 180, y: 470, clue: 'Dig next to the rocket in the Void' },
+    { room: 'hell',     x: 140, y: 520, clue: 'Dig beside the lava pool in Hell' },
+    { room: 'heaven',   x: 330, y: 250, clue: 'Dig by the pearly gates in Heaven' },
+    { room: 'candy',    x: 400, y: 370, clue: 'Dig by the chocolate river in Candy Land' },
+];
+const TREASURE_HITS = 3;
+
+function startTreasureMap() {
+    const spots = [...TREASURE_SPOTS].sort(() => Math.random() - 0.5).slice(0, 3);
+    state.treasure = { spots, step: 0, hits: 0 };
+    showToast(`🗺 CLUE 1: ${spots[0].clue}!`, '#FFE8A0', 300);
+}
+
+function treasureSpotHere() {
+    const T = state.treasure;
+    if (!T || T.step >= T.spots.length) return null;
+    const sp = T.spots[T.step];
+    return sp.room === state.room ? sp : null;
+}
+
+function tryTreasureDig() {
+    const sp = treasureSpotHere();
+    if (!sp || Math.hypot(player.x - sp.x, player.y - sp.y) > 30) return false;
+    const T = state.treasure;
+    T.hits++;
+    state.digAnim = 14;
+    spawnParticles(sp.x, sp.y, '#8B5A2B', 6); sfx('dig');
+    if (T.hits < TREASURE_HITS) return true;
+    T.hits = 0; T.step++;
+    if (T.step < T.spots.length) {
+        showToast(`📜 Another clue! CLUE ${T.step + 1}: ${T.spots[T.step].clue}!`, '#FFE8A0', 320);
+        sfx('found');
+    } else {
+        state.inv.diamond = invCount('diamond') + 5;
+        state.hats.crown = true;
+        addScore(300);
+        showToast('💰 YOU FOUND THE TREASURE! 5 diamonds, a golden crown and 300 points!', '#FFD700', 320);
+        spawnConfettiAt(sp.x, sp.y); sfx('win'); giveAward('treasure');
+        state.treasure = null;
+    }
+    return true;
+}
+
+// A sparkly X when you're close to the spot (the clue tells you roughly where)
+function drawTreasureX() {
+    const sp = treasureSpotHere();
+    if (!sp) return;
+    const d = Math.hypot(player.x - sp.x, player.y - sp.y);
+    if (d > 130) return;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (130 - d) / 70);
+    ctx.strokeStyle = '#C0302A'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(sp.x - 9, sp.y - 9); ctx.lineTo(sp.x + 9, sp.y + 9); ctx.moveTo(sp.x + 9, sp.y - 9); ctx.lineTo(sp.x - 9, sp.y + 9); ctx.stroke();
+    if (d < 30) {
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(`${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Dig for treasure!`, sp.x, sp.y - 18);
+    }
+    ctx.restore();
+}
+
 function sailItems() {
     const trip = (room, icon, desc) => ({ icon, name: PLACES[room].name.replace(/^\S+ /, ''), desc, cost: 0, status: 'SAIL!',
         action: () => { state.voyageTo = room; menu = null; changeRoom(ROOM.SHIP); showToast('⚓ Anchors up! Watch out for PIRATES!', '#88CCFF', 180); } });
     return [
+        { icon: '🗺', name: 'Treasure Map', desc: state.treasure ? 'You already have one — follow the clues!' : 'Follow 3 clues to hidden treasure', cost: 0,
+          status: state.treasure ? `CLUE ${state.treasure.step + 1}/3` : 'FREE!',
+          action: () => { if (!state.treasure) { menu = null; startTreasureMap(); } } },
         trip(ROOM.CANDY,   '🍭', 'Gummy bears and lollipops'),
         trip(ROOM.ICE,     '❄', 'Snowmen and the Frost Giant'),
         trip(ROOM.HAUNTED, '👻', 'Skeletons, ghosts and a secret door'),
@@ -1152,6 +1365,7 @@ function sailItems() {
 function updatePlace() {
     const P = place();
     if (!P) return;
+    if (state.room === ROOM.ARENA) updateArena();
     if (state.room === ROOM.SHIP) {
         // Pirates climb aboard in waves until you reach the island
         if (--P.waveTimer <= 0 && P.voyage > 200) {
@@ -1163,6 +1377,7 @@ function updatePlace() {
             showToast('🏝 LAND HO! We made it!', '#FFE066', 180);
             giveAward('sailor');
             changeRoom(state.voyageTo || ROOM.CANDY);
+            return;   // we're on the island now — don't keep running the ship's code
         }
     }
     if (state.room === ROOM.CANDY) {
@@ -1332,6 +1547,12 @@ function drawPlace() {
         ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.ellipse(400, 580, 50, 16, 0, 0, Math.PI * 2); ctx.fill();
         label('☁ Stairs down to Heaven', 400, 566, '#446');
     }
+    if (state.room === ROOM.ARENA) {
+        ctx.fillStyle = '#5A3A1E'; ctx.fillRect(ARENA_EXIT.x - 24, 560, 48, 40);
+        label('🚪 Leave the arena', ARENA_EXIT.x, 556, '#FFF');
+        const A = place();
+        label(A.done ? '🏆 CHAMPION! 🏆' : A.rest > 0 && !A.enemies.some(e => e.alive) ? `Next boss coming… (${A.wave}/${BOSS_RUSH.length} beaten)` : `BOSS ${A.wave}/${BOSS_RUSH.length}`, 400, 104, '#FFE066');
+    }
     if (state.room === ROOM.SPACE) {
         drawRocket(ROCKET.x, ROCKET.y, 'Rocket home');
         label('You feel floaty… no gravity in space!', 400, 588, '#AACCFF');
@@ -1492,6 +1713,7 @@ const PORTALS = {
     haunted: [{ x: 740, y: 520, shape: 'star'    }],
     sky:     [{ x: 740, y: 470, shape: 'diamond' }],
     space:   [{ x: 740, y: 470, shape: 'star'    }],
+    arena:   [],
     heaven: [
         { x: 60,  y: 330, shape: 'circle'   },
         { x: 740, y: 330, shape: 'star'     },
@@ -1668,7 +1890,7 @@ function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 function musicTick() {
     if (!audioCtx || muted) return;
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
-    const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room;
+    const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell' : state.room;
     const song = playing ? SONGS[songKey] : null;
     if (!song) { musicRoom = null; return; }
     const now = audioCtx.currentTime;
@@ -1739,6 +1961,8 @@ const AWARDS = [
     { id: 'thunderbird', icon: '⚡', name: 'Storm Chaser',     desc: 'Beat the Thunder Bird' },
     { id: 'mothership',  icon: '🛸', name: 'Space Hero',       desc: 'Beat the Alien Mothership' },
     { id: 'miner',       icon: '⛏', name: 'Miner',            desc: 'Dig up the ground' },
+    { id: 'bossRush',    icon: '⚔', name: 'Boss Rush Champ',  desc: 'Beat all 6 bosses in a row' },
+    { id: 'treasure',    icon: '💰', name: 'Treasure Hunter',  desc: 'Follow a treasure map to the end' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -1769,7 +1993,7 @@ const SAVE_KEY    = 'lop_save';
 const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'powerTier', 'playerHp', 'coins',
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
-                     'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks'];
+                     'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -2441,7 +2665,7 @@ function resetGame() {
         ownedPets: PETS.map(() => false), activePet: -1, petXp: PETS.map(() => 0),
         ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
-        furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {},
+        furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -2581,6 +2805,7 @@ function changeRoom(dest) {
     goldenPortal = MAIN_ROOMS.includes(dest) && Math.random() < SECRET_PORTAL_CHANCE
         ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
     placePetBesidePlayer();
+    if (p2.active) { p2.x = player.x + 30; p2.y = player.y; }   // Player 2 comes along through portals
 }
 
 // ── UPDATE: PLAYER ────────────────────────────────────────────
@@ -2590,10 +2815,11 @@ function updatePlayer() {
     const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1);
     let dx = 0, dy = 0;
     if (!state.shopOpen && !state.awardsOpen && !menu) {
-        if (keys['ArrowLeft']  || keys['KeyA']) dx -= 1;
-        if (keys['ArrowRight'] || keys['KeyD']) dx += 1;
-        if (keys['ArrowUp']    || keys['KeyW']) dy -= 1;
-        if (keys['ArrowDown']  || keys['KeyS']) dy += 1;
+        const arrows = !p2.active;   // with 2 players, the arrow keys belong to Player 2
+        if ((arrows && keys['ArrowLeft'])  || keys['KeyA']) dx -= 1;
+        if ((arrows && keys['ArrowRight']) || keys['KeyD']) dx += 1;
+        if ((arrows && keys['ArrowUp'])    || keys['KeyW']) dy -= 1;
+        if ((arrows && keys['ArrowDown'])  || keys['KeyS']) dy += 1;
         // Virtual joystick
         const deadzone = VJOY.maxDist * JOYSTICK_DEADZONE_RATIO;
         if (vTouch.joyDX < -deadzone) dx -= 1;
@@ -2728,6 +2954,15 @@ function roomEnemies() {
     return [];
 }
 
+// The real list new bad guys should be added to in this room
+function spawnList() {
+    if (state.room === ROOM.PARADISE)    return paradise.enemies;
+    if (state.room === ROOM.HELL)        return hell.enemies;
+    if (state.room === ROOM.UNDERGROUND) return underground.enemies;
+    if (PLACES[state.room] && place())   return place().enemies;
+    return [];
+}
+
 // Bad guys you can shoot right now (not defeated, not still climbing out of the ground)
 function targetableEnemies() {
     return roomEnemies().filter(e => e.alive && !(e.emerge > 0) && !e.hidden);
@@ -2770,7 +3005,7 @@ function kingSplit(k, count) {
         const a = Math.random() * Math.PI * 2;
         const m = makeEnemy('slime', k.x + Math.cos(a) * k.r, k.y + Math.sin(a) * k.r, Math.cos(a) * 4, Math.sin(a) * 4);
         Object.assign(m, { r: 10, hp: 1, maxHp: 1, temp: true, hopTimer: 40, coinDrop: 1 });
-        paradise.enemies.push(m);
+        spawnList().push(m);
     }
 }
 
@@ -2956,7 +3191,7 @@ function moveEnemy(e) {
             for (let i = 0; i < 2; i++) {
                 const g = makeEnemy('ghost', e.x + (i ? 40 : -40), e.y, 0, 0);
                 Object.assign(g, { temp: true, emerge: 20, coinDrop: 1 });
-                paradise.enemies.push(g);
+                spawnList().push(g);
             }
             spawnParticles(e.x, e.y, '#DDAAFF', 16);
             sfx('magic');
@@ -3181,6 +3416,12 @@ function updateEnemyProjectiles() {
         p.life--;
         if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y < 0 || p.y > 600) {
             enemyProjectiles.splice(i, 1); continue;
+        }
+        if (p2.active && p2.down === 0 && Math.hypot(p.x - p2.x, p.y - p2.y) < p.r + 16) {
+            if (!isShieldedAgainst(p.enemyType)) hurtP2();
+            spawnParticles(p.x, p.y, p.color, 4);
+            enemyProjectiles.splice(i, 1);
+            continue;
         }
         if (Math.hypot(p.x - player.x, p.y - player.y) < p.r + 16) {
             if (!isShieldedAgainst(p.enemyType)) {
@@ -4699,8 +4940,20 @@ function drawRaceMaster() {
     }
 }
 
+function drawArenaGate() {
+    const { x, y } = ARENA_GATE, t = Date.now() / 1000;
+    ctx.save();
+    ctx.fillStyle = '#6A5A4A'; ctx.fillRect(x - 26, y - 34, 52, 44);
+    ctx.fillStyle = '#2A1A0A'; ctx.beginPath(); ctx.arc(x, y - 6, 18, Math.PI, 0); ctx.lineTo(x + 18, y + 10); ctx.lineTo(x - 18, y + 10); ctx.fill();
+    ctx.fillStyle = `rgba(255,${80 + Math.sin(t * 4) * 40},40,0.6)`; ctx.beginPath(); ctx.arc(x, y - 6, 12, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('⚔ BOSS RUSH', x, y + 24);
+    ctx.restore();
+}
+
 function drawVoid() {
     drawRaceMaster();
+    drawArenaGate();
     drawRocket(ROCKET.x, ROCKET.y, 'To SPACE!');
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.font      = 'bold 26px Arial'; ctx.textAlign = 'center';
@@ -4720,15 +4973,16 @@ function drawVoid() {
 
     // Which weapon beats which bad guy
     const chart = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER].map(w => {
-        const beats = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].weakTo === w).map(k => ENEMY_TYPES[k].name + 's');
+        const plural = n => n.endsWith('man') ? n.slice(0, -3) + 'men' : n === 'Shadow You' ? n : n + 's';
+        const beats = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].weakTo === w).map(k => plural(ENEMY_TYPES[k].name));
         const list = beats.length > 1 ? beats.slice(0, -1).join(', ') + ' & ' + beats[beats.length - 1] : beats[0];
         return `${WEAPON_INFO[w].icon} ${WEAPON_INFO[w].label} beats ${list}`;
     });
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.font = 'bold 12px Arial';
     ctx.fillText('WHAT BEATS WHAT (every weapon still does a little damage to everything)', 400, 446);
-    ctx.font = '12px Arial';
-    chart.forEach((line, i) => ctx.fillText(line, 400, 464 + i * 16));
-    ctx.fillText('🌈 RAINBOW POWER beats everything!', 400, 464 + chart.length * 16);
+    ctx.font = '10px Arial';
+    chart.forEach((line, i) => ctx.fillText(line, 400, 462 + i * 14));
+    ctx.fillText('🌈 RAINBOW POWER beats everything!', 400, 462 + chart.length * 14);
 
     // Void enemies
     const t = Date.now() / 400;
@@ -5918,7 +6172,7 @@ function roomBackground(room) {
         c.width = 800; c.height = 600;
         if (room === 'void') { c.width = 900; c.height = 700; }   // fog is bigger than the screen so it can drift
         const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse,
-                           ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace };
+                           ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace, arena: paintArena };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
@@ -6753,6 +7007,11 @@ function drawHUD() {
     for (let i = 0; i < maxHp; i++) hearts += i < state.playerHp ? '❤' : '♡';
     ctx.fillStyle = '#FF4444';
     ctx.fillText(hearts, 400, 20);
+    if (p2.active) {   // Player 2's hearts
+        ctx.fillStyle = '#FF8844'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
+        ctx.fillText('P2 ' + (p2.down > 0 ? '💤' : '❤'.repeat(Math.max(0, p2.hp)) + '♡'.repeat(Math.max(0, 3 - p2.hp))), 446, 20);
+        ctx.textAlign = 'center';
+    }
 
     // Room name + Level
     const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES', heaven: '☁ HEAVEN ☁', house: '🏠 YOUR HOME',
@@ -6809,6 +7068,13 @@ function drawHUD() {
 
     drawGadgetHud();
     drawBuildButton();
+    if (state.treasure && !state.buildMode) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(60,40,10,0.8)'; ctx.fillRect(250, 50, 300, 18);
+        ctx.fillStyle = '#FFE8A0'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(`🗺 Clue ${state.treasure.step + 1}/3: ${state.treasure.spots[state.treasure.step].clue}`, 400, 63);
+        ctx.restore();
+    }
 
     // ── MUTE BUTTON (M) ───────────────────────────────────────
     ctx.save();
@@ -6958,7 +7224,7 @@ function drawWin() {
 // ── DRAW: AWARDS ──────────────────────────────────────────────
 function drawAwards() {
     if (!state.awardsOpen) return;
-    const X = 90, Y = 50, W = 620, H = 530;
+    const X = 90, Y = 48, W = 620, H = 540;
     ctx.save();
     ctx.fillStyle = 'rgba(10,5,25,0.97)'; ctx.fillRect(X, Y, W, H);
     ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
@@ -6969,11 +7235,11 @@ function drawAwards() {
     ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
     AWARDS.forEach((a, i) => {
         const col = i % 3, row = Math.floor(i / 3);
-        const x = X + 16 + col * 200, y = Y + 56 + row * 36;
+        const x = X + 16 + col * 200, y = Y + 54 + row * 34;
         const has = awards.got[a.id];
         ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
-        ctx.fillRect(x, y, 188, 34);
-        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 34);
+        ctx.fillRect(x, y, 188, 32);
+        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 32);
         ctx.globalAlpha = has ? 1 : 0.35;
         ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
         ctx.fillText(a.icon, x + 22, y + 25);
@@ -7113,7 +7379,8 @@ function drawControls() {
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
     const hint = lastInput === 'pad'   ? 'Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back'
                : lastInput === 'touch' ? 'Move: joystick  |  Shoot / Dig: button'
-               : 'Move: WASD  |  Shoot / Dig: Space  |  Build: B  |  Gadget: Q  |  Dash: Shift  |  Shop: E  |  Sound: M';
+               : p2.active ? 'P1: WASD + Space   ·   P2: Arrows + Enter   ·   P: Player 2 leaves'
+               : 'Move: WASD  |  Shoot / Dig: Space  |  Build: B  |  2 Players: P  |  Shop: E  |  Sound: M';
     ctx.fillText(hint, 792, 592);
 }
 
@@ -7187,6 +7454,7 @@ function update() {
         updatePet();
         updateLessons();
         updateDanceAndFart();
+        updateP2();
         updateGadgets();
         updateBlocks();
         updateScenery();
@@ -7232,7 +7500,7 @@ function draw() {
 
     if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawParadiseSky();
     if (!state.won && !state.levelComplete && state.room === ROOM.HEAVEN) drawHeavenBack();
-    if (!state.won && !state.levelComplete) { drawGroundHoles(); drawScenery(); drawBlocks(); }
+    if (!state.won && !state.levelComplete) { drawGroundHoles(); drawTreasureX(); drawScenery(); drawBlocks(); }
     if (!state.won && !state.levelComplete) drawPortals();
     if (state.room === ROOM.VOID)     drawVoid();
     if (state.room === ROOM.HELL)     drawHell();
@@ -7243,6 +7511,7 @@ function draw() {
     if (state.room === ROOM.HOUSE)    drawHouse();
     if (PLACES[state.room])           drawPlace();
     drawPlayer();
+    drawP2();
     drawHeartPickups();
     drawGadgets();
     drawPet();
