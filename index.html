@@ -131,7 +131,13 @@ const ENEMY_TYPES = {
     king:  { name: 'King Slime',   hp: 15, weakTo: POWER.WATER,    color: '#44CC22' },   // Monster Night 3 boss
     worm:  { name: 'Lava Worm',    hp: 3, weakTo: POWER.ICE,       color: '#FF5500' },   // Hell: burrows and pops up
     imp:   { name: 'Mini-Devil',   hp: 3, weakTo: POWER.LIGHTNING, color: '#DD2222' },   // Hell: summoned by the Devil
+    spider:    { name: 'Spider',     hp: 3,  weakTo: POWER.BRIMSTONE, color: '#442244' },  // Underground: drops from the ceiling
+    robot:     { name: 'Robot',      hp: 4,  weakTo: POWER.WATER,     color: '#8899AA' },  // Paradise nights: marches in lines
+    ghostking: { name: 'Ghost King', hp: 14, weakTo: POWER.BRIMSTONE, color: '#DDAAFF' },  // Monster Night 2 boss: turns invisible
+    dragon:    { name: 'Cave Dragon',hp: 22, weakTo: POWER.ICE,       color: '#AA3355' },  // Underground boss: breathes fire
+    shadow:    { name: 'Shadow You', hp: 6,  weakTo: POWER.LIGHTNING, color: '#442266' },  // Hell: copies your every move
 };
+const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
 const WORM_UNDER_FRAMES  = 150;   // tunnelling toward you (can't be hit)
 const WORM_RISE_FRAMES   = 40;    // rumbling — it's about to pop up!
 const WORM_UP_FRAMES     = 170;   // out of the ground: spits lava, can be hit
@@ -234,9 +240,9 @@ const BUILDINGS = [
     { id: 'bakery',   x: 320, y: 172, w: 84,  name: 'BAKERY',     roof: '#E09A3A', wall: '#FFF1DC' },
     { id: 'forge',    x: 450, y: 172, w: 84,  name: 'BLACKSMITH', roof: '#4A4A4A', wall: '#A87850' },
     { id: 'hall',     x: 580, y: 172, w: 84,  name: 'TOWN HALL',  roof: '#3366AA', wall: '#E8E0C8' },
-    { id: 'mansion',  x: 712, y: 212, w: 108, name: 'MANSION',    roof: '#2A6A4A', wall: '#FFFFFF', cost: 100 },
-    { id: 'cottage',  x: 170, y: 350, w: 80,  name: 'COTTAGE',    roof: '#AA6633', wall: '#F0D8A8', cost: 30  },
-    { id: 'bighouse', x: 610, y: 350, w: 100, name: 'BIG HOUSE',  roof: '#7A3A8A', wall: '#F3E6F5', cost: 60  },
+    { id: 'mansion',  x: 712, y: 212, w: 108, name: 'MANSION',    roof: '#2A6A4A', wall: '#FFFFFF', cost: 100, door: '#1A3A2A' },
+    { id: 'cottage',  x: 170, y: 350, w: 80,  name: 'COTTAGE',    roof: '#AA6633', wall: '#F0D8A8', cost: 30,  door: '#3A7A3A' },
+    { id: 'bighouse', x: 610, y: 350, w: 100, name: 'BIG HOUSE',  roof: '#7A3A8A', wall: '#F3E6F5', cost: 60,  door: '#7A3A8A' },
 ];
 // People with jobs (the ones with a job to give you are marked giver: true)
 const WORKERS = [
@@ -748,6 +754,16 @@ function makeParadise() {
     const king = makeEnemy('king', 400, 330, 0, 0);
     Object.assign(king, { r: 40, minNight: 3, coinDrop: 15 });
     enemies.push(king);
+    // The Ghost King haunts Monster Night 2
+    const ghostKing = makeEnemy('ghostking', 400, 250, 0, 0);
+    Object.assign(ghostKing, { r: 34, minNight: 2, onlyNight: 2, coinDrop: 12, phase: 0 });
+    enemies.push(ghostKing);
+    // A robot army marches in on nights 2 and 3
+    for (let i = 0; i < 4; i++) {
+        const bot = makeEnemy('robot', 90 + i * 42, 140, 1.3, 0);
+        Object.assign(bot, { r: 14, minNight: 2, march: true });
+        enemies.push(bot);
+    }
     return {
         enemies,
         chests: [
@@ -799,6 +815,14 @@ function makeUnderground() {
                        speed: 1.1, emerge: 45 + i * 60 });
     }
     enemies.push(...makeWorms().slice(0, 2));
+    // Spiders wait on the ceiling, then drop down on a thread
+    for (let i = 0; i < 3; i++) {
+        enemies.push({ type: 'spider', x: 200 + i * 180, y: 50, ty: 180 + Math.random() * 260, r: 12, hp: 3, maxHp: 3,
+                       alive: true, hitFlash: 0, frozen: 0, hidden: true, dropTimer: 90 + Math.random() * 300, dx: 0, dy: 0 });
+    }
+    // The Cave Dragon guards the deepest cave
+    enemies.push({ type: 'dragon', x: 640, y: 300, r: 40, hp: 22, maxHp: 22, alive: true, hitFlash: 0, frozen: 0,
+                   coinDrop: 20, breath: 150, dx: 0, dy: 0.6 });
     return {
         enemies,
         coins: [],
@@ -939,6 +963,7 @@ const SFX = {
     nightfall:() => [392, 370, 349, 330, 311].forEach((f, i) => tone(f, 0.4, 'triangle', 0.15, null, i * 0.3)),
     splash:   () => { noise(0.25, 0.2, 1800); tone(900, 0.15, 'sine', 0.08, 400); },
     bite:     () => { tone(1200, 0.08, 'square', 0.15); tone(1500, 0.1, 'square', 0.15, null, 0.1); },
+    dragonRoar: () => { noise(0.8, 0.35, 400); tone(110, 0.8, 'sawtooth', 0.25, 60); },
     whoosh:   () => { noise(0.2, 0.2, 2500); tone(300, 0.2, 'sine', 0.08, 900); },
     boom:     () => { noise(0.6, 0.5, 600); tone(80, 0.5, 'sawtooth', 0.3, 30); },
     magic:    () => [880, 1175, 1568, 2093].forEach((f, i) => tone(f, 0.12, 'sine', 0.12, null, i * 0.05)),
@@ -1030,6 +1055,9 @@ const AWARDS = [
     { id: 'allPets',     icon: '🦁', name: 'Zoo Keeper',       desc: 'Own every pet' },
     { id: 'dance',       icon: '💃', name: 'Dance Party',      desc: 'Do a dance' },
     { id: 'fart10',      icon: '💨', name: 'Stinky!',          desc: 'Fart 10 times' },
+    { id: 'ghostking',   icon: '👻', name: 'Ghostbuster',      desc: 'Beat the Ghost King' },
+    { id: 'dragon',      icon: '🐉', name: 'Dragon Slayer',    desc: 'Beat the Cave Dragon' },
+    { id: 'shadow',      icon: '👤', name: 'Beat Yourself',    desc: 'Beat Shadow You' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -1290,8 +1318,10 @@ function respawnParadiseWave() {
     paradise.enemies = paradise.enemies.filter(e => !e.temp);   // King Slime's little slimes
     for (const e of paradise.enemies) {
         // Monsters climb out of the ground in random places
-        const spot = e.type === 'king' ? { x: e.home.x, y: e.home.y } : randomSpawnSpot();
-        Object.assign(e, { alive: (e.minNight || 1) <= night, hp: e.maxHp, hitFlash: 0, hopTimer: 0, frozen: 0,
+        // (bosses and the robot army keep their places — robots march in a line)
+        const spot = e.type === 'king' || e.type === 'ghostking' || e.march ? { x: e.home.x, y: e.home.y } : randomSpawnSpot();
+        const alive = (e.minNight || 1) <= night && (!e.onlyNight || e.onlyNight === night);
+        Object.assign(e, { alive, hp: e.maxHp, hitFlash: 0, hopTimer: 0, frozen: 0, hidden: false, phase: 0,
                            x: spot.x, y: spot.y, dx: e.home.dx, dy: e.home.dy, emerge: 30 + Math.random() * 60 });
     }
 }
@@ -1328,6 +1358,10 @@ function changeRoom(dest) {
         hell.digSpots = makeDigSpots();
         hell.foundMsg = null;
         hell.enemies  = makeWorms();
+        if (Math.random() < SHADOW_CHANCE) {
+            hell.enemies.push({ type: 'shadow', x: 700, y: 300, r: 15, hp: 6, maxHp: 6, alive: true, hitFlash: 0, frozen: 0,
+                                coinDrop: 8, emerge: 60, dx: 0, dy: 0 });
+        }
         hell.summonTimer = IMP_SUMMON_FRAMES;
     }
     if (dest === ROOM.PARADISE) {
@@ -1519,6 +1553,8 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
         dropLoot(e);
         countStat('kills');
         if (e.type === 'king') giveAward('king');
+        if (e.type === 'ghostking' || e.type === 'dragon' || e.type === 'shadow') giveAward(e.type);
+        if (e.type === 'dragon') showToast('🐉 You beat the CAVE DRAGON!', '#FFD700', 200);
     } else if (power === POWER.ICE && !e.frog) {
         if (!e.frozen) sfx('freeze');
         e.frozen = FREEZE_FRAMES;
@@ -1563,7 +1599,7 @@ function updateRoomEnemies() {
         if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
         if (e.frog) { moveFrog(e); continue; }   // frogs are harmless
         moveEnemy(e);
-        if (!e.hidden && state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
+        if ((!e.hidden || e.type === 'ghostking') && state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
             Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
             damagePlayer();
         }
@@ -1586,6 +1622,66 @@ function moveFrog(e) {
 }
 
 function moveEnemy(e) {
+    if (e.type === 'spider') {
+        if (e.hidden) {   // waiting on the ceiling…
+            if (--e.dropTimer <= 0) { e.hidden = false; e.dropping = true; e.x = Math.max(60, Math.min(740, player.x + (Math.random() - 0.5) * 120)); sfx('whoosh'); }
+            return;
+        }
+        if (e.dropping) { e.y += 5; if (e.y >= e.ty) { e.y = e.ty; e.dropping = false; } return; }
+        const a = Math.atan2(player.y - e.y, player.x - e.x);
+        e.x += Math.cos(a) * 1.5 + Math.sin(Date.now() / 90 + e.ty) * 0.6; e.y += Math.sin(a) * 1.5;
+        return;
+    }
+    if (e.type === 'robot') {
+        // March, march, march — reach the edge, step down a row, turn around
+        e.x += e.dx;
+        if (e.x < 60 || e.x > 740) { e.dx *= -1; e.y += 36; if (e.y > 520) e.y = 140; }
+        e.walk = (e.walk || 0) + 0.25;
+        return;
+    }
+    if (e.type === 'ghostking') {
+        // Floats after you; every few seconds he vanishes and calls in little ghosts
+        e.phase++;
+        if (!e.hidden && e.phase > 240) {
+            e.hidden = true; e.phase = 0;
+            for (let i = 0; i < 2; i++) {
+                const g = makeEnemy('ghost', e.x + (i ? 40 : -40), e.y, 0, 0);
+                Object.assign(g, { temp: true, emerge: 20, coinDrop: 1 });
+                paradise.enemies.push(g);
+            }
+            spawnParticles(e.x, e.y, '#DDAAFF', 16);
+            sfx('magic');
+        } else if (e.hidden && e.phase > 120) {
+            e.hidden = false; e.phase = 0;
+            spawnParticles(e.x, e.y, '#DDAAFF', 16);
+        }
+        const a = Math.atan2(player.y - e.y, player.x - e.x);
+        e.x += Math.cos(a) * 0.7; e.y += Math.sin(a) * 0.7;
+        return;
+    }
+    if (e.type === 'dragon') {
+        // Hovers up and down, then breathes a big spray of fire
+        e.y += e.dy; if (e.y < 140 || e.y > 460) e.dy *= -1;
+        e.breath--;
+        if (e.breath === 40) sfx('dragonRoar');
+        if (e.breath <= 0) {
+            e.breath = 170;
+            const a = Math.atan2(player.y - e.y, player.x - (e.x - 30));
+            for (let k = -3; k <= 3; k++) {
+                enemyProjectiles.push({ x: e.x - 30, y: e.y - 10, dx: Math.cos(a + k * 0.14) * 5, dy: Math.sin(a + k * 0.14) * 5,
+                                        color: '#FF6A00', life: 150, r: 8, enemyType: 'dragon' });
+            }
+            triggerShake(8);
+        }
+        return;
+    }
+    if (e.type === 'shadow') {
+        // Copies you like a mirror (flipped left ↔ right)
+        const tx = 800 - player.x, ty = player.y;
+        e.x += (tx - e.x) * 0.12; e.y += (ty - e.y) * 0.12;
+        e.walk = state.walkPhase;
+        return;
+    }
     if (e.type === 'worm') {
         if (--e.wTimer <= 0) {
             if (e.wState === 'under')      { e.wState = 'rising'; e.wTimer = WORM_RISE_FRAMES; }
@@ -1815,6 +1911,11 @@ function shoot() {
     }
 
     sfx('shoot');
+    // Shadow You copies that too!
+    for (const sh of targetableEnemies().filter(e => e.type === 'shadow')) {
+        const sa = Math.atan2(player.y - sh.y, player.x - sh.x);
+        enemyProjectiles.push({ x: sh.x, y: sh.y, dx: Math.cos(sa) * 6, dy: Math.sin(sa) * 6, color: '#8844CC', life: 100, r: 6, enemyType: 'shadow' });
+    }
     state.ammo--;
     if (state.ammo <= 0) {
         state.ammoReloading = true;
@@ -3280,7 +3381,7 @@ function drawFrog(e) {
 function drawEnemy(e, t) {
     if (e.frog) { drawGroundShadow(e.x, e.y + 12, 10, 3); drawFrog(e); return; }
     if (!e.hidden && !(e.emerge > 45)) {
-        const flying = e.type === 'ghost' || e.type === 'bat' || e.type === 'imp';
+        const flying = e.type === 'ghost' || e.type === 'bat' || e.type === 'imp' || e.type === 'ghostking' || e.dropping;
         drawGroundShadow(e.x + 2, e.y + e.r + (flying ? 12 : 2), e.r * (flying ? 0.7 : 1), e.r * 0.3, flying ? 0.15 : 0.3);
     }
     ctx.save();
@@ -3340,6 +3441,89 @@ function drawEnemy(e, t) {
         ctx.arc(e.x - 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.arc(e.x + 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.fill();
+    } else if (e.type === 'spider') {
+        if (e.hidden) { ctx.restore(); return; }
+        if (e.dropping || e.y - 50 < 400) {   // silk thread from the ceiling
+            ctx.strokeStyle = 'rgba(230,230,230,0.5)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(e.x, 50); ctx.lineTo(e.x, e.y - 6); ctx.stroke();
+        }
+        ctx.strokeStyle = '#1A0A1A'; ctx.lineWidth = 2;   // 8 wiggly legs
+        for (const side of [-1, 1]) for (let k = 0; k < 4; k++) {
+            const wig = Math.sin(Date.now() / 80 + k) * 2;
+            ctx.beginPath(); ctx.moveTo(e.x, e.y);
+            ctx.lineTo(e.x + side * 10, e.y - 6 + k * 4 + wig); ctx.lineTo(e.x + side * 16, e.y - 2 + k * 5); ctx.stroke();
+        }
+        ctx.fillStyle = '#2A0A2A';
+        ctx.beginPath(); ctx.ellipse(e.x, e.y + 3, 9, 10, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(e.x, e.y - 7, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FF2222';
+        for (const [ox, oy] of [[-3, -8], [3, -8], [-1.5, -5], [1.5, -5]]) { ctx.beginPath(); ctx.arc(e.x + ox, e.y + oy, 1.4, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = '#AA2222'; ctx.fillRect(e.x - 2, e.y + 2, 4, 5);   // red mark on its back
+    } else if (e.type === 'robot') {
+        const step = Math.sin(e.walk || 0) * 3;
+        ctx.fillStyle = '#556';                                        // legs marching
+        ctx.fillRect(e.x - 7, e.y + 8, 5, 8 + step); ctx.fillRect(e.x + 2, e.y + 8, 5, 8 - step);
+        const metal = ctx.createLinearGradient(e.x - 12, e.y - 14, e.x + 12, e.y + 10);
+        metal.addColorStop(0, '#DDE4EA'); metal.addColorStop(1, '#6A7480');
+        ctx.fillStyle = metal; pathRoundRect(e.x - 12, e.y - 6, 24, 16, 3); ctx.fill();          // body
+        ctx.fillStyle = '#FFCC00'; ctx.fillRect(e.x - 4, e.y - 2, 8, 6);                        // warning panel
+        ctx.fillStyle = metal; pathRoundRect(e.x - 9, e.y - 20, 18, 14, 3); ctx.fill();          // head
+        ctx.fillStyle = '#111'; ctx.fillRect(e.x - 7, e.y - 16, 14, 5);
+        ctx.fillStyle = '#FF2222'; ctx.shadowColor = '#FF0000'; ctx.shadowBlur = 8;
+        ctx.fillRect(e.x - 5 + Math.sin(Date.now() / 200) * 3, e.y - 15, 4, 3);                // scanning red eye
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#666'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(e.x, e.y - 20); ctx.lineTo(e.x, e.y - 26); ctx.stroke();
+    } else if (e.type === 'ghostking') {
+        ctx.globalAlpha = e.hidden ? 0.07 + Math.sin(Date.now() / 150) * 0.04 : 0.85;          // nearly invisible!
+        const r = e.r, wob = Math.sin(Date.now() / 300) * 3;
+        ctx.fillStyle = '#E8D0FF'; ctx.shadowColor = '#AA66FF'; ctx.shadowBlur = 25;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y + wob, r, Math.PI, 0);
+        for (let k = 0; k <= 6; k++) ctx.lineTo(e.x + r - (k * 2 * r) / 6, e.y + wob + r * (k % 2 ? 0.55 : 0.95));
+        ctx.closePath(); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#2A0040';
+        ctx.beginPath(); ctx.ellipse(e.x - r * 0.35, e.y + wob - r * 0.15, r * 0.15, r * 0.22, 0, 0, Math.PI * 2);
+        ctx.ellipse(e.x + r * 0.35, e.y + wob - r * 0.15, r * 0.15, r * 0.22, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(e.x, e.y + wob + r * 0.3, r * 0.22, r * 0.14, 0, 0, Math.PI * 2); ctx.fill();   // "Ooooo!" mouth
+        ctx.fillStyle = '#FFD700';                                                                         // crown
+        ctx.beginPath(); ctx.moveTo(e.x - r * 0.5, e.y + wob - r * 0.85);
+        for (let k = 0; k <= 4; k++) ctx.lineTo(e.x - r * 0.5 + (r / 4) * k, e.y + wob - r * (k % 2 ? 1.0 : 1.3));
+        ctx.lineTo(e.x + r * 0.5, e.y + wob - r * 0.85); ctx.closePath(); ctx.fill();
+    } else if (e.type === 'dragon') {
+        const r = e.r, flap = Math.sin(Date.now() / 200) * 8, charging = e.breath < 40;
+        ctx.fillStyle = '#5A1A3A';                                                         // wings
+        for (const side of [-1, 1]) {
+            ctx.beginPath(); ctx.moveTo(e.x + side * r * 0.3, e.y - r * 0.3);
+            ctx.lineTo(e.x + side * r * 1.6, e.y - r * 1.2 - flap); ctx.lineTo(e.x + side * r * 1.4, e.y + r * 0.3); ctx.closePath(); ctx.fill();
+        }
+        ctx.strokeStyle = '#8A2A4A'; ctx.lineWidth = r * 0.3; ctx.lineCap = 'round';        // tail
+        ctx.beginPath(); ctx.moveTo(e.x + r * 0.5, e.y + r * 0.4); ctx.quadraticCurveTo(e.x + r * 1.6, e.y + r * 0.9, e.x + r * 1.5, e.y - r * 0.1); ctx.stroke();
+        const body = ctx.createRadialGradient(e.x - r * 0.3, e.y - r * 0.2, 4, e.x, e.y, r);
+        body.addColorStop(0, '#C04060'); body.addColorStop(1, '#5A1030');
+        ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(e.x, e.y, r * 0.8, r * 0.65, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#E8B070'; ctx.beginPath(); ctx.ellipse(e.x - r * 0.1, e.y + r * 0.2, r * 0.45, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();   // belly
+        ctx.strokeStyle = '#8A2A4A'; ctx.lineWidth = r * 0.28;                              // neck
+        ctx.beginPath(); ctx.moveTo(e.x - r * 0.4, e.y - r * 0.3); ctx.quadraticCurveTo(e.x - r * 0.9, e.y - r * 0.8, e.x - r * 0.9, e.y - r * 0.4); ctx.stroke();
+        ctx.fillStyle = '#9A2A4A'; ctx.beginPath(); ctx.ellipse(e.x - r * 1.0, e.y - r * 0.35, r * 0.35, r * 0.25, 0.2, 0, Math.PI * 2); ctx.fill();   // head
+        ctx.fillStyle = '#E8D8B0';
+        for (const ox of [-0.9, -1.1]) { ctx.beginPath(); ctx.moveTo(e.x + r * ox, e.y - r * 0.55); ctx.lineTo(e.x + r * (ox + 0.1), e.y - r * 0.9); ctx.lineTo(e.x + r * (ox + 0.15), e.y - r * 0.5); ctx.fill(); }   // horns
+        ctx.fillStyle = '#FFEE00'; ctx.shadowColor = '#FFEE00'; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(e.x - r * 1.05, e.y - r * 0.42, r * 0.07, 0, Math.PI * 2); ctx.fill();
+        if (charging) {   // fire building up in its mouth
+            ctx.fillStyle = `rgba(255,${120 + Math.random() * 100},0,0.9)`; ctx.shadowColor = '#FF6600'; ctx.shadowBlur = 25;
+            ctx.beginPath(); ctx.arc(e.x - r * 1.3, e.y - r * 0.3, r * (0.1 + (40 - e.breath) / 200), 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.shadowBlur = 0;
+    } else if (e.type === 'shadow') {
+        ctx.globalAlpha = e.emerge > 0 ? 1 - e.emerge / 60 : 0.85;
+        ctx.shadowColor = '#8844FF'; ctx.shadowBlur = 16;
+        drawHuman(e.x, e.y, 1, { shirt: '#1A1026', sleeves: '#140C1E', pants: '#0E0816', shoes: '#000', skin: '#2A1A3A', hands: '#2A1A3A',
+                                 hair: '#000', hairStyle: 'spiky', walk: e.walk, noFace: true });
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#CC88FF';   // glowing eyes
+        ctx.beginPath(); ctx.arc(e.x - 2.6, e.y - 16.5, 1.4, 0, Math.PI * 2); ctx.arc(e.x + 2.6, e.y - 16.5, 1.4, 0, Math.PI * 2); ctx.fill();
     } else if (e.type === 'worm') {
         if (e.hidden) {
             // Moving dirt bump — it shakes and glows just before popping up
@@ -3683,7 +3867,8 @@ function drawBuilding(b, night) {
             ctx.beginPath(); ctx.arc(x + w - 19 + Math.sin(t * 6) * 4, y - 30 - t * 30, 4 + t * 6, 0, Math.PI * 2); ctx.fill();
         }
     }
-    ctx.fillStyle = '#6B3E1E';                                  // door
+    drawBuildingStyle(b, x, y, w, h, peak, night);
+    ctx.fillStyle = b.door || '#6B3E1E';                        // door
     ctx.fillRect(b.x - 9, y + h - 26, 18, 26);
     ctx.fillStyle = '#FFD700'; ctx.fillRect(b.x + 4, y + h - 14, 2, 2);   // door knob
     ctx.fillStyle = night ? '#FFE070' : '#AADDFF';              // windows glow at night
@@ -3724,6 +3909,65 @@ const TOWN_LOOKS = {
     lily:   { hairStyle: 'long',  pants: '#AA4488', skin: '#C08060' },
     tom:    { hairStyle: 'bald',  pants: '#4A4A3A', beard: '#EEEEEE' },
 };
+
+// Each building has its own look
+function drawBuildingStyle(b, x, y, w, h, peak, night) {
+    const t = Date.now() / 1000;
+    if (b.id === 'cottage') {
+        ctx.fillStyle = '#D8B858';                                       // straw roof
+        ctx.beginPath(); ctx.moveTo(x - 10, y + 2); ctx.quadraticCurveTo(b.x, y - peak - 12, x + w + 10, y + 2); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(120,90,30,0.5)'; ctx.lineWidth = 1;
+        for (let k = 0; k < 10; k++) { ctx.beginPath(); ctx.moveTo(x - 6 + k * (w + 12) / 10, y); ctx.lineTo(b.x + (k - 5) * 3, y - peak + 6); ctx.stroke(); }
+        ctx.fillStyle = night ? '#FFE070' : '#AADDFF';                   // round window
+        ctx.beginPath(); ctx.arc(b.x, y - peak * 0.35, 5, 0, Math.PI * 2); ctx.fill();
+        for (const wx of [x + 10, x + w - 26]) {                         // flower boxes
+            ctx.fillStyle = '#6B3E1E'; ctx.fillRect(wx - 1, y + 27, 18, 4);
+            for (let k = 0; k < 4; k++) { ctx.fillStyle = ['#FF5577', '#FFDD33', '#FF88CC', '#FFFFFF'][k]; ctx.beginPath(); ctx.arc(wx + 2 + k * 4.5, y + 26, 2, 0, Math.PI * 2); ctx.fill(); }
+        }
+    } else if (b.id === 'bighouse') {
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 2;         // two floors
+        ctx.beginPath(); ctx.moveTo(x, y + 28); ctx.lineTo(x + w, y + 28); ctx.stroke();
+        ctx.fillStyle = '#FFFFFF'; ctx.fillRect(b.x - 22, y + 24, 44, 3);   // balcony
+        for (let k = 0; k <= 6; k++) ctx.fillRect(b.x - 22 + k * 7, y + 18, 2, 7);
+        ctx.fillStyle = night ? '#FFE070' : '#AADDFF';
+        ctx.fillRect(b.x - 7, y + 6, 14, 12);                            // balcony door
+    } else if (b.id === 'mansion') {
+        ctx.fillStyle = b.roof;                                          // tower with a pointy top
+        ctx.fillRect(x + w - 22, y - 22, 18, 30);
+        ctx.beginPath(); ctx.moveTo(x + w - 25, y - 22); ctx.lineTo(x + w - 13, y - 48); ctx.lineTo(x + w - 1, y - 22); ctx.fill();
+        ctx.fillStyle = night ? '#FFE070' : '#AADDFF'; ctx.fillRect(x + w - 16, y - 16, 6, 8);
+        ctx.fillStyle = '#FFD700'; ctx.fillRect(x - 8, y - 2, w + 16, 3);   // gold trim
+        ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5;                   // fancy iron fence
+        for (let k = 0; k < 12; k++) { ctx.beginPath(); ctx.moveTo(x - 4 + k * 10, y + h + 12); ctx.lineTo(x - 4 + k * 10, y + h + 2); ctx.stroke(); }
+        ctx.beginPath(); ctx.moveTo(x - 4, y + h + 6); ctx.lineTo(b.x - 14, y + h + 6); ctx.moveTo(b.x + 14, y + h + 6); ctx.lineTo(x + w + 4, y + h + 6); ctx.stroke();
+    } else if (b.id === 'clinic') {
+        ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.arc(b.x, y - 12, 9, 0, Math.PI * 2); ctx.fill();   // red cross sign
+        ctx.fillStyle = '#E02020'; ctx.fillRect(b.x - 2, y - 18, 4, 12); ctx.fillRect(b.x - 6, y - 14, 12, 4);
+    } else if (b.id === 'bakery') {
+        for (let k = 0; k < 8; k++) {                                    // striped awning
+            ctx.fillStyle = k % 2 ? '#FFFFFF' : '#E05050';
+            ctx.beginPath(); ctx.moveTo(x + k * w / 8, y + 30); ctx.lineTo(x + (k + 1) * w / 8, y + 30);
+            ctx.lineTo(x + (k + 1) * w / 8, y + 36); ctx.arc(x + (k + 0.5) * w / 8, y + 36, w / 16, 0, Math.PI); ctx.fill();
+        }
+        ctx.fillStyle = '#E0A050'; ctx.beginPath(); ctx.ellipse(x + 14, y + 44, 9, 5, 0, 0, Math.PI * 2); ctx.fill();   // bread sign
+        ctx.strokeStyle = '#A06020'; ctx.lineWidth = 1; for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(x + 14 + k * 4, y + 41); ctx.lineTo(x + 12 + k * 4, y + 47); ctx.stroke(); }
+    } else if (b.id === 'forge') {
+        ctx.fillStyle = 'rgba(90,90,90,0.55)';                           // stone walls
+        for (let k = 0; k < 14; k++) { ctx.beginPath(); ctx.ellipse(x + 6 + (k * 23) % (w - 8), y + 8 + Math.floor(k / 4) * 12, 6, 4, 0, 0, Math.PI * 2); ctx.fill(); }
+        const glow = 0.6 + Math.sin(t * 8) * 0.2;                       // fire glowing inside
+        ctx.fillStyle = `rgba(255,${100 + Math.random() * 60},20,${glow})`; ctx.fillRect(x + w - 26, y + 12, 16, 14);
+        ctx.fillStyle = '#333';                                          // anvil outside
+        ctx.fillRect(x + w + 2, y + h - 10, 16, 5); ctx.fillRect(x + w + 6, y + h - 5, 8, 5);
+    } else if (b.id === 'hall') {
+        ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.arc(b.x, y - 12, 8, 0, Math.PI * 2); ctx.fill();   // clock
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(b.x, y - 12, 8, 0, Math.PI * 2); ctx.moveTo(b.x, y - 12); ctx.lineTo(b.x + Math.cos(t) * 5, y - 12 + Math.sin(t) * 5);
+        ctx.moveTo(b.x, y - 12); ctx.lineTo(b.x, y - 17); ctx.stroke();
+        ctx.fillStyle = '#555'; ctx.fillRect(x + w + 4, y - 30, 2, 40);  // flag pole + flag
+        ctx.fillStyle = '#3366AA';
+        ctx.beginPath(); ctx.moveTo(x + w + 6, y - 30); ctx.lineTo(x + w + 22, y - 26 + Math.sin(t * 4) * 2); ctx.lineTo(x + w + 6, y - 20); ctx.fill();
+    }
+}
 
 // A townsperson or villager, with little walking legs
 function drawPerson(n) {
@@ -3904,7 +4148,7 @@ function drawParadise() {
     else if (P.phase === 'dusk')      { status = '🌙 MONSTER NIGHT IS COMING! Get ready!'; color = Math.floor(Date.now() / 200) % 2 ? '#FF6666' : '#FFFFFF'; }
     else if (P.quiet)                 { status = `🌙 A quiet night… sleep tight! Morning comes in ${Math.ceil(P.timer / 60)}s`; color = '#AABBFF'; }
     else if (allMonstersDefeated())   { status = '⭐ You did it! Open the chest to win a Light Crystal!'; color = '#FFD700'; }
-    else { status = `🌙 MONSTER NIGHT ${nightNum}/3${nightNum === 3 ? ' — THE KING SLIME IS HERE!' : ''} — beat every monster!`; color = '#AABBFF'; }
+    else { status = `🌙 MONSTER NIGHT ${nightNum}/3${nightNum === 3 ? ' — THE KING SLIME IS HERE!' : nightNum === 2 ? ' — THE GHOST KING IS HERE!' : ''} — beat every monster!`; color = '#AABBFF'; }
     ctx.save();
     ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
     ctx.fillStyle = color; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
@@ -4234,6 +4478,14 @@ function drawCaveDarkness() {
     const dark = ctx.createRadialGradient(player.x, player.y, 50, player.x, player.y, 210 + flicker);
     dark.addColorStop(0, 'rgba(0,0,0,0)'); dark.addColorStop(1, 'rgba(0,0,0,0.9)');
     ctx.fillStyle = dark; ctx.fillRect(0, 0, 800, 600);
+    // Glowing eyes in the dark…
+    for (const e of underground.enemies) {
+        if (!e.alive || e.hidden) continue;
+        const eye = e.type === 'dragon' ? '#FFEE00' : e.type === 'spider' || e.type === 'mole' ? '#FF3333' : null;
+        if (!eye) continue;
+        const ex = e.type === 'dragon' ? e.x - e.r * 1.05 : e.x, ey = e.type === 'dragon' ? e.y - e.r * 0.42 : e.y - 6;
+        ctx.fillStyle = eye; ctx.beginPath(); ctx.arc(ex - 2, ey, 1.6, 0, Math.PI * 2); ctx.arc(ex + 2, ey, 1.6, 0, Math.PI * 2); ctx.fill();
+    }
     // Gems and portals still twinkle through the dark so you can find them
     for (const g of underground.gems) {
         if (!g.mined && Math.sin(Date.now() / 300 + g.x) > 0.3) drawStar(g.x, g.y - 4, 4, g.color);
@@ -4249,7 +4501,7 @@ function drawCaveDarkness() {
         ctx.fillText(`${verb} to mine the gem!`, gem.x, gem.y - 26);
     }
     ctx.fillStyle = 'rgba(255,220,150,0.6)'; ctx.font = '12px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('⛏ Mine the glowing gems — but watch out for moles and lava worms in the dark!', 400, 580);
+    ctx.fillText('⛏ Mine the glowing gems — watch out for moles, spiders and the CAVE DRAGON in the dark!', 400, 580);
 }
 
 // ── DRAW: PLAYER ──────────────────────────────────────────────
@@ -4916,20 +5168,20 @@ function drawAwards() {
     ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
     AWARDS.forEach((a, i) => {
         const col = i % 3, row = Math.floor(i / 3);
-        const x = X + 16 + col * 200, y = Y + 66 + row * 64;
+        const x = X + 16 + col * 200, y = Y + 62 + row * 55;
         const has = awards.got[a.id];
         ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
-        ctx.fillRect(x, y, 188, 56);
-        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 56);
+        ctx.fillRect(x, y, 188, 49);
+        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 49);
         ctx.globalAlpha = has ? 1 : 0.35;
         ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(a.icon, x + 24, y + 37);
+        ctx.fillText(a.icon, x + 24, y + 33);
         ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
         ctx.fillStyle = has ? '#FFE680' : '#888'; ctx.font = 'bold 12px Arial';
-        ctx.fillText(a.name, x + 48, y + 24);
+        ctx.fillText(a.name, x + 48, y + 21);
         ctx.fillStyle = has ? 'rgba(255,255,255,0.75)' : '#666'; ctx.font = '10px Arial';
-        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 48, y + 41);
+        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 48, y + 37);
     });
     ctx.restore();
 }
