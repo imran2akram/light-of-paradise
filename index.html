@@ -97,7 +97,8 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 })();
 
 // ── CONSTANTS ────────────────────────────────────────────────
-const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house' };
+const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house',
+                SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -138,6 +139,14 @@ const ENEMY_TYPES = {
     shadow:    { name: 'Shadow You', hp: 6,  weakTo: POWER.LIGHTNING, color: '#442266' },  // Hell: copies your every move
     zombie:    { name: 'Zombie',     hp: 4,  weakTo: POWER.BRIMSTONE, color: '#6A9A5A' },  // Paradise nights & Underground
     creeper:   { name: 'Creeper',    hp: 3,  weakTo: POWER.ICE,       color: '#4CAF50' },  // hisss… BOOM!
+    pirate:    { name: 'Pirate',     hp: 4,  weakTo: POWER.LIGHTNING, color: '#8A4A2A' },  // Pirate Ship
+    gummy:     { name: 'Gummy Bear', hp: 3,  weakTo: POWER.BRIMSTONE, color: '#FF4466' },  // Candy Land
+    snowman:   { name: 'Snowman',    hp: 4,  weakTo: POWER.BRIMSTONE, color: '#FFFFFF' },  // Ice Kingdom
+    frostgiant:{ name: 'Frost Giant',hp: 30, weakTo: POWER.BRIMSTONE, color: '#9AD8FF' },  // Ice Kingdom boss
+    skeleton:  { name: 'Skeleton',   hp: 4,  weakTo: POWER.LIGHTNING, color: '#EEEEDD' },  // Haunted House
+    thunderbird:{ name: 'Thunder Bird', hp: 30, weakTo: POWER.ICE,    color: '#FFE033' },  // Sky Castle boss
+    alien:     { name: 'Alien',      hp: 3,  weakTo: POWER.ICE,       color: '#66FF66' },  // Space
+    mothership:{ name: 'Alien Mothership', hp: 30, weakTo: POWER.LIGHTNING, color: '#AABBCC' },  // Space boss
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
@@ -263,6 +272,7 @@ const WORKERS = [
     { id: 'fisher', name: 'Fisher',     x: 592, y: 548, coat: '#2A6A8A', hat: 'fisher', giver: true },
     { id: 'teacher', name: 'Teacher (School)', x: 254, y: 250, coat: '#AA4444', hat: 'teacher' },
     { id: 'hattie',  name: 'Hattie the Hat Seller', x: 700, y: 292, coat: '#E080C0', hat: 'hattie' },
+    { id: 'captain', name: 'Captain Salty', x: 705, y: 545, coat: '#1A2A5A', hat: 'captain' },
 ];
 // Villagers stroll around the town square
 const VILLAGERS = [
@@ -369,6 +379,7 @@ let state = {
     armor:              0,         // +hearts from crafted armor
     diamondPickaxe:     false,
     heavenWishes:       3,
+    placesSeen:         {},
     // Island life
     furniture:          { bed: true },   // what's in your house
     lessonHealTimer:    0,
@@ -1060,6 +1071,271 @@ function drawHouse() {
     else if (i >= 0) { const st = gardenStage(i); drawSpeech(GARDEN_POTS[i], `${verb}: ${st === 0 ? 'Plant a seed' : st < 3 ? 'Growing…' : 'Pick it!'}`); }
 }
 
+// ── ADVENTURE PLACES ──────────────────────────────────────────
+// ⛵ Sail from Paradise (talk to Captain Salty) to Candy Land, the Ice Kingdom or the Haunted House.
+// ☁ Climb the cloud stairs in Heaven to the Sky Castle.  🚀 Take the rocket in the Void to Space.
+const VOYAGE_FRAMES = 1200;   // 20 s at sea
+const CAPTAIN = { id: 'captain', name: 'Captain Salty', x: 705, y: 545, coat: '#1A2A5A', hat: 'captain' };
+const DOCK    = { x: 70, y: 540 };    // on each island: sail back to Paradise
+const SKY_STAIRS = { x: 650, y: 170 };   // in Heaven
+const ROCKET  = { x: 120, y: 470 };   // in the Void
+const ISLANDS = [ROOM.CANDY, ROOM.ICE, ROOM.HAUNTED];
+
+const e0 = (type, x, y, extra = {}) => ({ type, x, y, r: 15, hp: ENEMY_TYPES[type].hp, maxHp: ENEMY_TYPES[type].hp, alive: true,
+                                           hitFlash: 0, frozen: 0, dx: 0, dy: 0, emerge: 40, hopTimer: 0,
+                                           home: { x, y, dx: extra.dx || 0, dy: extra.dy || 0 }, ...extra });
+const PLACES = {
+    ship:    { name: '⛵ THE PIRATE SHIP', spawn: [400, 420],
+               make: () => ({ enemies: [], coins: [], voyage: VOYAGE_FRAMES, waveTimer: 120 }) },
+    candy:   { name: '🍭 CANDY LAND', spawn: [120, 470], island: true,
+               make: () => ({ coins: [],
+                   enemies: [0, 1, 2, 3, 4, 5].map(i => e0('gummy', 200 + (i % 3) * 200, 150 + Math.floor(i / 3) * 220, { hue: i * 60, hopTimer: i * 12 })),
+                   lollipops: [0, 1, 2, 3, 4].map(i => ({ x: 150 + i * 130, y: 120 + (i % 2) * 330, picked: false })) }) },
+    ice:     { name: '❄ THE ICE KINGDOM', spawn: [120, 470], island: true,
+               make: () => ({ coins: [],
+                   enemies: [e0('snowman', 250, 200), e0('snowman', 550, 180), e0('snowman', 450, 430),
+                             e0('frostgiant', 620, 300, { r: 40, coinDrop: 20, stompTimer: 160 })] }) },
+    haunted: { name: '👻 THE HAUNTED HOUSE', spawn: [120, 470], island: true,
+               make: () => ({ coins: [],
+                   enemies: [e0('ghost', 300, 200), e0('ghost', 600, 300), e0('skeleton', 450, 250), e0('skeleton', 350, 420), e0('skeleton', 650, 450)],
+                   secret: Math.floor(Math.random() * 3), secretOpen: false, treasureTaken: false }) },
+    sky:     { name: '☁ THE SKY CASTLE', spawn: [400, 520],
+               make: () => ({ coins: [],
+                   enemies: [e0('bat', 200, 200, { dx: 2, dy: 1 }), e0('bat', 600, 250, { dx: -2, dy: 1.2 }),
+                             e0('thunderbird', 400, 170, { r: 34, coinDrop: 20, zapTimer: 120, t: 0 })] }) },
+    space:   { name: '🚀 OUTER SPACE', spawn: [190, 470],
+               make: () => ({ coins: [],
+                   enemies: [e0('alien', 300, 380), e0('alien', 500, 420), e0('alien', 650, 360),
+                             e0('mothership', 400, 130, { r: 44, coinDrop: 20, beamTimer: 140, dropTimer: 300 })] }) },
+};
+const HAUNTED_SHELVES = [{ x: 180, y: 118 }, { x: 400, y: 118 }, { x: 620, y: 118 }];   // one is a secret door!
+let placeState = {};
+function place(room = state.room) { return placeState[room]; }
+
+// Walking into the special exits
+function updatePlaceExits() {
+    const near = (o, r = 30) => Math.hypot(player.x - o.x, player.y - o.y) < r;
+    if (state.room === ROOM.VOID && near(ROCKET, 28))        { showToast('🚀 3… 2… 1… BLAST OFF!', '#FFE066'); sfx('boom'); changeRoom(ROOM.SPACE); return true; }
+    if (state.room === ROOM.SPACE && near(ROCKET, 28))       { showToast('🚀 Back home to the Void!', '#FFE066'); changeRoom(ROOM.VOID); player.x = ROCKET.x + 60; return true; }
+    if (state.room === ROOM.HEAVEN && near(SKY_STAIRS, 30))  { changeRoom(ROOM.SKY); return true; }
+    if (state.room === ROOM.SKY && near({ x: 400, y: 575 }, 30)) { changeRoom(ROOM.HEAVEN); player.x = SKY_STAIRS.x - 50; player.y = SKY_STAIRS.y + 40; return true; }
+    if (PLACES[state.room] && PLACES[state.room].island && near(DOCK, 32)) {
+        showToast('⛵ Sailing back to Paradise Island…', '#88CCFF');
+        changeRoom(ROOM.PARADISE); player.x = CAPTAIN.x - 40; player.y = CAPTAIN.y - 10;
+        return true;
+    }
+    return false;
+}
+
+function sailItems() {
+    const trip = (room, icon, desc) => ({ icon, name: PLACES[room].name.replace(/^\S+ /, ''), desc, cost: 0, status: 'SAIL!',
+        action: () => { state.voyageTo = room; menu = null; changeRoom(ROOM.SHIP); showToast('⚓ Anchors up! Watch out for PIRATES!', '#88CCFF', 180); } });
+    return [
+        trip(ROOM.CANDY,   '🍭', 'Gummy bears and lollipops'),
+        trip(ROOM.ICE,     '❄', 'Snowmen and the Frost Giant'),
+        trip(ROOM.HAUNTED, '👻', 'Skeletons, ghosts and a secret door'),
+    ];
+}
+
+function updatePlace() {
+    const P = place();
+    if (!P) return;
+    if (state.room === ROOM.SHIP) {
+        // Pirates climb aboard in waves until you reach the island
+        if (--P.waveTimer <= 0 && P.voyage > 200) {
+            P.waveTimer = 260;
+            for (const side of [0, 1]) P.enemies.push(e0('pirate', side ? 700 : 100, 200 + Math.random() * 250));
+            showToast('🏴‍☠️ PIRATES are climbing aboard!', '#FF8866', 100);
+        }
+        if (--P.voyage <= 0) {
+            showToast('🏝 LAND HO! We made it!', '#FFE066', 180);
+            giveAward('sailor');
+            changeRoom(state.voyageTo || ROOM.CANDY);
+        }
+    }
+    if (state.room === ROOM.CANDY) {
+        for (const l of P.lollipops) {
+            if (l.picked || Math.hypot(player.x - l.x, player.y - l.y) > 22) continue;
+            l.picked = true;
+            if (state.playerHp < fullHearts()) state.playerHp++;
+            addScore(15);
+            spawnFloatText(l.x, l.y - 20, '🍭 Yum! +1 ❤', '#FF88CC', 70);
+            sfx('coin');
+        }
+    }
+    if (state.room === ROOM.HAUNTED) {
+        const sh = HAUNTED_SHELVES[P.secret];
+        if (!P.secretOpen && Math.hypot(player.x - sh.x, player.y - (sh.y + 30)) < 30) {
+            P.secretOpen = true;
+            showToast('🚪 A SECRET DOOR! The bookcase swung open!', '#CC99FF', 200);
+            sfx('magic'); giveAward('secretDoor');
+        }
+        if (P.secretOpen && !P.treasureTaken && Math.hypot(player.x - sh.x, player.y - (sh.y + 30)) < 26) {
+            P.treasureTaken = true;
+            state.playerHp = fullHearts(); state.bubble = true; addScore(200);
+            showToast('💎 SECRET TREASURE: full hearts, a Shield Bubble and 200 points!', '#FFE066', 220);
+            spawnParticles(sh.x, sh.y + 20, '#FFD700', 20); sfx('win');
+        }
+    }
+}
+
+// Paintings for the new places
+function paintShip(g, R) {
+    const sea = g.createLinearGradient(0, 0, 0, 600);
+    sea.addColorStop(0, '#2A7AB8'); sea.addColorStop(1, '#0E3A6A');
+    g.fillStyle = sea; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 120; i++) { g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = 1.5; const x = R() * 800, y = R() * 600; g.beginPath(); g.arc(x, y, 8 + R() * 10, 0.2, Math.PI - 0.2); g.stroke(); }
+    // The ship's deck
+    g.fillStyle = '#5A3A1E'; g.beginPath(); g.moveTo(90, 90); g.lineTo(710, 90); g.lineTo(740, 330); g.lineTo(710, 580); g.lineTo(90, 580); g.lineTo(60, 330); g.closePath(); g.fill();
+    for (let x = 100; x < 700; x += 26) { g.fillStyle = `hsl(28, 45%, ${30 + R() * 10}%)`; g.fillRect(x, 96, 24, 480); }
+    g.strokeStyle = '#3A2410'; g.lineWidth = 10; g.beginPath(); g.moveTo(90, 90); g.lineTo(710, 90); g.lineTo(740, 330); g.lineTo(710, 580); g.lineTo(90, 580); g.lineTo(60, 330); g.closePath(); g.stroke();
+    for (const [cx, cy] of [[110, 200], [110, 440], [690, 200], [690, 440]]) { g.fillStyle = '#222'; g.beginPath(); g.arc(cx, cy, 11, 0, Math.PI * 2); g.fill(); }   // cannons
+}
+function paintCandy(g, R) {
+    g.fillStyle = '#FFD6EC'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 300; i++) { g.fillStyle = ['#FF88C8', '#FFFFFF', '#AEE8FF', '#FFF2A0', '#C8A0FF'][Math.floor(R() * 5)]; g.fillRect(R() * 800, R() * 600, 4, 2); }   // sprinkles
+    g.fillStyle = '#6B3A1E'; g.beginPath(); g.moveTo(0, 300); for (let x = 0; x <= 800; x += 20) g.lineTo(x, 300 + Math.sin(x / 60) * 14); g.lineTo(800, 340); g.lineTo(0, 340); g.fill();   // chocolate river
+    for (let i = 0; i < 9; i++) {   // gumdrop hills
+        const x = 60 + i * 90, y = 560;
+        g.fillStyle = ['#FF5577', '#55CC77', '#FFCC33', '#AA66FF', '#33BBFF'][i % 5];
+        g.beginPath(); g.arc(x, y, 30, Math.PI, 0); g.fill();
+    }
+    for (const [x, y] of [[80, 120], [720, 110], [60, 400], [740, 420]]) {   // candy cane trees
+        g.strokeStyle = '#FFFFFF'; g.lineWidth = 8; g.beginPath(); g.moveTo(x, y + 60); g.lineTo(x, y); g.arc(x + 12, y, 12, Math.PI, 0); g.stroke();
+        g.strokeStyle = '#E03030'; g.lineWidth = 8; g.setLineDash([8, 8]); g.beginPath(); g.moveTo(x, y + 60); g.lineTo(x, y); g.arc(x + 12, y, 12, Math.PI, 0); g.stroke(); g.setLineDash([]);
+    }
+}
+function paintIce(g, R) {
+    g.fillStyle = '#EAF6FF'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 40; i++) {   // slippery ice patches
+        const x = R() * 800, y = 80 + R() * 520;
+        g.fillStyle = 'rgba(150,210,255,0.5)'; g.beginPath(); g.ellipse(x, y, 30 + R() * 50, 12 + R() * 16, R() * 3, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = 'rgba(255,255,255,0.8)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x - 10, y - 3); g.lineTo(x + 8, y - 6); g.stroke();
+    }
+    g.fillStyle = '#BFE6FF'; g.fillRect(250, 50, 300, 50);   // ice palace across the top
+    for (const tx of [250, 330, 470, 550]) { g.fillStyle = '#A8DCFF'; g.fillRect(tx - 12, 36, 24, 64); g.beginPath(); g.moveTo(tx - 16, 36); g.lineTo(tx, 12); g.lineTo(tx + 16, 36); g.fill(); }
+    for (const [x, y] of [[60, 150], [740, 160], [50, 380], [760, 400], [200, 540], [620, 560]]) {   // snowy pine trees
+        g.fillStyle = '#2E6A4A'; for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(x - 20 + k * 4, y + k * -14); g.lineTo(x, y - 30 - k * 14); g.lineTo(x + 20 - k * 4, y + k * -14); g.fill(); }
+        g.fillStyle = '#FFFFFF'; g.beginPath(); g.moveTo(x - 8, y - 44); g.lineTo(x, y - 58); g.lineTo(x + 8, y - 44); g.fill();
+    }
+}
+function paintHaunted(g, R) {
+    for (let y = 130; y < 600; y += 20) for (let x = (y / 20) % 2 ? -40 : 0; x < 800; x += 80) { g.fillStyle = `hsl(280, 15%, ${12 + R() * 6}%)`; g.fillRect(x, y, 79, 19); }
+    g.fillStyle = '#2A1A3A'; g.fillRect(0, 46, 800, 90);
+    g.fillStyle = 'rgba(120,60,140,0.3)'; for (let x = 0; x < 800; x += 30) g.fillRect(x, 46, 14, 90);
+    for (const [x, y] of [[40, 60], [760, 60]]) {   // cobwebs
+        g.strokeStyle = 'rgba(220,220,220,0.5)'; g.lineWidth = 1;
+        for (let k = 0; k < 5; k++) { g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(k * 0.4 + (x > 400 ? 1.6 : 0)) * 60, y + Math.sin(k * 0.4 + (x > 400 ? 1.6 : 0)) * 60); g.stroke(); }
+    }
+    for (const px of [290, 510]) {   // creepy portraits
+        g.fillStyle = '#6A4A1A'; g.fillRect(px - 22, 62, 44, 54); g.fillStyle = '#3A2A3A'; g.fillRect(px - 17, 67, 34, 44);
+        g.fillStyle = '#E8D8C8'; g.beginPath(); g.arc(px, 84, 9, 0, Math.PI * 2); g.fill();
+    }
+}
+function paintSky(g, R) {
+    const sky = g.createLinearGradient(0, 0, 0, 600);
+    sky.addColorStop(0, '#5AA8F0'); sky.addColorStop(1, '#CFE9FF');
+    g.fillStyle = sky; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 50; i++) { const x = R() * 800, y = 380 + R() * 240, r = 40 + R() * 50; g.fillStyle = 'rgba(255,255,255,0.8)'; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); }
+    g.fillStyle = '#B8B0A8'; g.fillRect(130, 250, 540, 280);                 // castle courtyard
+    for (let x = 130; x < 670; x += 30) for (let y = 250; y < 530; y += 20) { g.strokeStyle = 'rgba(0,0,0,0.12)'; g.strokeRect(x + ((y / 20) % 2) * 15, y, 30, 20); }
+    for (const tx of [130, 670]) {                                          // towers
+        g.fillStyle = '#A8A098'; g.fillRect(tx - 30, 140, 60, 390);
+        g.fillStyle = '#7A3A8A'; g.beginPath(); g.moveTo(tx - 38, 140); g.lineTo(tx, 70); g.lineTo(tx + 38, 140); g.fill();
+    }
+    g.fillStyle = '#7A3A8A'; for (const bx of [260, 540]) { g.fillRect(bx, 150, 30, 60); g.fillStyle = '#FFD700'; g.fillRect(bx + 11, 165, 8, 8); g.fillStyle = '#7A3A8A'; }   // banners
+}
+function paintSpace(g, R) {
+    g.fillStyle = '#05050F'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 250; i++) { g.fillStyle = `rgba(255,255,255,${0.3 + R() * 0.7})`; g.fillRect(R() * 800, R() * 600, R() < 0.1 ? 2 : 1, R() < 0.1 ? 2 : 1); }
+    const pl = g.createRadialGradient(660, 120, 10, 680, 140, 80);   // a ringed planet
+    pl.addColorStop(0, '#FFB070'); pl.addColorStop(1, '#8A3A20');
+    g.fillStyle = pl; g.beginPath(); g.arc(680, 140, 70, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = 'rgba(255,220,160,0.7)'; g.lineWidth = 6; g.beginPath(); g.ellipse(680, 140, 110, 22, -0.3, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = '#8A8A92'; g.beginPath(); g.moveTo(0, 330); for (let x = 0; x <= 800; x += 40) g.lineTo(x, 330 + Math.sin(x / 70) * 12); g.lineTo(800, 600); g.lineTo(0, 600); g.fill();   // moon surface
+    for (let i = 0; i < 18; i++) { const x = R() * 800, y = 360 + R() * 230, r = 8 + R() * 22; g.fillStyle = 'rgba(60,60,70,0.5)'; g.beginPath(); g.ellipse(x, y, r, r * 0.45, 0, 0, Math.PI * 2); g.fill(); }   // craters
+}
+
+// Moving decorations drawn every frame
+function drawPlace() {
+    const t = Date.now() / 1000, P = place();
+    if (!P) return;
+    const label = (text, x, y, col = 'rgba(255,255,255,0.9)') => { ctx.fillStyle = col; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
+    if (PLACES[state.room].island) {   // the boat home
+        ctx.fillStyle = '#6B3E1E'; ctx.beginPath(); ctx.moveTo(DOCK.x - 30, DOCK.y); ctx.lineTo(DOCK.x + 30, DOCK.y); ctx.lineTo(DOCK.x + 20, DOCK.y + 16); ctx.lineTo(DOCK.x - 20, DOCK.y + 16); ctx.fill();
+        ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.moveTo(DOCK.x, DOCK.y - 40); ctx.lineTo(DOCK.x + 22, DOCK.y - 6); ctx.lineTo(DOCK.x, DOCK.y - 6); ctx.fill();
+        ctx.fillStyle = '#555'; ctx.fillRect(DOCK.x - 1, DOCK.y - 42, 2, 42);
+        label('⛵ Sail home', DOCK.x, DOCK.y + 30, state.room === ROOM.ICE ? '#335' : '#FFF');
+    }
+    if (state.room === ROOM.SHIP) {
+        // Mast and a flapping sail, the sea rushing past
+        ctx.fillStyle = '#4A2E18'; ctx.fillRect(396, 110, 8, 200);
+        ctx.fillStyle = '#F4EEDC'; ctx.beginPath(); ctx.moveTo(404, 120); ctx.quadraticCurveTo(480 + Math.sin(t * 2) * 10, 180, 404, 260); ctx.fill();
+        ctx.fillStyle = '#111'; ctx.beginPath(); ctx.moveTo(404, 112); ctx.lineTo(440, 118); ctx.lineTo(404, 126); ctx.fill();   // pirate flag
+        ctx.fillStyle = '#FFF'; ctx.font = '8px Arial'; ctx.fillText('☠', 418, 122);
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+        for (let k = 0; k < 10; k++) { const y = (k * 67 + t * 120) % 620 - 10; ctx.beginPath(); ctx.moveTo(20, y); ctx.lineTo(40, y + 8); ctx.moveTo(760, y); ctx.lineTo(780, y + 8); ctx.stroke(); }
+        const secs = Math.ceil(P.voyage / 60);
+        label(`🏝 Land in ${secs}s — fight off the pirates!`, 400, 586, '#FFE066');
+    }
+    if (state.room === ROOM.CANDY) {
+        for (const l of P.lollipops) {
+            if (l.picked) continue;
+            ctx.fillStyle = '#FFF'; ctx.fillRect(l.x - 1, l.y, 2, 16);
+            ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(t * 2);
+            for (let k = 0; k < 4; k++) { ctx.fillStyle = k % 2 ? '#FF4488' : '#FFFFFF'; ctx.beginPath(); ctx.arc(0, 0, 9 - k * 2, 0, Math.PI * 2); ctx.fill(); }
+            ctx.restore();
+        }
+    }
+    // The bad guys here
+    for (const e of P.enemies) {
+        if (!e.alive) continue;
+        drawEnemy(e, t);
+        if (!(e.emerge > 0)) drawEnemyHp(e);
+    }
+    drawCoins(P.coins);
+    if (state.room === ROOM.HAUNTED) {
+        HAUNTED_SHELVES.forEach((sh, i) => {
+            const open = P.secretOpen && i === P.secret;
+            ctx.fillStyle = '#3A2410'; ctx.fillRect(sh.x - 30, sh.y - 50, 60, 72);
+            if (open) {   // the secret room behind!
+                ctx.fillStyle = '#0A0510'; ctx.fillRect(sh.x - 26, sh.y - 46, 52, 64);
+                if (!P.treasureTaken) { ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 15; ctx.fillRect(sh.x - 10, sh.y - 4, 20, 14); ctx.shadowBlur = 0; }
+                label(P.treasureTaken ? 'empty…' : '💎 TREASURE!', sh.x, sh.y + 36, '#FFE066');
+            } else {
+                for (let r = 0; r < 3; r++) for (let b = 0; b < 6; b++) { ctx.fillStyle = ['#5A1A1A', '#1A3A5A', '#2A4A1A', '#5A4A1A'][(b + r + i) % 4]; ctx.fillRect(sh.x - 26 + b * 9, sh.y - 44 + r * 22, 7, 18); }
+            }
+        });
+        // Flickering candles and spooky darkness
+        const dark = ctx.createRadialGradient(player.x, player.y, 60, player.x, player.y, 330);
+        dark.addColorStop(0, 'rgba(0,0,0,0)'); dark.addColorStop(1, 'rgba(0,0,10,0.75)');
+        ctx.fillStyle = dark; ctx.fillRect(0, 0, 800, 600);
+        for (const [cx, cy] of [[100, 200], [700, 200], [100, 450], [700, 450]]) {
+            ctx.fillStyle = '#EEE'; ctx.fillRect(cx - 3, cy, 6, 14);
+            ctx.fillStyle = `rgba(255,${180 + Math.random() * 60},80,0.9)`; ctx.beginPath(); ctx.ellipse(cx, cy - 4, 3, 6 + Math.random() * 2, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        label('Psst… one of these bookcases is a SECRET DOOR. Walk into it!', 400, 588, '#CC99FF');
+    }
+    if (state.room === ROOM.SKY) {
+        ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.ellipse(400, 580, 50, 16, 0, 0, Math.PI * 2); ctx.fill();
+        label('☁ Stairs down to Heaven', 400, 566, '#446');
+    }
+    if (state.room === ROOM.SPACE) {
+        drawRocket(ROCKET.x, ROCKET.y, 'Rocket home');
+        label('You feel floaty… no gravity in space!', 400, 588, '#AACCFF');
+    }
+}
+
+function drawRocket(x, y, text) {
+    ctx.save();
+    ctx.fillStyle = '#EEE'; ctx.beginPath(); ctx.moveTo(x, y - 40); ctx.quadraticCurveTo(x + 14, y - 20, x + 12, y + 10); ctx.lineTo(x - 12, y + 10); ctx.quadraticCurveTo(x - 14, y - 20, x, y - 40); ctx.fill();
+    ctx.fillStyle = '#E03030'; ctx.beginPath(); ctx.moveTo(x - 12, y); ctx.lineTo(x - 22, y + 16); ctx.lineTo(x - 10, y + 10); ctx.fill(); ctx.beginPath(); ctx.moveTo(x + 12, y); ctx.lineTo(x + 22, y + 16); ctx.lineTo(x + 10, y + 10); ctx.fill();
+    ctx.fillStyle = '#5AB0F0'; ctx.beginPath(); ctx.arc(x, y - 16, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `rgba(255,${150 + Math.random() * 100},0,0.9)`; ctx.beginPath(); ctx.moveTo(x - 7, y + 10); ctx.lineTo(x, y + 22 + Math.random() * 8); ctx.lineTo(x + 7, y + 10); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(`🚀 ${text}`, x, y + 40);
+    ctx.restore();
+}
+
 // ── HEAVEN: the opposite of Hell. No monsters, it heals you, 3 wishes, unlimited blocks ──
 const WISH_ANGEL = { id: 'angel', name: 'Angel of Wishes', x: 400, y: 232 };
 function makeHeaven() {
@@ -1150,6 +1426,13 @@ function drawAngel(x, y, big = false) {
 }
 
 function drawHeaven() {
+    // Cloud stairs up to the Sky Castle
+    for (let k = 0; k < 5; k++) {
+        ctx.fillStyle = `rgba(255,255,255,${0.95 - k * 0.1})`;
+        ctx.beginPath(); ctx.ellipse(SKY_STAIRS.x + k * 14, SKY_STAIRS.y - k * 16, 26 - k * 2, 9, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#446'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('☁ Stairs to the SKY CASTLE', SKY_STAIRS.x + 20, SKY_STAIRS.y + 26);
     for (const a of heaven.angels) { drawGroundShadow(a.x, a.y + 30, 10, 3, 0.12); drawAngel(a.x, a.y - 10 + Math.sin(Date.now() / 400 + a.x) * 5); }
     drawGroundShadow(WISH_ANGEL.x, WISH_ANGEL.y + 20, 12, 4, 0.2);
     drawAngel(WISH_ANGEL.x, WISH_ANGEL.y, true);
@@ -1191,6 +1474,12 @@ const PORTALS = {
         { x: 400, y: 545, shape: 'hexagon'  },
     ],
     house: [],   // you leave by the front door, not a portal
+    ship:    [],                                         // you're at sea!
+    candy:   [{ x: 740, y: 300, shape: 'circle'  }],
+    ice:     [{ x: 740, y: 300, shape: 'hexagon' }],
+    haunted: [{ x: 740, y: 520, shape: 'star'    }],
+    sky:     [{ x: 740, y: 470, shape: 'diamond' }],
+    space:   [{ x: 740, y: 470, shape: 'star'    }],
     heaven: [
         { x: 60,  y: 330, shape: 'circle'   },
         { x: 740, y: 330, shape: 'star'     },
@@ -1328,6 +1617,24 @@ const SONGS = {
     secret: { bpm: 100, lead: 'triangle',   // sparkly treasure music
         melody: [84, 88, 91, 88, 96, 0, 91, 0, 86, 89, 93, 89, 98, 0, 93, 0,  84, 88, 91, 96, 95, 91, 88, 0, 86, 91, 95, 98, 96, 0, 0, 0],
         bass:   [48, 0, 55, 0, 52, 0, 55, 0, 50, 0, 57, 0, 53, 0, 57, 0,  48, 0, 55, 0, 52, 0, 55, 0, 55, 0, 50, 0, 48, 0, 0, 0] },
+    ship: { bpm: 126, lead: 'square',   // sea shanty
+        melody: [69, 0, 69, 71, 72, 0, 69, 0, 67, 0, 64, 0, 67, 69, 0, 0,  69, 0, 69, 71, 72, 0, 74, 0, 76, 74, 72, 71, 69, 0, 0, 0],
+        bass:   [45, 0, 52, 0, 45, 0, 52, 0, 43, 0, 50, 0, 45, 0, 52, 0,  45, 0, 52, 0, 45, 0, 52, 0, 40, 0, 47, 0, 45, 0, 0, 0] },
+    candy: { bpm: 140, lead: 'triangle',   // bouncy and sweet
+        melody: [72, 76, 79, 76, 81, 79, 76, 72, 74, 77, 81, 77, 84, 81, 77, 74,  72, 76, 79, 84, 83, 79, 76, 74, 72, 0, 79, 0, 84, 0, 0, 0],
+        bass:   [48, 0, 55, 0, 48, 0, 55, 0, 50, 0, 57, 0, 50, 0, 57, 0,  48, 0, 55, 0, 52, 0, 55, 0, 48, 0, 43, 0, 48, 0, 0, 0] },
+    ice: { bpm: 96, lead: 'sine',   // twinkly and cold
+        melody: [88, 0, 84, 0, 91, 0, 88, 0, 86, 0, 83, 0, 88, 0, 0, 0,  88, 0, 84, 0, 93, 0, 91, 0, 89, 0, 86, 0, 84, 0, 0, 0],
+        bass:   [45, 0, 0, 0, 52, 0, 0, 0, 50, 0, 0, 0, 52, 0, 0, 0,  45, 0, 0, 0, 53, 0, 0, 0, 50, 0, 0, 0, 45, 0, 0, 0] },
+    haunted: { bpm: 80, lead: 'sawtooth',   // spooky organ
+        melody: [62, 0, 65, 0, 68, 0, 67, 66, 65, 0, 62, 0, 61, 0, 0, 0,  62, 0, 65, 0, 69, 0, 68, 67, 66, 0, 65, 0, 62, 0, 0, 0],
+        bass:   [38, 0, 0, 0, 37, 0, 0, 0, 36, 0, 0, 0, 37, 0, 0, 0,  38, 0, 0, 0, 37, 0, 0, 0, 36, 0, 0, 0, 38, 0, 0, 0] },
+    sky: { bpm: 118, lead: 'square',   // brave and heroic
+        melody: [67, 0, 72, 0, 76, 0, 79, 0, 77, 76, 74, 0, 72, 0, 0, 0,  67, 0, 72, 0, 76, 0, 81, 0, 79, 77, 76, 74, 72, 0, 0, 0],
+        bass:   [48, 0, 48, 0, 53, 0, 53, 0, 50, 0, 50, 0, 55, 0, 55, 0,  48, 0, 48, 0, 53, 0, 53, 0, 55, 0, 55, 0, 48, 0, 0, 0] },
+    space: { bpm: 100, lead: 'square',   // bleepy synth
+        melody: [76, 0, 83, 0, 81, 0, 76, 0, 74, 0, 81, 0, 79, 0, 74, 0,  76, 0, 83, 0, 88, 0, 86, 0, 83, 0, 81, 0, 79, 0, 76, 0],
+        bass:   [40, 40, 0, 40, 40, 0, 40, 0, 38, 38, 0, 38, 38, 0, 38, 0,  40, 40, 0, 40, 40, 0, 40, 0, 43, 43, 0, 43, 38, 0, 38, 0] },
     house: { bpm: 90, lead: 'triangle',   // cosy music box
         melody: [76, 0, 79, 0, 84, 0, 83, 79, 81, 0, 77, 0, 79, 0, 0, 0,  76, 0, 79, 0, 84, 0, 86, 84, 83, 0, 79, 0, 81, 0, 0, 0],
         bass:   [48, 0, 0, 0, 52, 0, 0, 0, 53, 0, 0, 0, 55, 0, 0, 0,  48, 0, 0, 0, 52, 0, 0, 0, 50, 0, 0, 0, 53, 0, 0, 0] },
@@ -1413,6 +1720,12 @@ const AWARDS = [
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
     { id: 'race',        icon: '🏁', name: 'Champion!',        desc: 'Win a pet race' },
+    { id: 'sailor',      icon: '⛵', name: 'Sailor',           desc: 'Sail the Pirate Ship' },
+    { id: 'explorer',    icon: '🗺', name: 'Explorer',         desc: 'Visit all 5 adventure places' },
+    { id: 'secretDoor',  icon: '🚪', name: 'Secret Door',      desc: 'Find the Haunted House secret' },
+    { id: 'frostgiant',  icon: '❄', name: 'Giant Slayer',     desc: 'Beat the Frost Giant' },
+    { id: 'thunderbird', icon: '⚡', name: 'Storm Chaser',     desc: 'Beat the Thunder Bird' },
+    { id: 'mothership',  icon: '🛸', name: 'Space Hero',       desc: 'Beat the Alien Mothership' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -1443,7 +1756,7 @@ const SAVE_KEY    = 'lop_save';
 const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'powerTier', 'playerHp', 'coins',
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
-                     'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp'];
+                     'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -2055,7 +2368,7 @@ function resetGame() {
         ownedPets: PETS.map(() => false), activePet: -1, petXp: PETS.map(() => 0),
         ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
         buildMode: false, hotbar: 0, inv: {}, armor: 0, diamondPickaxe: false,
-        furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null,
+        furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {},
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -2182,6 +2495,15 @@ function changeRoom(dest) {
     if (dest === ROOM.UNDERGROUND) { player.x = 100; player.y = 300; underground = makeUnderground(); giveAward('underground'); }
     if (dest === ROOM.HEAVEN)      { player.x = 400; player.y = 330; heaven = makeHeaven(); giveAward('heaven'); }
     if (dest === ROOM.HOUSE)       { player.x = HOUSE_DOOR.x; player.y = 520; }
+    if (PLACES[dest]) {
+        placeState[dest] = PLACES[dest].make();
+        [player.x, player.y] = PLACES[dest].spawn;
+        if (dest !== ROOM.SHIP) {
+            state.placesSeen = state.placesSeen || {};
+            state.placesSeen[dest] = true;
+            if (['candy', 'ice', 'haunted', 'sky', 'space'].every(r => state.placesSeen[r])) giveAward('explorer');
+        }
+    }
     if (state.gamePhase === 'playing') saveGame();
     goldenPortal = MAIN_ROOMS.includes(dest) && Math.random() < SECRET_PORTAL_CHANCE
         ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
@@ -2212,6 +2534,13 @@ function updatePlayer() {
     if (len > 1) { dx /= len; dy /= len; }   // diagonals aren't faster
     if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; state.walkPhase += 0.32; }   // remember which way you're going
     dx *= spd; dy *= spd;
+    if (state.room === ROOM.ICE || state.room === ROOM.SPACE) {
+        // Slippery ice / floaty space: you speed up and slow down gently
+        const grip = state.room === ROOM.ICE ? 0.05 : 0.035;
+        state.vx = (state.vx || 0) + (dx - (state.vx || 0)) * grip;
+        state.vy = (state.vy || 0) + (dy - (state.vy || 0)) * grip;
+        dx = state.vx; dy = state.vy;
+    }
     if (state.dashTimer > 0) {   // ZOOM!
         state.dashTimer--;
         dx = state.faceX * 15; dy = state.faceY * 15;
@@ -2230,6 +2559,7 @@ function updatePlayer() {
             return;
         }
     }
+    if (updatePlaceExits()) return;
     // Out through your front door, back to the house you came in by
     if (state.room === ROOM.HOUSE && player.y > 560 && Math.abs(player.x - HOUSE_DOOR.x) < 24) {
         const door = houseDoors().find(d => d.id === state.houseFrom) || houseDoors()[0];
@@ -2321,6 +2651,7 @@ function roomEnemies() {
     }
     if (state.room === ROOM.HELL)        return hell.enemies;
     if (state.room === ROOM.UNDERGROUND) return underground.enemies;
+    if (PLACES[state.room] && place())   return place().enemies;
     return [];
 }
 
@@ -2333,6 +2664,7 @@ function roomCoins() {
     if (state.room === ROOM.PARADISE) return paradise.coins;
     if (state.room === ROOM.HELL)        return hell.coins;
     if (state.room === ROOM.UNDERGROUND) return underground.coins;
+    if (PLACES[state.room] && place())   return place().coins;
     return voidRoom.coins;
 }
 
@@ -2385,6 +2717,7 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
         countStat('kills');
         if (e.type === 'king') giveAward('king');
         if (e.type === 'ghostking' || e.type === 'dragon' || e.type === 'shadow') giveAward(e.type);
+        if (e.type === 'frostgiant' || e.type === 'thunderbird' || e.type === 'mothership') { giveAward(e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
         if (e.type === 'dragon') showToast('🐉 You beat the CAVE DRAGON!', '#FFD700', 200);
     } else if (power === POWER.ICE && !e.frog) {
         if (!e.frozen) sfx('freeze');
@@ -2449,6 +2782,7 @@ function updateRoomEnemies() {
     hell.enemies        = hell.enemies.filter(e => e.alive);
     underground.enemies = underground.enemies.filter(e => e.alive);
     paradise.ambushers  = paradise.ambushers.filter(e => e.alive);
+    if (PLACES[state.room] && place()) place().enemies = place().enemies.filter(e => e.alive);
 }
 
 function moveFrog(e) {
@@ -2462,7 +2796,48 @@ function moveFrog(e) {
     e.dx *= 0.9; e.dy *= 0.9;
 }
 
+function enemyShoot(e, speed, color, spread = [0]) {
+    const a = Math.atan2(player.y - e.y, player.x - e.x);
+    for (const off of spread) {
+        enemyProjectiles.push({ x: e.x, y: e.y, dx: Math.cos(a + off) * speed, dy: Math.sin(a + off) * speed, color, life: 140, r: 6, enemyType: e.type });
+    }
+}
+
 function moveEnemy(e) {
+    const chase = (spd) => { const a = Math.atan2(player.y - e.y, player.x - e.x); e.x += Math.cos(a) * spd; e.y += Math.sin(a) * spd; e.walk = (e.walk || 0) + spd * 0.15; };
+    if (e.type === 'pirate')   { chase(1.3); return; }
+    if (e.type === 'skeleton') { chase(0.9); if (Math.random() < 0.008) enemyShoot(e, 4, '#EEEEDD'); return; }
+    if (e.type === 'snowman')  { chase(0.4); if (Math.random() < 0.01) enemyShoot(e, 4.5, '#FFFFFF'); return; }
+    if (e.type === 'alien')    { e.x += Math.sin(Date.now() / 500 + e.y) * 1.2; e.y += Math.cos(Date.now() / 700 + e.x) * 0.8; if (Math.random() < 0.01) enemyShoot(e, 5, '#66FF66'); return; }
+    if (e.type === 'gummy') {   // bouncy!
+        if (--e.hopTimer <= 0) { e.hopTimer = 55; const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 4.5; e.dy = Math.sin(a) * 4.5; sfx('boing'); }
+        e.x += e.dx; e.y += e.dy; e.dx *= 0.92; e.dy *= 0.92;
+        return;
+    }
+    if (e.type === 'frostgiant') {
+        chase(0.55);
+        if (--e.stompTimer <= 0) {   // STOMP: a ring of ice shards
+            e.stompTimer = 170;
+            for (let k = 0; k < 12; k++) {
+                const a = k * Math.PI / 6;
+                enemyProjectiles.push({ x: e.x, y: e.y, dx: Math.cos(a) * 4, dy: Math.sin(a) * 4, color: '#BFE8FF', life: 120, r: 7, enemyType: e.type });
+            }
+            triggerShake(14); sfx('boom');
+        }
+        return;
+    }
+    if (e.type === 'thunderbird') {   // swoops in a figure-8 and zaps
+        e.t = (e.t || 0) + 0.012;
+        e.x = 400 + Math.sin(e.t * 2) * 260; e.y = 230 + Math.sin(e.t * 4) * 90;
+        if (--e.zapTimer <= 0) { e.zapTimer = 110; enemyShoot(e, 6, '#FFE033', [-0.2, 0, 0.2]); sfx('zap'); }
+        return;
+    }
+    if (e.type === 'mothership') {   // hovers, fires beams and drops aliens
+        e.x = 400 + Math.sin(Date.now() / 1400) * 280;
+        if (--e.beamTimer <= 0) { e.beamTimer = 140; enemyShoot(e, 5, '#FF44FF', [-0.4, -0.2, 0, 0.2, 0.4]); sfx('zap'); }
+        if (--e.dropTimer <= 0) { e.dropTimer = 320; place().enemies.push(e0('alien', e.x, e.y + 40, { emerge: 20 })); }
+        return;
+    }
     if (e.type === 'zombie') {   // shuffles slowly toward you… "Uuurgh…"
         const a = Math.atan2(player.y - e.y, player.x - e.x);
         e.x += Math.cos(a) * 0.75; e.y += Math.sin(a) * 0.75;
@@ -3622,6 +3997,7 @@ function talkLabel(n) {
     if (n.table)           return 'Craft things ⚒';
     if (n.id === 'teacher') return 'Go to School 🏫';
     if (n.id === 'hattie')  return 'Buy a hat 🎩';
+    if (n.id === 'captain') return 'Set sail! ⛵';
     if (paradise.birthday && paradise.birthday.id === n.id && !paradise.birthday.wished) return 'Say Happy Birthday! 🎂';
     if (n.id === 'doctor') return state.playerHp < maxHp ? `Heal (🪙${HEAL_COST})` : 'Talk';
     if (n.id === 'smith')  return 'Open the Forge 🔨';
@@ -3662,6 +4038,7 @@ function talkTo(n) {
     if (n.table) { openMenu('⚒ CRAFTING TABLE', craftItems); return; }
     if (n.id === 'teacher') { openMenu('🏫 SCHOOL — learn something new!', lessonItems); return; }
     if (n.id === 'hattie')  { openMenu("🎩 HATTIE'S HATS", hatItems); return; }
+    if (n.id === 'captain') { openMenu('⚓ WHERE SHALL WE SAIL, MATEY?', sailItems); return; }
     if (paradise.birthday && paradise.birthday.id === n.id && !paradise.birthday.wished) {
         paradise.birthday.wished = true;
         if (state.playerHp < fullHearts()) state.playerHp++;
@@ -3925,6 +4302,16 @@ function checkPickups() {
     if (state.room === ROOM.VOID) {
         // Coins in Void
         for (const coin of voidRoom.coins) {
+            if (!coin.picked && Math.hypot(player.x - coin.x, player.y - coin.y) < 22) {
+                coin.picked = true;
+                collectCoin();
+            }
+        }
+    }
+
+    // Coins everywhere else (Underground, adventure places…)
+    if (![ROOM.VOID, ROOM.HELL, ROOM.PARADISE].includes(state.room)) {
+        for (const coin of roomCoins()) {
             if (!coin.picked && Math.hypot(player.x - coin.x, player.y - coin.y) < 22) {
                 coin.picked = true;
                 collectCoin();
@@ -4226,6 +4613,7 @@ function drawRaceMaster() {
 
 function drawVoid() {
     drawRaceMaster();
+    drawRocket(ROCKET.x, ROCKET.y, 'To SPACE!');
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.font      = 'bold 26px Arial'; ctx.textAlign = 'center';
     ctx.fillText('~ THE VOID ~', 400, 295);
@@ -4477,7 +4865,8 @@ function drawFrog(e) {
 function drawEnemy(e, t) {
     if (e.frog) { drawGroundShadow(e.x, e.y + 12, 10, 3); drawFrog(e); return; }
     if (!e.hidden && !(e.emerge > 45)) {
-        const flying = e.type === 'ghost' || e.type === 'bat' || e.type === 'imp' || e.type === 'ghostking' || e.dropping;
+        const flying = e.type === 'ghost' || e.type === 'bat' || e.type === 'imp' || e.type === 'ghostking' || e.dropping
+                    || e.type === 'thunderbird' || e.type === 'mothership' || state.room === ROOM.SPACE;
         drawGroundShadow(e.x + 2, e.y + e.r + (flying ? 12 : 2), e.r * (flying ? 0.7 : 1), e.r * 0.3, flying ? 0.15 : 0.3);
     }
     ctx.save();
@@ -4537,6 +4926,76 @@ function drawEnemy(e, t) {
         ctx.arc(e.x - 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.arc(e.x + 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.fill();
+    } else if (e.type === 'pirate') {
+        drawHuman(e.x, e.y, 1, { shirt: '#EEEEEE', sleeves: '#C03030', pants: '#3A2A1A', shoes: '#111', hair: '#2A1A0A', hairStyle: 'short', walk: e.walk, beard: '#2A1A0A' });
+        ctx.fillStyle = '#C03030'; ctx.fillRect(e.x - 7, e.y - 24, 14, 4);                  // bandana
+        ctx.fillStyle = '#111'; ctx.fillRect(e.x - 4.5, e.y - 18, 4, 3);                     // eye patch
+        for (let k = 0; k < 3; k++) { ctx.fillStyle = '#C03030'; ctx.fillRect(e.x - 8, e.y - 6 + k * 4, 16, 2); }   // stripes
+        ctx.strokeStyle = '#CCC'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(e.x + 9, e.y + 3); ctx.quadraticCurveTo(e.x + 20, e.y - 6, e.x + 16, e.y - 16); ctx.stroke();   // cutlass
+    } else if (e.type === 'gummy') {
+        const c = `hsla(${e.hue || 0}, 90%, 60%, 0.8)`;
+        const squash = 1 + Math.min(0.3, Math.hypot(e.dx, e.dy) / 12);
+        ctx.translate(e.x, e.y); ctx.scale(1 / squash, squash);
+        ctx.fillStyle = c;
+        ctx.beginPath(); ctx.ellipse(0, 4, 11, 10, 0, 0, Math.PI * 2); ctx.fill();             // body
+        ctx.beginPath(); ctx.arc(0, -9, 8, 0, Math.PI * 2); ctx.fill();                          // head
+        ctx.beginPath(); ctx.arc(-6, -15, 3.5, 0, Math.PI * 2); ctx.arc(6, -15, 3.5, 0, Math.PI * 2); ctx.fill();   // ears
+        ctx.beginPath(); ctx.ellipse(-10, 2, 3, 5, 0.4, 0, Math.PI * 2); ctx.ellipse(10, 2, 3, 5, -0.4, 0, Math.PI * 2); ctx.fill();   // arms
+        ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(-3, -12, 2, 0, Math.PI * 2); ctx.fill();   // shiny
+        ctx.fillStyle = '#300'; ctx.beginPath(); ctx.arc(-3, -9, 1.3, 0, Math.PI * 2); ctx.arc(3, -9, 1.3, 0, Math.PI * 2); ctx.fill();
+    } else if (e.type === 'snowman') {
+        for (const [oy, r] of [[8, 12], [-6, 9], [-18, 7]]) { ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.arc(e.x, e.y + oy, r, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#CDE'; ctx.lineWidth = 1; ctx.stroke(); }
+        ctx.fillStyle = '#FF8822'; ctx.beginPath(); ctx.moveTo(e.x, e.y - 18); ctx.lineTo(e.x + 8, e.y - 17); ctx.lineTo(e.x, e.y - 15); ctx.fill();   // carrot nose
+        ctx.fillStyle = '#111'; ctx.fillRect(e.x - 3, e.y - 21, 2, 2); ctx.fillRect(e.x + 2, e.y - 21, 2, 2);
+        ctx.fillRect(e.x - 6, e.y - 28, 12, 3); ctx.fillRect(e.x - 4, e.y - 36, 8, 8);            // top hat
+        ctx.strokeStyle = '#6B3E1E'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(e.x - 9, e.y - 6); ctx.lineTo(e.x - 18, e.y - 14); ctx.moveTo(e.x + 9, e.y - 6); ctx.lineTo(e.x + 18, e.y - 14); ctx.stroke();
+    } else if (e.type === 'frostgiant') {
+        const r = e.r;
+        ctx.fillStyle = '#7ABCE8'; ctx.fillRect(e.x - r * 0.5, e.y + r * 0.3, r * 0.35, r * 0.6); ctx.fillRect(e.x + r * 0.15, e.y + r * 0.3, r * 0.35, r * 0.6);   // legs
+        const body = ctx.createLinearGradient(e.x - r, e.y - r, e.x + r, e.y + r);
+        body.addColorStop(0, '#DFF4FF'); body.addColorStop(1, '#6AAEDC');
+        ctx.fillStyle = body; pathRoundRect(e.x - r * 0.7, e.y - r * 0.6, r * 1.4, r * 1.0, 10); ctx.fill();
+        ctx.fillRect(e.x - r * 1.0, e.y - r * 0.5, r * 0.3, r * 0.9); ctx.fillRect(e.x + r * 0.7, e.y - r * 0.5, r * 0.3, r * 0.9);   // big arms
+        ctx.beginPath(); ctx.arc(e.x, e.y - r * 0.85, r * 0.38, 0, Math.PI * 2); ctx.fill();   // head
+        ctx.fillStyle = '#FFFFFF'; for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(e.x + k * 7 - 4, e.y - r * 1.15); ctx.lineTo(e.x + k * 7, e.y - r * 1.5); ctx.lineTo(e.x + k * 7 + 4, e.y - r * 1.15); ctx.fill(); }   // icy crown
+        ctx.fillStyle = '#0A3A8A'; ctx.beginPath(); ctx.arc(e.x - 6, e.y - r * 0.9, 3, 0, Math.PI * 2); ctx.arc(e.x + 6, e.y - r * 0.9, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#EAF6FF'; ctx.beginPath(); ctx.moveTo(e.x - 10, e.y - r * 0.7); ctx.lineTo(e.x, e.y - r * 0.35); ctx.lineTo(e.x + 10, e.y - r * 0.7); ctx.fill();   // icicle beard
+    } else if (e.type === 'skeleton') {
+        const step = Math.sin(e.walk || 0) * 3;
+        ctx.strokeStyle = '#EEEEDD'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(e.x - 3, e.y + 4); ctx.lineTo(e.x - 5, e.y + 16 - step); ctx.moveTo(e.x + 3, e.y + 4); ctx.lineTo(e.x + 5, e.y + 16 + step); ctx.stroke();   // legs
+        ctx.beginPath(); ctx.moveTo(e.x, e.y - 9); ctx.lineTo(e.x, e.y + 4); ctx.stroke();                                     // spine
+        ctx.lineWidth = 2; for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(e.x - 6, e.y - 7 + k * 4); ctx.lineTo(e.x + 6, e.y - 7 + k * 4); ctx.stroke(); }   // ribs
+        ctx.beginPath(); ctx.moveTo(e.x - 6, e.y - 8); ctx.lineTo(e.x - 11, e.y + 2 + step); ctx.moveTo(e.x + 6, e.y - 8); ctx.lineTo(e.x + 11, e.y + 2 - step); ctx.stroke();   // arms
+        ctx.fillStyle = '#EEEEDD'; ctx.beginPath(); ctx.arc(e.x, e.y - 16, 7, 0, Math.PI * 2); ctx.fill();                   // skull
+        ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(e.x - 2.5, e.y - 17, 2, 0, Math.PI * 2); ctx.arc(e.x + 2.5, e.y - 17, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(e.x - 3, e.y - 12, 6, 1.5);
+    } else if (e.type === 'thunderbird') {
+        const r = e.r, flap = Math.sin(Date.now() / 90) * 14;
+        ctx.fillStyle = '#E8B800'; ctx.shadowColor = '#FFE033'; ctx.shadowBlur = 20;
+        for (const side of [-1, 1]) { ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x + side * r * 1.8, e.y - r * 0.4 - flap); ctx.lineTo(e.x + side * r * 1.4, e.y + r * 0.3); ctx.closePath(); ctx.fill(); }
+        ctx.fillStyle = '#FFE033'; ctx.beginPath(); ctx.ellipse(e.x, e.y, r * 0.5, r * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(e.x, e.y - r * 0.7, r * 0.3, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#FF8800'; ctx.beginPath(); ctx.moveTo(e.x - 4, e.y - r * 0.65); ctx.lineTo(e.x + 4, e.y - r * 0.65); ctx.lineTo(e.x, e.y - r * 0.4); ctx.fill();   // beak
+        ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(e.x - 5, e.y - r * 0.78, 2.5, 0, Math.PI * 2); ctx.arc(e.x + 5, e.y - r * 0.78, 2.5, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2;   // crackling lightning around it
+        if (Math.random() < 0.5) { ctx.beginPath(); ctx.moveTo(e.x - r, e.y - r); ctx.lineTo(e.x - r * 0.6, e.y - r * 0.5); ctx.lineTo(e.x - r * 0.9, e.y - r * 0.3); ctx.stroke(); }
+    } else if (e.type === 'alien') {
+        ctx.fillStyle = '#44CC44'; ctx.beginPath(); ctx.ellipse(e.x, e.y + 4, 8, 10, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(e.x, e.y - 10, 10, 8, 0, 0, Math.PI * 2); ctx.fill();    // big head
+        ctx.strokeStyle = '#44CC44'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(e.x - 4, e.y - 17); ctx.lineTo(e.x - 7, e.y - 25); ctx.moveTo(e.x + 4, e.y - 17); ctx.lineTo(e.x + 7, e.y - 25); ctx.stroke();
+        ctx.fillStyle = '#FFEE44'; ctx.beginPath(); ctx.arc(e.x - 7, e.y - 25, 2, 0, Math.PI * 2); ctx.arc(e.x + 7, e.y - 25, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#111'; ctx.beginPath(); ctx.ellipse(e.x - 4, e.y - 10, 3, 4.5, -0.3, 0, Math.PI * 2); ctx.ellipse(e.x + 4, e.y - 10, 3, 4.5, 0.3, 0, Math.PI * 2); ctx.fill();
+    } else if (e.type === 'mothership') {
+        const r = e.r;
+        ctx.fillStyle = 'rgba(255,100,255,0.15)'; ctx.beginPath(); ctx.moveTo(e.x - 20, e.y + 10); ctx.lineTo(e.x - 50, e.y + 140); ctx.lineTo(e.x + 50, e.y + 140); ctx.lineTo(e.x + 20, e.y + 10); ctx.fill();   // tractor beam
+        const hull = ctx.createLinearGradient(e.x, e.y - 10, e.x, e.y + 20);
+        hull.addColorStop(0, '#DDE4EE'); hull.addColorStop(1, '#6A7488');
+        ctx.fillStyle = hull; ctx.beginPath(); ctx.ellipse(e.x, e.y, r * 1.6, r * 0.45, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(150,255,200,0.7)'; ctx.beginPath(); ctx.arc(e.x, e.y - 8, r * 0.55, Math.PI, 0); ctx.fill();   // glass dome
+        ctx.fillStyle = '#44CC44'; ctx.beginPath(); ctx.arc(e.x, e.y - 14, 8, 0, Math.PI * 2); ctx.fill();                   // alien pilot
+        for (let k = 0; k < 7; k++) { ctx.fillStyle = Math.floor(Date.now() / 150 + k) % 2 ? '#FFEE44' : '#FF44FF'; ctx.beginPath(); ctx.arc(e.x - r * 1.3 + k * r * 0.43, e.y + 4, 3.5, 0, Math.PI * 2); ctx.fill(); }   // blinking lights
     } else if (e.type === 'zombie') {
         drawHuman(e.x, e.y, 1, { shirt: '#2E9A9A', sleeves: '#2E9A9A', pants: '#3A3A8A', shoes: '#333', skin: '#6A9A5A', hands: '#6A9A5A',
                                  hair: '#2A3A1A', hairStyle: 'short', walk: e.walk, noFace: true });
@@ -5023,6 +5482,7 @@ const TOWN_LOOKS = {
     doctor: { hair: '#2A1A10', hairStyle: 'short', pants: '#DDD' },
     teacher:{ hair: '#6A3A1A', hairStyle: 'bun', pants: '#333' },
     hattie: { hair: '#FFCC33', hairStyle: 'long', pants: '#884488' },
+    captain:{ hair: '#DDD', hairStyle: 'short', pants: '#EEE', beard: '#DDD' },
     baker:  { hair: '#8A5A2A', hairStyle: 'short', pants: '#6A4A2A', skin: '#E8B48A' },
     smith:  { hair: '#1A1A1A', hairStyle: 'bald', pants: '#3A2A1A', beard: '#1A1A1A', skin: '#C88A5A' },
     mayor:  { hair: '#777', hairStyle: 'short', pants: '#1A2A55', beard: '#999' },
@@ -5140,6 +5600,7 @@ function drawPerson(n) {
     drawHuman(0, 0, 1, { shirt: n.coat, pants: look.pants, hair: n.hair || look.hair, hairStyle: look.hairStyle || (n.hair ? 'short' : 'short'),
                          beard: look.beard, skin: look.skin, walk: walking ? n.walk * 2 : 0 });
     if (n.hat === 'teacher') drawHatOn(0, -23, 'teacher');
+    if (n.hat === 'captain') drawHatOn(0, -23, 'pirate');
     if (n.hat === 'hattie')  drawHatOn(0, -23, ['crown', 'cowboy', 'wizard', 'tophat', 'party', 'pirate', 'cap', 'flowers'][Math.floor(Date.now() / 1500) % 8]);   // she keeps trying hats on!
     if (paradise.birthday && paradise.birthday.id === n.id) drawHatOn(0, -23, 'party');
     if (n.hat === 'doctor') {
@@ -5368,7 +5829,8 @@ function roomBackground(room) {
         const c = document.createElement('canvas');
         c.width = 800; c.height = 600;
         if (room === 'void') { c.width = 900; c.height = 700; }   // fog is bigger than the screen so it can drift
-        const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse };
+        const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse,
+                           ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
@@ -6205,7 +6667,8 @@ function drawHUD() {
     ctx.fillText(hearts, 400, 20);
 
     // Room name + Level
-    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES', heaven: '☁ HEAVEN ☁', house: '🏠 YOUR HOME' };
+    const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES', heaven: '☁ HEAVEN ☁', house: '🏠 YOUR HOME',
+                    ...Object.fromEntries(Object.entries(PLACES).map(([k, v]) => [k, v.name])) };
     const cfg    = LEVEL_CONFIGS[state.level - 1];
     const lvlLabel = cfg.isBoss ? `LEVEL ${state.level} — BOSS!` : `LEVEL ${state.level}`;
     ctx.fillStyle = cfg.isBoss ? 'rgba(255,100,50,0.85)' : 'rgba(255,255,255,0.5)';
@@ -6406,7 +6869,7 @@ function drawWin() {
 // ── DRAW: AWARDS ──────────────────────────────────────────────
 function drawAwards() {
     if (!state.awardsOpen) return;
-    const X = 90, Y = 56, W = 620, H = 500;
+    const X = 90, Y = 50, W = 620, H = 530;
     ctx.save();
     ctx.fillStyle = 'rgba(10,5,25,0.97)'; ctx.fillRect(X, Y, W, H);
     ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
@@ -6417,7 +6880,7 @@ function drawAwards() {
     ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
     AWARDS.forEach((a, i) => {
         const col = i % 3, row = Math.floor(i / 3);
-        const x = X + 16 + col * 200, y = Y + 58 + row * 37;
+        const x = X + 16 + col * 200, y = Y + 56 + row * 36;
         const has = awards.got[a.id];
         ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
         ctx.fillRect(x, y, 188, 34);
@@ -6639,6 +7102,7 @@ function update() {
         updateBlocks();
         updateScenery();
         updateHeaven();
+        updatePlace();
         updateVoidHealing();
         updateAmmo();
     }
@@ -6688,6 +7152,7 @@ function draw() {
     if (state.room === ROOM.UNDERGROUND) drawUnderground();
     if (state.room === ROOM.HEAVEN)   drawHeaven();
     if (state.room === ROOM.HOUSE)    drawHouse();
+    if (PLACES[state.room])           drawPlace();
     drawPlayer();
     drawHeartPickups();
     drawGadgets();
