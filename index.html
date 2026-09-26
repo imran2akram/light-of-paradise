@@ -251,6 +251,14 @@ const VILLAGER_CHAT = [
 const FARM       = { x: 40, y: 440, w: 200, h: 92 };
 const FARM_CROPS = [70, 118, 166, 214].flatMap(x => [{ x, y: 468 }, { x, y: 508 }]);
 const FISH_SPOT  = { x: 640, y: 574 };   // the end of the pier
+const NIGHT_MONSTER_CHANCE = 0.7;         // some nights are quiet… (but never two quiet nights in a row)
+const QUIET_NIGHT_FRAMES   = 600;         // a quiet night lasts 10 s
+const AMBUSH_FRAMES        = [700, 1500]; // daytime: monsters sometimes pop up every 12–25 s
+const AMBUSH_TYPES         = ['fire', 'ghost', 'bat', 'slime'];
+
+// ── WEATHER (Paradise Island daytime) ────────────────────────
+const WEATHER_FRAMES  = 1200;   // weather changes every 20 s
+const RAINBOW_FRAMES  = 600;    // a rainbow shows for 10 s after rain
 
 // ── STATE ────────────────────────────────────────────────────
 let state = {
@@ -282,6 +290,9 @@ let state = {
     coins:              0,
     shopOpen:           false,
     shopCursor:         0,         // highlighted shop item (for controllers)
+    awardsOpen:         false,
+    danceTimer:         0,
+    fartCooldown:       0,
     digAnim:            0,         // frames left of the shovel swing
     unlockedSkins:      [true, ...Array(AVATAR_COLORS.length - 1).fill(false)],
     activeSkin:         0,
@@ -309,7 +320,10 @@ const keys = {};
 const SHOP       = { X: 110, Y: 150, W: 580, H: 300 };
 const SHOP_SLOTS = 13;                                       // 0-7 skins, 8 Shield Bubble, 9-12 pets
 const SHOP_CLOSE = { x: SHOP.X + SHOP.W - 20, y: SHOP.Y + 20, r: 13 };
-const SHOP_BTN   = { x: 340, y: 392, w: 120, h: 32 };        // on-screen SHOP button in the Void
+const SHOP_BTN   = { x: 270, y: 392, w: 120, h: 32 };        // on-screen SHOP button in the Void
+const AWARDS_BTN = { x: 410, y: 392, w: 120, h: 32 };        // …and the AWARDS button next to it
+const NEW_GAME_BTN = { x: 420, y: 488, w: 170, h: 38 };      // title screen, when there's a saved game
+const CONTINUE_BTN = { x: 210, y: 488, w: 170, h: 38 };
 const END_BTN    = { x: 300, y: 420, w: 200, h: 55 };        // Next Level / Play Again button
 
 function shopSlotRect(i) {
@@ -352,6 +366,8 @@ function shopSelect(i) {
             state.coins -= PETS[j].cost;
             state.ownedPets[j] = true;
             state.activePet = j;
+            giveAward('pet');
+            if (state.ownedPets.every(Boolean)) giveAward('allPets');
             placePetBesidePlayer();
             spawnParticles(player.x, player.y, '#FFD700', 10);
             sfx('win');
@@ -379,14 +395,14 @@ function shopSelect(i) {
 
 // The main button: Space, A on a controller, or the on-screen SHOOT / DIG button
 function pressAction() {
-    if (state.gamePhase === 'intro') state.gamePhase = 'playing';
+    if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
     else if (!tryDig() && !tryTalk() && !tryTownAction()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
 function pressStart() {
-    if (state.gamePhase === 'intro') state.gamePhase = 'playing';
+    if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
     else if (state.won)             resetGame();
 }
@@ -394,7 +410,17 @@ function pressStart() {
 // A tap or click at canvas position (x, y). Returns true if it hit a button.
 function handleTap(x, y) {
     if (Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < MUTE_BTN.r * 1.5) { toggleMute(); return true; }
-    if (state.gamePhase === 'intro') { state.gamePhase = 'playing'; return true; }
+    if (state.gamePhase === 'intro') {
+        if (savedGame && inRect(x, y, NEW_GAME_BTN)) startFromIntro(true);
+        else startFromIntro();
+        return true;
+    }
+    if (state.awardsOpen) { state.awardsOpen = false; return true; }
+    if (!state.shopOpen && canOpenShop() && inRect(x, y, AWARDS_BTN)) { state.awardsOpen = true; return true; }
+    if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
+        if (Math.hypot(x - VDANCE.x, y - VDANCE.y) < VDANCE.r * 1.3) { dance(); return true; }
+        if (Math.hypot(x - VFART.x,  y - VFART.y)  < VFART.r * 1.3)  { fart();  return true; }
+    }
     if ((state.won || state.levelComplete) && inRect(x, y, END_BTN)) { pressStart(); return true; }
     if (state.shopOpen) {
         if (Math.hypot(x - SHOP_CLOSE.x, y - SHOP_CLOSE.y) < SHOP_CLOSE.r * 1.6) { state.shopOpen = false; return true; }
@@ -422,6 +448,11 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Enter') pressStart();
     }
     if (e.code === 'KeyE' || (e.code === 'Escape' && state.shopOpen)) toggleShop();
+    if (e.code === 'KeyH' && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
+    if (e.code === 'Escape') state.awardsOpen = false;
+    if (e.code === 'KeyN' && state.gamePhase === 'intro') startFromIntro(true);
+    if (e.code === 'KeyG') dance();
+    if (e.code === 'KeyF') fart();
     // Number keys in the shop: 1-8 skins, 9 Shield Bubble
     const digit = /^Digit([1-9])$/.exec(e.code);
     if (digit && state.shopOpen) shopSelect(Number(digit[1]) - 1);
@@ -458,6 +489,11 @@ function pollGamepad() {
     }
 
     if (pressed(PAD.BACK))  toggleMute();
+    if (pressed(PAD.LB))    dance();
+    if (pressed(PAD.RB))    fart();
+    if (pressed(PAD.X) && state.gamePhase === 'intro') startFromIntro(true);
+    if (pressed(PAD.X) && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
+    if (state.awardsOpen && pressed(PAD.B)) state.awardsOpen = false;
     if (pressed(PAD.START)) pressStart();
     if (pressed(PAD.Y) || (state.shopOpen && pressed(PAD.B))) toggleShop();
 
@@ -636,6 +672,13 @@ function makeParadise() {
         villagers: VILLAGERS.map(v => ({ ...v, tx: v.x, ty: v.y, walk: 0, face: 1 })),
         crops:     FARM_CROPS.map(c => ({ ...c, thirsty: false })),
         fishing:   { stage: 'idle', timer: 0 },   // 'idle' → 'waiting' → 'bite'
+        quiet:     false,     // tonight is a quiet night (no monsters)
+        lastQuiet: false,
+        ambushers: [],        // monsters that popped up in the daytime
+        ambushTimer: AMBUSH_FRAMES[0],
+        weather:   'sun',     // 'sun' | 'rain' | 'snow'
+        weatherTimer: WEATHER_FRAMES,
+        rainbowTimer: 0,
         coins:  [],           // coins only come from beating monsters
         phase:  'day',        // 'day' → 'dusk' → 'night' → (chest opened) → 'day'
         timer:  DAY_FRAMES,
@@ -810,6 +853,7 @@ const SFX = {
     nightfall:() => [392, 370, 349, 330, 311].forEach((f, i) => tone(f, 0.4, 'triangle', 0.15, null, i * 0.3)),
     splash:   () => { noise(0.25, 0.2, 1800); tone(900, 0.15, 'sine', 0.08, 400); },
     bite:     () => { tone(1200, 0.08, 'square', 0.15); tone(1500, 0.1, 'square', 0.15, null, 0.1); },
+    fart:     () => { tone(90, 0.5, 'sawtooth', 0.25, 55); tone(70, 0.45, 'square', 0.12, 45, 0.05); noise(0.4, 0.15, 300); },
     // "HA HA HA HA" — the Devil's scary laugh
     laugh:    () => { for (let i = 0; i < 4; i++) { tone(240 - i * 20, 0.14, 'sawtooth', 0.16, 150 - i * 15, i * 0.18);
                                                    tone(120 - i * 10, 0.14, 'square',   0.08, 80,            i * 0.18); } },
@@ -862,6 +906,102 @@ function musicTick() {
     }
 }
 setInterval(musicTick, 50);
+
+// ── TOASTS (big messages at the top of the screen) ───────────
+let toast = null;   // { text, color, timer }
+function showToast(text, color = '#FFE066', frames = 180) { toast = { text, color, timer: frames }; }
+function drawToast() {
+    if (!toast) return;
+    if (--toast.timer <= 0) { toast = null; return; }
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, toast.timer / 30);
+    ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+    const w = ctx.measureText(toast.text).width + 30;
+    ctx.fillStyle = 'rgba(15,10,30,0.88)'; ctx.fillRect(400 - w / 2, 76, w, 32);
+    ctx.strokeStyle = toast.color; ctx.lineWidth = 2; ctx.strokeRect(400 - w / 2, 76, w, 32);
+    ctx.fillStyle = toast.color; ctx.fillText(toast.text, 400, 98);
+    ctx.restore();
+}
+
+// ── AWARDS (achievements — remembered forever, even after a new game) ──
+const AWARDS = [
+    { id: 'firstKill',   icon: '⚔',  name: 'First Victory',    desc: 'Beat a monster' },
+    { id: 'kills100',    icon: '💯', name: 'Monster Master',   desc: 'Beat 100 monsters' },
+    { id: 'fish10',      icon: '🐟', name: 'Fishing Pro',      desc: 'Catch 10 fish' },
+    { id: 'house',       icon: '🏠', name: 'Home Sweet Home',  desc: 'Buy a house' },
+    { id: 'allHouses',   icon: '🏰', name: 'Property King',    desc: 'Own all 3 houses' },
+    { id: 'secret',      icon: '✨', name: 'Secret Finder',    desc: 'Find the Secret Golden Room' },
+    { id: 'underground', icon: '⛏',  name: 'Deep Digger',      desc: 'Find the Underground Caves' },
+    { id: 'rainbow',     icon: '🌈', name: 'Over the Rainbow', desc: 'Get Rainbow Power' },
+    { id: 'king',        icon: '👑', name: 'Slime Slayer',     desc: 'Beat the King Slime' },
+    { id: 'devil',       icon: '😈', name: 'Devil Beater',     desc: 'Beat the Devil' },
+    { id: 'hero',        icon: '🏆', name: 'Hero of Paradise', desc: 'Finish all 3 levels' },
+    { id: 'pet',         icon: '🐶', name: 'Best Friends',     desc: 'Get a pet' },
+    { id: 'allPets',     icon: '🦁', name: 'Zoo Keeper',       desc: 'Own every pet' },
+    { id: 'dance',       icon: '💃', name: 'Dance Party',      desc: 'Do a dance' },
+    { id: 'fart10',      icon: '💨', name: 'Stinky!',          desc: 'Fart 10 times' },
+];
+let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
+try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
+
+function saveAwards() { try { localStorage.setItem('lop_awards', JSON.stringify(awards)); } catch (e) {} }
+
+function giveAward(id) {
+    if (awards.got[id]) return;
+    awards.got[id] = true;
+    saveAwards();
+    const a = AWARDS.find(a => a.id === id);
+    showToast(`🏅 AWARD: ${a.icon} ${a.name}!`, '#FFD700', 220);
+    addScore(50);
+    sfx('found');
+}
+
+// Counts things like monsters beaten, and hands out the awards for them
+function countStat(stat) {
+    awards[stat]++;
+    saveAwards();
+    if (stat === 'kills') { giveAward('firstKill'); if (awards.kills >= 100) giveAward('kills100'); }
+    if (stat === 'fish' && awards.fish >= 10)  giveAward('fish10');
+    if (stat === 'farts' && awards.farts >= 10) giveAward('fart10');
+}
+
+// ── SAVING ────────────────────────────────────────────────────
+const SAVE_KEY    = 'lop_save';
+const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'powerTier', 'playerHp', 'coins',
+                     'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet'];
+let savedGame = null;
+try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
+
+function saveGame() {
+    if (state.gamePhase !== 'playing' || state.won) return;
+    savedGame = Object.fromEntries(SAVE_FIELDS.map(k => [k, state[k]]));
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(savedGame)); } catch (e) {}
+}
+
+function clearSave() {
+    savedGame = null;
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+}
+
+// Leaving the title screen: carry on from the save if there is one
+function startFromIntro(fresh = false) {
+    if (fresh || !savedGame) {
+        if (fresh) clearSave();
+        state.gamePhase = 'playing';
+        return;
+    }
+    const data = savedGame;
+    resetGame();
+    Object.assign(state, JSON.parse(JSON.stringify(data)));
+    state.gamePhase = 'playing';
+    const cfg = LEVEL_CONFIGS[state.level - 1];
+    state.ammoMax = cfg.ammoMax + state.ammoBonus;
+    state.ammo    = state.ammoMax;
+    hell = makeHell(); paradise = makeParadise(); voidRoom = makeVoidRoom();
+    paradise.chests.forEach((c, i) => { if (i < state.paradiseClearCount) { c.visible = true; c.opened = true; } });
+    changeRoom(ROOM.VOID);
+    showToast(`💾 Welcome back! Level ${state.level}, 🪙${state.coins}`, '#88EEFF');
+}
 
 // ── SCORE ─────────────────────────────────────────────────────
 let highScore = 0;
@@ -1012,6 +1152,8 @@ function resetGame() {
 
 function advanceLevel() {
     if (state.level >= MAX_LEVELS) {
+        giveAward('hero');
+        clearSave();
         // True final win — game complete
         state.won = true;
         state.levelComplete = false;
@@ -1042,19 +1184,45 @@ function advanceLevel() {
 }
 
 // ── ROOM CHANGE ───────────────────────────────────────────────
+// A random spot on the map, not too close to the player
+function randomSpawnSpot(minDist = 150) {
+    for (let tries = 0; tries < 50; tries++) {
+        const x = 80 + Math.random() * 640, y = 100 + Math.random() * 420;
+        if (Math.hypot(x - player.x, y - player.y) >= minDist) return { x, y };
+    }
+    return { x: 80, y: 100 };
+}
+
 function respawnParadiseWave() {
     const night = state.paradiseClearCount + 1;
     paradise.enemies = paradise.enemies.filter(e => !e.temp);   // King Slime's little slimes
     for (const e of paradise.enemies) {
+        // Monsters climb out of the ground in random places
+        const spot = e.type === 'king' ? { x: e.home.x, y: e.home.y } : randomSpawnSpot();
         Object.assign(e, { alive: (e.minNight || 1) <= night, hp: e.maxHp, hitFlash: 0, hopTimer: 0, frozen: 0,
-                           x: e.home.x, y: e.home.y, dx: e.home.dx, dy: e.home.dy });
+                           x: spot.x, y: spot.y, dx: e.home.dx, dy: e.home.dy, emerge: 30 + Math.random() * 60 });
     }
+}
+
+// Daytime surprise: a few monsters pop out of the ground somewhere
+function spawnAmbush() {
+    const n = 2 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < n; i++) {
+        const type = AMBUSH_TYPES[Math.floor(Math.random() * AMBUSH_TYPES.length)];
+        const spot = randomSpawnSpot(180);
+        const e = makeEnemy(type, spot.x, spot.y, (Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 2.4);
+        e.emerge = 45 + i * 15;
+        paradise.ambushers.push(e);
+    }
+    showToast('⚠ Monsters popped up out of the ground!', '#FF8866');
+    sfx('worm');
 }
 
 function changeRoom(dest) {
     if (state.gamePhase === 'playing') sfx('portal');
     state.room = dest;
     state.shopOpen = false;   // close shop when changing rooms
+    state.awardsOpen = false;
     projectiles      = [];
     enemyProjectiles = [];
     heartPickups     = [];
@@ -1072,8 +1240,9 @@ function changeRoom(dest) {
         player.x = 400; player.y = 290;   // the town square
         paradise.fishing.stage = 'idle';
     }
-    if (dest === ROOM.SECRET)      { player.x = 400; player.y = 420; secretRoom = makeSecretRoom(); }
-    if (dest === ROOM.UNDERGROUND) { player.x = 100; player.y = 300; underground = makeUnderground(); }
+    if (dest === ROOM.SECRET)      { player.x = 400; player.y = 420; secretRoom = makeSecretRoom(); giveAward('secret'); }
+    if (dest === ROOM.UNDERGROUND) { player.x = 100; player.y = 300; underground = makeUnderground(); giveAward('underground'); }
+    if (state.gamePhase === 'playing') saveGame();
     goldenPortal = MAIN_ROOMS.includes(dest) && Math.random() < SECRET_PORTAL_CHANCE
         ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
     placePetBesidePlayer();
@@ -1085,7 +1254,7 @@ function updatePlayer() {
 
     const spd = state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED;
     let dx = 0, dy = 0;
-    if (!state.shopOpen) {
+    if (!state.shopOpen && !state.awardsOpen) {
         if (keys['ArrowLeft']  || keys['KeyA']) dx -= 1;
         if (keys['ArrowRight'] || keys['KeyD']) dx += 1;
         if (keys['ArrowUp']    || keys['KeyW']) dy -= 1;
@@ -1189,7 +1358,10 @@ function hitEnemy(e, power) {
 
 // The bad guys in the room you're in
 function roomEnemies() {
-    if (state.room === ROOM.PARADISE) return paradise.phase === 'night' && state.lightCrystals < 3 ? paradise.enemies : [];
+    if (state.room === ROOM.PARADISE) {
+        const P = paradise;
+        return P.phase === 'night' && !P.quiet && state.lightCrystals < 3 ? [...P.enemies, ...P.ambushers] : P.ambushers;
+    }
     if (state.room === ROOM.HELL)        return hell.enemies;
     if (state.room === ROOM.UNDERGROUND) return underground.enemies;
     return [];
@@ -1244,6 +1416,8 @@ function damageEnemy(e, power, chained = false) {
     if (hitEnemy(e, power)) {
         e.alive = false;
         dropLoot(e);
+        countStat('kills');
+        if (e.type === 'king') giveAward('king');
     } else if (power === POWER.ICE) {
         if (!e.frozen) sfx('freeze');
         e.frozen = FREEZE_FRAMES;
@@ -1295,6 +1469,7 @@ function updateRoomEnemies() {
     // Defeated bad guys in Hell and the Underground don't come back
     hell.enemies        = hell.enemies.filter(e => e.alive);
     underground.enemies = underground.enemies.filter(e => e.alive);
+    paradise.ambushers  = paradise.ambushers.filter(e => e.alive);
 }
 
 function moveEnemy(e) {
@@ -1400,7 +1575,7 @@ function updateEnemies() {
         if (state.lightCrystals >= 3) return;
 
         // Show only the current night's chest once all the monsters are beaten
-        if (paradise.phase === 'night' && allMonstersDefeated() && state.paradiseClearCount < 3) {
+        if (paradise.phase === 'night' && !paradise.quiet && allMonstersDefeated() && state.paradiseClearCount < 3) {
             paradise.chests[state.paradiseClearCount].visible = true;
         }
     }
@@ -1576,6 +1751,7 @@ function updateProjectiles() {
                     triggerShake(8);
                     if (d.hp <= 0) {
                         d.alive = false;
+                        giveAward('devil');
                         sfx('defeat');
                         addScore(100);
                         spawnParticles(d.x, d.y, '#880000', 20);
@@ -1684,6 +1860,7 @@ function tryDig() {
         state.power     = weapon;
         state.powerTier = tier;
         state.playerFlash = 25;
+        if (weapon === POWER.RAINBOW) giveAward('rainbow');
         text = tier === 3 ? `LEGENDARY! ${name}!` : tier === 2 ? `RARE! ${name}!` : `You found ${name}!`;
     }
     spawnParticles(s.x, s.y, color, 10 + tier * 6);
@@ -1778,6 +1955,111 @@ function updatePet() {
             sfx('buy');
         }
     }
+}
+
+// ── DANCE & FART ──────────────────────────────────────────────
+const VDANCE = { x: 640, y: 415, r: 20 };   // touch buttons above SHOOT
+const VFART  = { x: 760, y: 415, r: 20 };
+
+function playing() { return state.gamePhase === 'playing' && !state.won && !state.levelComplete && !state.shopOpen; }
+
+// People nearby react
+function nearbyTownsfolk(range) {
+    if (state.room !== ROOM.PARADISE || paradise.phase !== 'day') return [];
+    return [...WORKERS, ...paradise.villagers].filter(n => Math.hypot(n.x - player.x, n.y - player.y) < range);
+}
+
+function dance() {
+    if (!playing() || state.danceTimer > 0) return;
+    state.danceTimer = 100;
+    giveAward('dance');
+    [523, 659, 784, 659, 880, 784].forEach((f, i) => tone(f, 0.14, 'triangle', 0.12, null, i * 0.12));
+    const fan = nearbyTownsfolk(110)[0];
+    if (fan) say(fan, ['Nice moves!', 'Wow, you can dance!', 'Woohoo! 🎉'][Math.floor(Math.random() * 3)]);
+}
+
+// A stinky cloud that hurts monsters right next to you 😂
+function fart() {
+    if (!playing() || state.fartCooldown > 0) return;
+    state.fartCooldown = 60;
+    countStat('farts');
+    sfx('fart');
+    for (let i = 0; i < 14; i++) {
+        particles.push({ x: player.x + (Math.random() - 0.5) * 20, y: player.y + 12, dx: (Math.random() - 0.5) * 2, dy: -Math.random() * 1.2,
+                         life: 60, maxLife: 60, color: ['#9ACD32', '#7FA830', '#C8E070'][i % 3], r: 6 + Math.random() * 6 });
+    }
+    for (const e of targetableEnemies()) {
+        if (Math.hypot(e.x - player.x, e.y - player.y) < 70) damageEnemy(e, POWER.NONE);
+    }
+    const n = nearbyTownsfolk(100)[0];
+    if (n) say(n, ['EWWW! 🤢', 'What is that SMELL?!', 'Pee-yew!'][Math.floor(Math.random() * 3)]);
+}
+
+function updateDanceAndFart() {
+    if (state.fartCooldown > 0) state.fartCooldown--;
+    if (state.danceTimer > 0) {
+        state.danceTimer--;
+        if (state.danceTimer % 14 === 0) {
+            spawnFloatText(player.x + (Math.random() - 0.5) * 40, player.y - 20, Math.random() < 0.5 ? '♪' : '♫',
+                           `hsl(${Math.random() * 360}, 100%, 70%)`, 50);
+        }
+    }
+}
+
+// ── UPDATE: WEATHER ───────────────────────────────────────────
+function updateWeather() {
+    const P = paradise;
+    if (P.rainbowTimer > 0) P.rainbowTimer--;
+    if (--P.weatherTimer <= 0) {
+        P.weatherTimer = WEATHER_FRAMES;
+        const was = P.weather, r = Math.random();
+        P.weather = r < 0.5 ? 'sun' : r < 0.8 ? 'rain' : 'snow';
+        if (was === 'rain' && P.weather !== 'rain') P.rainbowTimer = RAINBOW_FRAMES;   // 🌈 after the rain!
+    }
+    // Rain waters the thirsty crops for you
+    if (P.weather === 'rain' && P.weatherTimer % 150 === 0) {
+        const crop = P.crops.find(c => c.thirsty);
+        if (crop) {
+            crop.thirsty = false;
+            if (state.job && state.job.kind === 'water') state.job.got++;
+            spawnFloatText(crop.x, crop.y - 26, '🌧 The rain watered a crop!', '#88DDFF', 70);
+        }
+    }
+}
+
+// Rain / snow falling, and a rainbow in the sky (drawn over the town, under the HUD)
+function drawWeather() {
+    const P = paradise, t = Date.now() / 1000;
+    if (P.phase !== 'day') return;
+    if (P.weather === 'rain') {
+        ctx.fillStyle = 'rgba(40,50,80,0.18)'; ctx.fillRect(0, 0, 800, 600);
+        ctx.strokeStyle = 'rgba(180,210,255,0.55)'; ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let i = 0; i < 140; i++) {
+            const x = (i * 57.3 + t * 90) % 820 - 10, y = (i * 91.7 + t * 620) % 620 - 10;
+            ctx.moveTo(x, y); ctx.lineTo(x - 3, y + 12);
+        }
+        ctx.stroke();
+    } else if (P.weather === 'snow') {
+        ctx.fillStyle = 'rgba(220,230,255,0.12)'; ctx.fillRect(0, 0, 800, 600);
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        for (let i = 0; i < 110; i++) {
+            const x = (i * 71.3 + Math.sin(t + i) * 20 + t * 15) % 800, y = (i * 53.1 + t * 45) % 600;
+            ctx.beginPath(); ctx.arc(x, y, 1.5 + (i % 3) * 0.7, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+}
+
+function drawRainbowArc() {
+    const P = paradise;
+    if (P.phase !== 'day' || P.rainbowTimer <= 0) return;
+    const fade = Math.min(1, P.rainbowTimer / 120, (RAINBOW_FRAMES - P.rainbowTimer) / 60);
+    ctx.save();
+    ctx.globalAlpha = 0.45 * fade; ctx.lineWidth = 7;
+    ['#FF3B3B', '#FF9A2E', '#FFE83B', '#4CD964', '#3BA7FF', '#6A5BFF', '#B45BFF'].forEach((c, i) => {
+        ctx.strokeStyle = c; ctx.beginPath(); ctx.arc(400, 420, 330 - i * 7, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
+    });
+    ctx.restore();
 }
 
 // ── UPDATE: PARADISE TOWN ─────────────────────────────────────
@@ -1899,6 +2181,8 @@ function talkTo(n) {
         } else {
             state.coins -= n.cost;
             state.housesOwned[n.id] = true;
+            giveAward('house');
+            if (BUILDINGS.filter(b => b.cost).every(b => state.housesOwned[b.id])) giveAward('allHouses');
             addScore(n.cost * 2);
             spawnConfettiAt(b.x, b.y);
             say(n, `The ${n.name.toLowerCase()} is YOURS! 🏠 Rest here any time.`);
@@ -1987,6 +2271,7 @@ function tryTownAction() {
         } else {
             f.stage = 'idle';
             state.job.got++;
+            countStat('fish');
             spawnFloatText(FISH_SPOT.x, FISH_SPOT.y - 30, `🐟 CAUGHT ONE! ${state.job.got}/${state.job.count}`, '#FFE066', 80);
             spawnParticles(FISH_SPOT.x, FISH_SPOT.y + 10, '#88CCFF', 14);
             sfx('found');
@@ -2002,6 +2287,12 @@ function updateTown() {
     if (state.room !== ROOM.PARADISE) return;
 
     if (P.phase === 'day') {
+        // Surprise monsters!
+        if (state.lightCrystals < 3 && --P.ambushTimer <= 0) {
+            P.ambushTimer = AMBUSH_FRAMES[0] + Math.random() * (AMBUSH_FRAMES[1] - AMBUSH_FRAMES[0]);
+            if (P.ambushers.length === 0) spawnAmbush();
+        }
+        updateWeather();
         // Villagers stroll about the town square
         for (const v of P.villagers) {
             const dx = v.tx - v.x, dy = v.ty - v.y, d = Math.hypot(dx, dy);
@@ -2037,13 +2328,19 @@ function updateTown() {
     // Day → dusk → Monster Night (after all 3 crystals, Paradise stays peaceful)
     if (state.lightCrystals >= 3) return;
     if (P.phase === 'day' && --P.timer <= 0) {
-        P.phase = 'dusk'; P.timer = DUSK_FRAMES;
+        P.phase = 'dusk'; P.timer = DUSK_FRAMES; P.weather = 'sun';
         P.speech = null;
         sfx('nightfall');
     } else if (P.phase === 'dusk' && --P.timer <= 0) {
         P.phase = 'night';
-        respawnParadiseWave();
-        sfx('laugh');
+        // Not every night brings monsters — but never two quiet nights in a row
+        P.quiet = !P.lastQuiet && Math.random() > NIGHT_MONSTER_CHANCE;
+        P.lastQuiet = P.quiet;
+        if (P.quiet) { P.timer = QUIET_NIGHT_FRAMES; showToast('🌙 A quiet night… no monsters tonight!', '#AABBFF'); }
+        else         { respawnParadiseWave(); sfx('laugh'); }
+    } else if (P.phase === 'night' && P.quiet && --P.timer <= 0) {
+        P.phase = 'day'; P.timer = DAY_FRAMES; P.quiet = false;
+        showToast('☀ Good morning, Paradise Island!', '#FFE066');
     }
 }
 
@@ -2060,6 +2357,7 @@ function checkPickups() {
             let text;
             if (tr.kind === 'rainbow') {
                 state.power = POWER.RAINBOW; state.powerTier = 3;
+                giveAward('rainbow');
                 text = '🌈 RAINBOW POWER!';
             } else if (tr.kind === 'gem') {
                 addScore(200);
@@ -2278,12 +2576,26 @@ function drawIntro() {
     ctx.fillStyle   = `rgba(255,255,80,${pulse})`;
     ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 16 * pulse;
     ctx.font = 'bold 22px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('Tap, click, press SPACE or press A to Begin!', 400, 508);
-    ctx.restore();
+    if (!savedGame) {
+        ctx.fillText('Tap, click, press SPACE or press A to Begin!', 400, 508);
+        ctx.restore();
+    } else {
+        ctx.restore();
+        // Saved game: Continue or start again
+        for (const [b, label, sub] of [[CONTINUE_BTN, '▶ CONTINUE', `Level ${savedGame.level} · 🪙${savedGame.coins}  (SPACE / A)`],
+                                       [NEW_GAME_BTN, '✦ NEW GAME', '(N / X)']]) {
+            ctx.fillStyle = 'rgba(30,20,70,0.9)'; ctx.fillRect(b.x, b.y, b.w, b.h);
+            ctx.strokeStyle = `rgba(255,255,80,${pulse})`; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
+            ctx.fillStyle = '#FFFF80'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+            ctx.fillText(label, b.x + b.w / 2, b.y + 24);
+            ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '10px Arial';
+            ctx.fillText(sub, b.x + b.w / 2, b.y + b.h + 13);
+        }
+    }
 
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = '11px Arial';
-    ctx.fillText('Move: WASD / Arrows  |  Shoot nearest enemy: Spacebar  |  Mystery portals go anywhere!', 400, 562);
+    ctx.fillText('Move: WASD / Arrows  |  Shoot: Space  |  Dance: G  |  Fart: F  |  Mystery portals go anywhere!', 400, 562);
 }
 
 // ── DRAW: PORTALS ─────────────────────────────────────────────
@@ -2482,6 +2794,13 @@ function drawVoid() {
         ctx.fillStyle = '#FFD700'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         const key = lastInput === 'pad' ? 'Y' : lastInput === 'touch' ? '' : 'E';
         ctx.fillText(`🛒 SHOP${key ? '  (' + key + ')' : ''}`, b.x + b.w / 2, b.y + b.h / 2 + 1);
+        // AWARDS button
+        const a = AWARDS_BTN, akey = lastInput === 'pad' ? 'X' : lastInput === 'touch' ? '' : 'H';
+        ctx.fillStyle = 'rgba(40,20,70,0.85)'; ctx.fillRect(a.x, a.y, a.w, a.h);
+        ctx.strokeStyle = '#FFD700'; ctx.strokeRect(a.x, a.y, a.w, a.h);
+        ctx.fillStyle = '#FFD700';
+        const got = AWARDS.filter(w => awards.got[w.id]).length;
+        ctx.fillText(`🏅 ${got}/${AWARDS.length}${akey ? '  (' + akey + ')' : ''}`, a.x + a.w / 2, a.y + a.h / 2 + 1);
         ctx.restore();
     }
 }
@@ -2663,6 +2982,12 @@ function drawEnemy(e, t) {
         drawGroundShadow(e.x + 2, e.y + e.r + (flying ? 12 : 2), e.r * (flying ? 0.7 : 1), e.r * 0.3, flying ? 0.15 : 0.3);
     }
     ctx.save();
+    // Climbing out of the ground: a dirt mound, and the monster fades in
+    if (e.emerge > 0 && e.type !== 'mole' && e.type !== 'imp') {
+        ctx.fillStyle = '#5C3A1E';
+        ctx.beginPath(); ctx.ellipse(e.x, e.y + e.r * 0.6, e.r * 1.2, e.r * 0.45, 0, Math.PI, 0); ctx.fill();
+        ctx.globalAlpha = Math.max(0.1, 1 - e.emerge / 60);
+    }
     if (e.type === 'fire') {
         ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
@@ -2896,6 +3221,7 @@ function drawParadiseSky() {
     if (dark === 0) {
         ctx.fillStyle = 'rgba(255,240,190,0.06)';   // warm sunshine
         ctx.fillRect(0, 0, 800, 600);
+        drawRainbowArc();
         return;
     }
     ctx.fillStyle = `rgba(5,5,40,${0.6 * dark})`;
@@ -3163,8 +3489,9 @@ function drawParadise() {
     const nightNum = state.paradiseClearCount + 1;
     let status, color = 'rgba(255,255,255,0.85)';
     if (state.lightCrystals >= 3)       status = '☀ Paradise Island is safe! Now go and beat the Devil!';
-    else if (P.phase === 'day')         status = `☀ Daytime — Monster Night ${nightNum}/3 comes in ${Math.ceil(P.timer / 60)}s`;
+    else if (P.phase === 'day')         status = `${{ sun: '☀', rain: '🌧', snow: '❄' }[P.weather]} Daytime — night falls in ${Math.ceil(P.timer / 60)}s (monsters might come!)`;
     else if (P.phase === 'dusk')      { status = '🌙 MONSTER NIGHT IS COMING! Get ready!'; color = Math.floor(Date.now() / 200) % 2 ? '#FF6666' : '#FFFFFF'; }
+    else if (P.quiet)                 { status = `🌙 A quiet night… sleep tight! Morning comes in ${Math.ceil(P.timer / 60)}s`; color = '#AABBFF'; }
     else if (allMonstersDefeated())   { status = '⭐ You did it! Open the chest to win a Light Crystal!'; color = '#FFD700'; }
     else { status = `🌙 MONSTER NIGHT ${nightNum}/3${nightNum === 3 ? ' — THE KING SLIME IS HERE!' : ''} — beat every monster!`; color = '#AABBFF'; }
     ctx.save();
@@ -3553,7 +3880,15 @@ function drawPlayer() {
     drawGroundShadow(player.x + 3, player.y + 19, 16, 5);
     ctx.save();
     ctx.shadowColor = color; ctx.shadowBlur = 14;
-    drawAvatar(player.x, player.y, player.w, color, AVATAR_STYLES[state.activeSkin]);
+    if (state.danceTimer > 0) {
+        // Dance! Bounce, wiggle and spin
+        const d = state.danceTimer;
+        ctx.translate(player.x, player.y - Math.abs(Math.sin(d / 5)) * 10);
+        ctx.rotate(d > 40 ? Math.sin(d / 4) * 0.4 : (d / 40) * Math.PI * 2);
+        drawAvatar(0, 0, player.w, color, AVATAR_STYLES[state.activeSkin]);
+    } else {
+        drawAvatar(player.x, player.y, player.w, color, AVATAR_STYLES[state.activeSkin]);
+    }
     ctx.restore();
 
     // Carrying something for a delivery job
@@ -3722,7 +4057,8 @@ function drawPet() {
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
     ctx.beginPath(); ctx.ellipse(pet.x, pet.y + 10, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
-    drawPetShape(PETS[state.activePet].id, pet.x, pet.y, 1, pet.face);
+    const hop = state.danceTimer > 0 ? Math.abs(Math.sin(state.danceTimer / 4)) * 8 : 0;   // pets dance too!
+    drawPetShape(PETS[state.activePet].id, pet.x, pet.y - hop, 1, pet.face);
 }
 
 // ── DRAW: PROJECTILES ─────────────────────────────────────────
@@ -4076,6 +4412,38 @@ function drawWin() {
     drawEndHint();
 }
 
+// ── DRAW: AWARDS ──────────────────────────────────────────────
+function drawAwards() {
+    if (!state.awardsOpen) return;
+    const X = 90, Y = 110, W = 620, H = 400;
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,5,25,0.97)'; ctx.fillRect(X, Y, W, H);
+    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
+    const got = AWARDS.filter(a => awards.got[a.id]).length;
+    ctx.fillText(`🏅 AWARDS  ${got}/${AWARDS.length}`, 400, Y + 30);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px Arial';
+    ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
+    AWARDS.forEach((a, i) => {
+        const col = i % 3, row = Math.floor(i / 3);
+        const x = X + 16 + col * 200, y = Y + 66 + row * 64;
+        const has = awards.got[a.id];
+        ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
+        ctx.fillRect(x, y, 188, 56);
+        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 188, 56);
+        ctx.globalAlpha = has ? 1 : 0.35;
+        ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
+        ctx.fillText(a.icon, x + 24, y + 37);
+        ctx.globalAlpha = 1;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = has ? '#FFE680' : '#888'; ctx.font = 'bold 12px Arial';
+        ctx.fillText(a.name, x + 48, y + 24);
+        ctx.fillStyle = has ? 'rgba(255,255,255,0.75)' : '#666'; ctx.font = '10px Arial';
+        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 48, y + 41);
+    });
+    ctx.restore();
+}
+
 // ── DRAW: SHOP ────────────────────────────────────────────────
 function drawShop() {
     if (!state.shopOpen) return;
@@ -4238,6 +4606,13 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
+    for (const [b, icon] of [[VDANCE, '💃'], [VFART, '💨']]) {
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = '#FFF'; ctx.font = '16px Arial'; ctx.fillText(icon, b.x, b.y + 1);
+    }
+    ctx.font = 'bold 13px Arial';
     ctx.fillText((nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK'
                  : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
@@ -4259,6 +4634,7 @@ function update() {
         updateDigging();
         updateTown();
         updatePet();
+        updateDanceAndFart();
         updateVoidHealing();
         updateAmmo();
     }
@@ -4270,8 +4646,12 @@ function update() {
         state.confettiSpawned = true;
         spawnConfetti();
         sfx('win');
+        if (state.won) { giveAward('hero'); clearSave(); }
     }
+    // Save now and then
+    if (state.gamePhase === 'playing' && !state.won && Date.now() - lastSave > 5000) { lastSave = Date.now(); saveGame(); }
 }
+let lastSave = 0;
 
 function draw() {
     ctx.save();
@@ -4307,6 +4687,7 @@ function draw() {
     drawBolts();
     drawEnemyProjectiles();
     drawParticles();
+    if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawWeather();
     if (state.room === ROOM.UNDERGROUND) drawCaveDarkness();
     else if (!state.won && !state.levelComplete) drawVignette();
     drawFloatTexts();
@@ -4314,6 +4695,8 @@ function draw() {
     drawControls();
     drawVirtualControls();
     drawShop();
+    drawAwards();
+    drawToast();
     if (state.levelComplete) drawLevelComplete();
     if (state.won)           drawWin();
 
