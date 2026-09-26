@@ -121,6 +121,11 @@ const ENEMY_TYPES = {
 };
 const DAMAGE_STRONG = 3;   // right weapon for this bad guy
 const DAMAGE_WEAK   = 1;   // any other weapon still does a little
+const FREEZE_FRAMES       = 120;   // ICE freezes bad guys solid for 2 s
+const DEVIL_FREEZE_FRAMES = 30;    // …and the Devil for half a second
+const CHAIN_JUMPS         = 2;     // LIGHTNING jumps to this many more bad guys
+const CHAIN_RANGE         = 160;   // …if they're this close
+const HEART_DROP_CHANCE   = 0.2;   // defeated bad guys sometimes drop a heart
 const BASE_SPEED = 4;
 
 // ── LEVEL CONFIGURATIONS ─────────────────────────────────────
@@ -356,9 +361,9 @@ function makeHell() {
     return {
         digSpots: makeDigSpots(),
         foundMsg: null,   // { text, sub, color, timer } — floats up in the middle after digging
-        moles:    [],     // mole monsters that popped out of dig spots
+        enemies:  [],     // bad guys in Hell (mole monsters from dig spots, …)
         devil: {
-            x: 660, y: 300, r: cfg.devilR, alive: true, shieldFlash: 0,
+            x: 660, y: 300, r: cfg.devilR, alive: true, shieldFlash: 0, frozen: 0,
             hp: cfg.devilHp, maxHp: cfg.devilHp,
             aiState: 'CHASE',
             wanderTarget: { x: 400, y: 300 },
@@ -373,7 +378,7 @@ function makeHell() {
 
 function makeEnemy(type, x, y, dx, dy) {
     const hp = ENEMY_TYPES[type].hp;
-    return { type, x, y, dx, dy, r: 16, hp, maxHp: hp, alive: true, hitFlash: 0, hopTimer: 0,
+    return { type, x, y, dx, dy, r: 16, hp, maxHp: hp, alive: true, hitFlash: 0, hopTimer: 0, frozen: 0,
              home: { x, y, dx, dy } };   // where to respawn for the next wave
 }
 
@@ -454,6 +459,8 @@ let enemyProjectiles = [];
 let particles        = [];
 let floatTexts       = [];   // "-3 SUPER HIT!" numbers that float up
 let lastDevilLaugh   = 0;    // Date.now() of the Devil's last laugh
+let heartPickups     = [];   // hearts dropped by defeated bad guys
+let bolts            = [];   // chain-lightning zaps between bad guys
 
 // ── SOUND & MUSIC ─────────────────────────────────────────────
 // Everything is made with the Web Audio API — no sound files needed.
@@ -521,6 +528,8 @@ const SFX = {
     portal:   () => { tone(200, 0.5, 'sine', 0.2, 1200); tone(300, 0.5, 'triangle', 0.08, 1800); },
     pop:      () => { tone(1400, 0.1, 'sine', 0.25, 300); noise(0.05, 0.15, 3000); },
     buy:      () => [784, 988, 1175].forEach((f, i) => tone(f, 0.12, 'triangle', 0.15, null, i * 0.07)),
+    freeze:   () => { tone(2000, 0.25, 'sine', 0.12, 800); tone(2600, 0.2, 'triangle', 0.08, 1200, 0.05); },
+    zap:      () => { noise(0.15, 0.25, 6000); tone(1500, 0.12, 'sawtooth', 0.1, 300); },
     // "HA HA HA HA" — the Devil's scary laugh
     laugh:    () => { for (let i = 0; i < 4; i++) { tone(240 - i * 20, 0.14, 'sawtooth', 0.16, 150 - i * 15, i * 0.18);
                                                    tone(120 - i * 10, 0.14, 'square',   0.08, 80,            i * 0.18); } },
@@ -696,6 +705,8 @@ function resetGame() {
     enemyProjectiles = [];
     particles        = [];
     floatTexts       = [];
+    heartPickups     = [];
+    bolts            = [];
 }
 
 function advanceLevel() {
@@ -725,12 +736,14 @@ function advanceLevel() {
     enemyProjectiles = [];
     particles        = [];
     floatTexts       = [];
+    heartPickups     = [];
+    bolts            = [];
 }
 
 // ── ROOM CHANGE ───────────────────────────────────────────────
 function respawnParadiseWave() {
     for (const e of paradise.enemies) {
-        Object.assign(e, { alive: true, hp: e.maxHp, hitFlash: 0, hopTimer: 0,
+        Object.assign(e, { alive: true, hp: e.maxHp, hitFlash: 0, hopTimer: 0, frozen: 0,
                            x: e.home.x, y: e.home.y, dx: e.home.dx, dy: e.home.dy });
     }
 }
@@ -741,13 +754,15 @@ function changeRoom(dest) {
     state.shopOpen = false;   // close shop when changing rooms
     projectiles      = [];
     enemyProjectiles = [];
+    heartPickups     = [];
+    bolts            = [];
     if (dest === ROOM.VOID)     { player.x = 400; player.y = 300; }
     if (dest === ROOM.HELL)     {
         player.x = 100; player.y = 300;
         // Weapons are buried again (in new places) each visit
         hell.digSpots = makeDigSpots();
         hell.foundMsg = null;
-        hell.moles    = [];
+        hell.enemies  = [];
     }
     if (dest === ROOM.PARADISE) {
         player.x = 700; player.y = 300;
@@ -842,8 +857,92 @@ function hitEnemy(e, power) {
     return true;
 }
 
+// The bad guys in the room you're in
+function roomEnemies() {
+    if (state.room === ROOM.PARADISE) return state.lightCrystals < 3 ? paradise.enemies : [];
+    if (state.room === ROOM.HELL)     return hell.enemies;
+    return [];
+}
+
+// Bad guys you can shoot right now (not defeated, not still climbing out of the ground)
+function targetableEnemies() {
+    return roomEnemies().filter(e => e.alive && !(e.emerge > 0));
+}
+
+function roomCoins() {
+    if (state.room === ROOM.PARADISE) return paradise.coins;
+    if (state.room === ROOM.HELL)     return hell.coins;
+    return voidRoom.coins;
+}
+
+// Reward for beating a bad guy: a coin, and sometimes a heart
+function dropLoot(e) {
+    const count = e.coinDrop || 1;
+    for (let i = 0; i < count; i++) {
+        roomCoins().push({
+            x: Math.max(30, Math.min(770, e.x + (Math.random() - 0.5) * 16 * count)),
+            y: Math.max(70, Math.min(570, e.y + (Math.random() - 0.5) * 16 * count)),
+            picked: false,
+        });
+    }
+    if (Math.random() < HEART_DROP_CHANCE) heartPickups.push({ x: e.x + 12, y: e.y, life: 600 });
+}
+
+// Hit a bad guy with a weapon: damage, freeze (ICE), chain (LIGHTNING), loot when defeated
+function damageEnemy(e, power, chained = false) {
+    // Pick the lightning jump targets before anything dies
+    const jumps = power === POWER.LIGHTNING && !chained
+        ? targetableEnemies()
+            .filter(o => o !== e && Math.hypot(o.x - e.x, o.y - e.y) < CHAIN_RANGE)
+            .sort((a, b) => Math.hypot(a.x - e.x, a.y - e.y) - Math.hypot(b.x - e.x, b.y - e.y))
+            .slice(0, CHAIN_JUMPS)
+        : [];
+
+    if (hitEnemy(e, power)) {
+        e.alive = false;
+        dropLoot(e);
+    } else if (power === POWER.ICE) {
+        if (!e.frozen) sfx('freeze');
+        e.frozen = FREEZE_FRAMES;
+    }
+
+    let from = e;
+    for (const o of jumps) {
+        bolts.push({ x1: from.x, y1: from.y, x2: o.x, y2: o.y, life: 12 });
+        from = o;
+        damageEnemy(o, power, true);
+    }
+    if (jumps.length) sfx('zap');
+}
+
+// Moves every bad guy in the room and hurts the player on touch
+function updateRoomEnemies() {
+    for (const e of roomEnemies()) {
+        if (!e.alive) continue;
+        if (e.emerge > 0) {
+            e.emerge--;
+            if (Math.random() < 0.4) spawnParticles(e.x, e.y + 8, '#6B3E1E', 1);
+            continue;
+        }
+        if (e.hitFlash > 0) e.hitFlash--;
+        if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
+        moveEnemy(e);
+        if (state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
+            Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
+            damagePlayer();
+        }
+    }
+    // Defeated bad guys in Hell don't come back
+    hell.enemies = hell.enemies.filter(e => e.alive);
+}
+
 function moveEnemy(e) {
-    if (e.type === 'fire') {
+    if (e.type === 'mole') {
+        // Chases the player — even inside caves (they live underground!)
+        const a = Math.atan2(player.y - e.y, player.x - e.x);
+        e.x += Math.cos(a) * e.speed;
+        e.y += Math.sin(a) * e.speed;
+    } else if (e.type === 'fire') {
         e.x += e.dx; e.y += e.dy;
     } else if (e.type === 'ghost') {
         // Drifts slowly toward the player
@@ -905,15 +1004,6 @@ function updateEnemies() {
         // After all 3 crystals are collected paradise is peaceful — no more enemies
         if (state.lightCrystals >= 3) return;
 
-        for (const e of paradise.enemies) {
-            if (!e.alive) continue;
-            if (e.hitFlash > 0) e.hitFlash--;
-            moveEnemy(e);
-            if (state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
-                Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
-                damagePlayer();
-            }
-        }
         // Show only the current wave's chest once all enemies are cleared
         if (allMonstersDefeated() && state.paradiseClearCount < 3) {
             paradise.chests[state.paradiseClearCount].visible = true;
@@ -924,6 +1014,7 @@ function updateEnemies() {
         const d = hell.devil;
         if (!d.alive) return;
         if (d.shieldFlash > 0) d.shieldFlash--;
+        if (d.frozen > 0) { d.frozen--; return; }   // frozen by ICE
 
         const cfg = LEVEL_CONFIGS[state.level - 1];
 
@@ -1020,13 +1111,8 @@ function shoot() {
     if (state.ammoReloading || state.ammo <= 0) return;
 
     const enemies = [];
-    if (state.room === ROOM.PARADISE && state.lightCrystals < 3) {
-        paradise.enemies.filter(e => e.alive).forEach(e => enemies.push(e));
-    }
-    if (state.room === ROOM.HELL) {
-        hell.moles.filter(m => m.emerge === 0).forEach(m => enemies.push(m));
-        if (hell.devil.alive) enemies.push(hell.devil);
-    }
+    enemies.push(...targetableEnemies());
+    if (state.room === ROOM.HELL && hell.devil.alive) enemies.push(hell.devil);
     if (!enemies.length) return;
 
     const target = enemies.reduce((best, e) => {
@@ -1075,30 +1161,16 @@ function updateProjectiles() {
 
         let hit = false;
 
-        if (state.room === ROOM.PARADISE) {
-            for (const e of paradise.enemies) {
-                if (!e.alive || Math.hypot(p.x - e.x, p.y - e.y) >= e.r + p.r) continue;
-                if (hitEnemy(e, p.power)) e.alive = false;
-                hit = true; break;
-            }
-        }
-
-        // Mole monsters
-        if (!hit && state.room === ROOM.HELL) {
-            for (let j = hell.moles.length - 1; j >= 0; j--) {
-                const m = hell.moles[j];
-                if (m.emerge > 0 || Math.hypot(p.x - m.x, p.y - m.y) >= m.r + p.r) continue;
-                if (hitEnemy(m, p.power)) {
-                    hell.moles.splice(j, 1);
-                    collectCoin();   // moles drop a coin as a reward
-                }
-                hit = true; break;
-            }
+        for (const e of targetableEnemies()) {
+            if (Math.hypot(p.x - e.x, p.y - e.y) >= e.r + p.r) continue;
+            damageEnemy(e, p.power);
+            hit = true; break;
         }
 
         if (!hit && state.room === ROOM.HELL) {
             const d = hell.devil;
             if (d.alive && Math.hypot(p.x - d.x, p.y - d.y) < d.r + p.r) {
+                if (p.power === POWER.ICE) d.frozen = DEVIL_FREEZE_FRAMES;
                 if (state.lightCrystals >= 3) {
                     d.hp--;
                     sfx('hit');
@@ -1143,7 +1215,7 @@ function nearbyDigSpot() {
 
 // You can't dig while a mole monster is out — Space / the button shoots it instead
 function canDig() {
-    return hell.moles.length === 0;
+    return !hell.enemies.some(e => e.alive && e.type === 'mole');
 }
 
 function powerName(power = state.power, tier = state.powerTier) {
@@ -1155,9 +1227,9 @@ function powerName(power = state.power, tier = state.powerTier) {
 function spawnMole(s) {
     // Pops out a little way from the player so it doesn't hit them straight away
     const a = Math.random() * Math.PI * 2;
-    hell.moles.push({
-        type: 'mole', x: s.x + Math.cos(a) * 45, y: s.y + Math.sin(a) * 45,
-        r: 13 + s.depth * 2, hp: s.depth * 2 + 1, maxHp: s.depth * 2 + 1, hitFlash: 0,
+    hell.enemies.push({
+        type: 'mole', x: s.x + Math.cos(a) * 45, y: s.y + Math.sin(a) * 45, alive: true,
+        r: 13 + s.depth * 2, hp: s.depth * 2 + 1, maxHp: s.depth * 2 + 1, hitFlash: 0, frozen: 0,
         speed: 0.8 + s.depth * 0.25,
         emerge: 45,   // frames spent climbing out (harmless while emerging)
     });
@@ -1206,29 +1278,23 @@ function tryDig() {
 
 function updateDigging() {
     if (hell.foundMsg && --hell.foundMsg.timer <= 0) hell.foundMsg = null;
-    if (state.room !== ROOM.HELL) return;
-
-    // Mole monsters chase the player — even inside caves (they live underground!)
-    for (const m of hell.moles) {
-        if (m.emerge > 0) {
-            m.emerge--;
-            if (Math.random() < 0.4) spawnParticles(m.x, m.y + 8, '#6B3E1E', 1);
-            continue;
-        }
-        if (m.hitFlash > 0) m.hitFlash--;
-        const a = Math.atan2(player.y - m.y, player.x - m.x);
-        m.x += Math.cos(a) * m.speed;
-        m.y += Math.sin(a) * m.speed;
-        if (state.playerInvincible === 0 && !isShieldedAgainst('mole') &&
-            Math.hypot(m.x - player.x, m.y - player.y) < m.r + 16) {
-            damagePlayer();
-        }
-    }
 }
 
 // ── UPDATE: PICKUPS ───────────────────────────────────────────
 function checkPickups() {
     if (state.won || state.levelComplete) return;
+
+    // Hearts dropped by bad guys
+    for (let i = heartPickups.length - 1; i >= 0; i--) {
+        const h = heartPickups[i];
+        if (Math.hypot(player.x - h.x, player.y - h.y) > 22) continue;
+        heartPickups.splice(i, 1);
+        const maxHp = LEVEL_CONFIGS[state.level - 1].playerMaxHp;
+        if (state.playerHp < maxHp) { state.playerHp++; spawnFloatText(player.x, player.y - 28, '+1 ❤', '#FF6688'); }
+        else                        { addScore(10);     spawnFloatText(player.x, player.y - 28, '+10',   '#FFFFFF'); }
+        spawnParticles(h.x, h.y, '#FF6688', 8);
+        sfx('buy');
+    }
 
     if (state.room === ROOM.HELL) {
         // Coins in Hell
@@ -1313,6 +1379,12 @@ function updateParticles() {
         }
         p.life--;
         if (p.life <= 0) particles.splice(i, 1);
+    }
+    for (let i = bolts.length - 1; i >= 0; i--) {
+        if (--bolts[i].life <= 0) bolts.splice(i, 1);
+    }
+    for (let i = heartPickups.length - 1; i >= 0; i--) {
+        if (--heartPickups[i].life <= 0) heartPickups.splice(i, 1);
     }
     for (let i = floatTexts.length - 1; i >= 0; i--) {
         floatTexts[i].y -= 0.8;
@@ -1627,38 +1699,10 @@ function drawHell() {
                    digSpot.x, digSpot.y - 22);
     }
 
-    // Mole monsters
-    for (const m of hell.moles) {
-        const rise = 1 - m.emerge / 45;   // 0 → 1 while climbing out
-        const r = m.r * (0.4 + 0.6 * rise);
-        ctx.save();
-        ctx.globalAlpha = 0.4 + 0.6 * rise;
-        ctx.fillStyle = '#5C3A1E';
-        ctx.beginPath(); ctx.arc(m.x, m.y, r, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#E8A0A0';   // pink nose
-        ctx.beginPath(); ctx.arc(m.x, m.y + r * 0.25, r * 0.22, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#FF2222';   // angry red eyes
-        ctx.beginPath();
-        ctx.arc(m.x - r * 0.35, m.y - r * 0.25, r * 0.15, 0, Math.PI * 2);
-        ctx.arc(m.x + r * 0.35, m.y - r * 0.25, r * 0.15, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#D8C8A8'; ctx.lineWidth = 2;   // claws
-        for (const side of [-1, 1]) {
-            for (let k = -1; k <= 1; k++) {
-                ctx.beginPath();
-                ctx.moveTo(m.x + side * r * 0.8, m.y + r * 0.4 + k * 3);
-                ctx.lineTo(m.x + side * r * 1.25, m.y + r * 0.55 + k * 4);
-                ctx.stroke();
-            }
-        }
-        ctx.restore();
-        if (m.emerge === 0) {
-            if (m.hitFlash > 0) {
-                ctx.save(); ctx.globalAlpha = m.hitFlash / 12; ctx.fillStyle = '#FFFFFF';
-                ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-            }
-            drawEnemyHp(m);
-        }
+    // Bad guys (mole monsters, …)
+    for (const e of hell.enemies) {
+        drawEnemy(e, t);
+        if (!(e.emerge > 0)) drawEnemyHp(e);
     }
 
     // "You found …!" message floating up
@@ -1715,6 +1759,7 @@ function drawHell() {
         ctx.arc(d.x + 9, d.y - 4, 3, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+        if (d.frozen > 0) drawIceBlock(d.x, d.y, d.r * 0.85, d.frozen);
 
         // State label
         ctx.fillStyle = 'rgba(255,120,120,0.65)';
@@ -1817,6 +1862,28 @@ function drawEnemy(e, t) {
         ctx.arc(e.x - 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.arc(e.x + 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.fill();
+    } else if (e.type === 'mole') {
+        const rise = 1 - (e.emerge || 0) / 45;   // 0 → 1 while climbing out
+        const r = e.r * (0.4 + 0.6 * rise);
+        ctx.globalAlpha = 0.4 + 0.6 * rise;
+        ctx.fillStyle = '#5C3A1E';
+        ctx.beginPath(); ctx.arc(e.x, e.y, r, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#E8A0A0';   // pink nose
+        ctx.beginPath(); ctx.arc(e.x, e.y + r * 0.25, r * 0.22, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FF2222';   // angry red eyes
+        ctx.beginPath();
+        ctx.arc(e.x - r * 0.35, e.y - r * 0.25, r * 0.15, 0, Math.PI * 2);
+        ctx.arc(e.x + r * 0.35, e.y - r * 0.25, r * 0.15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#D8C8A8'; ctx.lineWidth = 2;   // claws
+        for (const side of [-1, 1]) {
+            for (let k = -1; k <= 1; k++) {
+                ctx.beginPath();
+                ctx.moveTo(e.x + side * r * 0.8, e.y + r * 0.4 + k * 3);
+                ctx.lineTo(e.x + side * r * 1.25, e.y + r * 0.55 + k * 4);
+                ctx.stroke();
+            }
+        }
     } else if (e.type === 'slime') {
         // Squishes flat while resting, stretches tall mid-hop
         const speed   = Math.hypot(e.dx, e.dy);
@@ -1833,14 +1900,31 @@ function drawEnemy(e, t) {
         ctx.fill();
     }
     ctx.restore();
+    if (e.frozen > 0) drawIceBlock(e.x, e.y, e.r, e.frozen);
     // White flash when hit
-    if (e.hitFlash > 0) {
+    if (e.hitFlash > 0 && !(e.emerge > 0)) {
         ctx.save();
         ctx.globalAlpha = e.hitFlash / 12;
         ctx.fillStyle = '#FFFFFF';
         ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
     }
+}
+
+// Frozen solid: a see-through ice block (flickers just before melting)
+function drawIceBlock(x, y, r, framesLeft) {
+    if (framesLeft < 30 && Math.floor(Date.now() / 80) % 2) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(160,220,255,0.45)';
+    ctx.strokeStyle = 'rgba(230,250,255,0.9)'; ctx.lineWidth = 2;
+    const s = r * 1.35;
+    ctx.fillRect(x - s, y - s, s * 2, s * 2);
+    ctx.strokeRect(x - s, y - s, s * 2, s * 2);
+    ctx.beginPath();   // shine
+    ctx.moveTo(x - s * 0.7, y - s * 0.2); ctx.lineTo(x - s * 0.2, y - s * 0.7);
+    ctx.moveTo(x - s * 0.7, y + s * 0.2); ctx.lineTo(x + s * 0.2, y - s * 0.7);
+    ctx.stroke();
+    ctx.restore();
 }
 
 // Little health bar, only once a bad guy has been hurt
@@ -2014,6 +2098,36 @@ function drawProjectiles() {
         ctx.save();
         ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    }
+}
+
+// Zig-zag chain-lightning bolts
+function drawBolts() {
+    for (const b of bolts) {
+        ctx.save();
+        ctx.globalAlpha = b.life / 12;
+        ctx.strokeStyle = Math.random() < 0.5 ? '#FFFFFF' : '#FFE033';
+        ctx.shadowColor = '#FFE033'; ctx.shadowBlur = 14; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(b.x1, b.y1);
+        const len = Math.hypot(b.x2 - b.x1, b.y2 - b.y1) || 1;
+        const nx = -(b.y2 - b.y1) / len, ny = (b.x2 - b.x1) / len;
+        for (let k = 1; k < 6; k++) {
+            const j = (Math.random() - 0.5) * 18;
+            ctx.lineTo(b.x1 + (b.x2 - b.x1) * k / 6 + nx * j, b.y1 + (b.y2 - b.y1) * k / 6 + ny * j);
+        }
+        ctx.lineTo(b.x2, b.y2); ctx.stroke();
+        ctx.restore();
+    }
+}
+
+function drawHeartPickups() {
+    for (const h of heartPickups) {
+        if (h.life < 120 && Math.floor(Date.now() / 120) % 2) continue;   // blinks before vanishing
+        ctx.save();
+        ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#FF3355'; ctx.shadowColor = '#FF3355'; ctx.shadowBlur = 10;
+        ctx.fillText('❤', h.x, h.y + Math.sin(Date.now() / 200 + h.x) * 3);
         ctx.restore();
     }
 }
@@ -2412,6 +2526,7 @@ function update() {
     updatePlayer();
     if (!state.won && !state.levelComplete) {
         updateEnemies();
+        updateRoomEnemies();
         updateProjectiles();
         updateEnemyProjectiles();
         checkPickups();
@@ -2462,7 +2577,9 @@ function draw() {
     if (state.room === ROOM.HELL)     drawHell();
     if (state.room === ROOM.PARADISE) drawParadise();
     drawPlayer();
+    drawHeartPickups();
     drawProjectiles();
+    drawBolts();
     drawEnemyProjectiles();
     drawParticles();
     drawFloatTexts();
