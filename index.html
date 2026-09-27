@@ -714,6 +714,7 @@ function moveMenuCursor(dx, dy) {
 
 // Buy something from a menu: returns true if you had enough coins
 function spend(cost) {
+    if (settings.creative) { sfx('buy'); return true; }   // everything is free in Creative Mode
     if (state.coins < cost) { showToast(`Not enough coins — you need 🪙${cost}`, '#FF8888', 120); sfx('hurt'); return false; }
     state.coins -= cost;
     sfx('buy');
@@ -740,11 +741,13 @@ function pressStart() {
     if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
     else if (state.won)             resetGame();
+    else if (lastInput === 'pad')   openSettings();
 }
 
 // A tap or click at canvas position (x, y). Returns true if it hit a button.
 function handleTap(x, y) {
     if (Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < MUTE_BTN.r * 1.5) { toggleMute(); return true; }
+    if (state.gamePhase === 'playing' && Math.hypot(x - SETTINGS_BTN.x, y - SETTINGS_BTN.y) < SETTINGS_BTN.r * 1.4) { openSettings(); return true; }
     if (state.gamePhase === 'intro') {
         if (savedGame && inRect(x, y, NEW_GAME_BTN)) startFromIntro(true);
         else startFromIntro();
@@ -796,11 +799,12 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); menuSelect(menu.cursor); }
         const d = /^Digit([1-9])$/.exec(e.code);
         if (d) menuSelect(Number(d[1]) - 1);
-        if (e.code === 'Escape' || e.code === 'KeyE') menu = null;
+        if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyO') menu = null;
         return;
     }
     if (e.code === 'KeyB') toggleBuild();
     if (e.code === 'KeyP') toggleP2();
+    if (e.code === 'KeyO') openSettings();
     if (e.code === 'KeyR') castSpell();
     if (e.code === 'KeyV') toggleMount();
     if (e.code === 'KeyQ') { if (state.buildMode) nextBlock(); else useGadget(); }
@@ -862,7 +866,7 @@ function toggleP2() {
 }
 
 function hurtP2() {
-    if (!p2.active || p2.down > 0 || p2.inv > 0) return;
+    if (!p2.active || p2.down > 0 || p2.inv > 0 || settings.creative) return;
     p2.hp--; p2.inv = 90;
     spawnParticles(p2.x, p2.y, '#FF4444', 8); sfx('hurt');
     if (p2.hp <= 0) { p2.down = P2_DOWN_FRAMES; showToast('Player 2 needs a rest… back in 10 s!', '#FFAA88', 150); }
@@ -969,6 +973,7 @@ function pollGamepad() {
 
     if (pressed(PAD.BACK))  toggleMute();
     if (menu) {
+        if (pressed(PAD.START)) { menu = null; return; }
         if (pressed(PAD.LEFT))  moveMenuCursor(-1, 0);
         if (pressed(PAD.RIGHT)) moveMenuCursor(1, 0);
         if (pressed(PAD.UP))    moveMenuCursor(0, -1);
@@ -1031,10 +1036,9 @@ const vTouch = { joyId: null, joyDX: 0, joyDY: 0, joyOriX: 0, joyOriY: 0, shootI
 
 function canvasPos(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    return {
-        x: (clientX - rect.left) * (canvas.width  / rect.width),
-        y: (clientY - rect.top)  * (canvas.height / rect.height),
-    };
+    const x = (clientX - rect.left) * (canvas.width  / rect.width);
+    const y = (clientY - rect.top)  * (canvas.height / rect.height);
+    return settings.upsideDown ? { x: canvas.width - x, y: canvas.height - y } : { x, y };   // the picture is turned round
 }
 
 canvas.addEventListener('touchstart', e => {
@@ -2302,7 +2306,7 @@ const SFX = {
                                                    tone(120 - i * 10, 0.14, 'square',   0.08, 80,            i * 0.18); } },
     win:      () => [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, 0.25, 'square', 0.12, null, i * 0.15)),
 };
-function sfx(name) { if (audioCtx && !muted) SFX[name](); }
+function sfx(name) { if (audioCtx && !muted && settings.sfx) SFX[name](); }
 
 // Background music — one little looping song per room (MIDI note numbers, 0 = rest, 8th notes)
 const SONGS = {
@@ -2370,7 +2374,7 @@ function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
 // Schedules the next few notes a little ahead of time so the music never stutters
 function musicTick() {
-    if (!audioCtx || muted) return;
+    if (!audioCtx || muted || !settings.music) return;
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
     const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell' : state.room;
     const song = playing ? SONGS[songKey] : null;
@@ -2388,6 +2392,54 @@ function musicTick() {
     }
 }
 setInterval(musicTick, 50);
+
+// ── SETTINGS (⚙ button / O / Start) ───────────────────────────
+// Creative Mode is like Minecraft creative: nothing attacks you, everything is free,
+// unlimited blocks everywhere, one-hit mining and you can walk through blocks.
+let settings = { creative: false, difficulty: 'normal', music: true, sfx: true, upsideDown: false };
+try { settings = Object.assign(settings, JSON.parse(localStorage.getItem('lop_settings')) || {}); } catch (e) {}
+const SETTINGS_BTN = { x: 26, y: 534, r: 16 };
+
+function saveSettings() { try { localStorage.setItem('lop_settings', JSON.stringify(settings)); } catch (e) {} }
+
+function setCreative(on) {
+    if (on === settings.creative) return;
+    settings.creative = on;
+    if (on) { state.coinsBackup = state.coins; }                                   // put your real coins safely aside
+    else    { state.coins = state.coinsBackup || 0; state.coinsBackup = undefined; }   // …and give them back
+    saveSettings();
+    showToast(on ? '🎮 CREATIVE MODE — nothing attacks you and everything is free!' : '⚔ SURVIVAL MODE — watch out, monsters are back!', '#FFE066', 220);
+}
+
+function applyUpsideDown() {
+    canvas.style.transform = settings.upsideDown ? 'rotate(180deg)' : '';
+}
+applyUpsideDown();
+
+function settingsItems() {
+    const diffName = { easy: 'EASY (+2 hearts)', normal: 'NORMAL', hard: 'HARD (1 less heart)' };
+    const next = { easy: 'normal', normal: 'hard', hard: 'easy' };
+    return [
+        { icon: '🎮', name: 'Game Mode', desc: 'Creative: free stuff, no monsters attack', cost: 0, status: settings.creative ? 'CREATIVE' : 'SURVIVAL',
+          action: () => setCreative(!settings.creative) },
+        { icon: '😊', name: 'Difficulty', desc: 'Tap to change', cost: 0, status: diffName[settings.difficulty],
+          action: () => { settings.difficulty = next[settings.difficulty]; state.playerHp = Math.min(state.playerHp, fullHearts()); saveSettings(); } },
+        { icon: '🎵', name: 'Music', desc: 'The songs in every place', cost: 0, status: settings.music ? 'ON' : 'OFF',
+          action: () => { settings.music = !settings.music; saveSettings(); } },
+        { icon: '🔊', name: 'Sound Effects', desc: 'Pew pew, boing, quack…', cost: 0, status: settings.sfx ? 'ON' : 'OFF',
+          action: () => { settings.sfx = !settings.sfx; saveSettings(); } },
+        { icon: '🙃', name: 'Upside Down', desc: 'Turn the whole game upside down!', cost: 0, status: settings.upsideDown ? 'ON' : 'OFF',
+          action: () => { settings.upsideDown = !settings.upsideDown; applyUpsideDown(); saveSettings(); } },
+        { icon: '💾', name: 'Save Now', desc: 'The game also saves by itself', cost: 0, status: 'SAVE',
+          action: () => { saveGame(); saveWorld(); showToast('💾 Saved!', '#88EEFF', 90); } },
+    ];
+}
+
+function openSettings() {
+    if (state.gamePhase !== 'playing') return;
+    if (menu) { menu = null; return; }
+    openMenu('⚙ SETTINGS', settingsItems);
+}
 
 // ── TOASTS (big messages at the top of the screen) ───────────
 let toast = null;   // { text, color, timer }
@@ -2490,6 +2542,7 @@ try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 function saveGame() {
     if (state.gamePhase !== 'playing' || state.won) return;
     savedGame = Object.fromEntries(SAVE_FIELDS.map(k => [k, state[k]]));
+    if (settings.creative) savedGame.coins = state.coinsBackup || 0;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(savedGame)); } catch (e) {}
 }
 
@@ -2624,7 +2677,7 @@ function makeWorldBlocks(room) {
     return b;
 }
 
-function isCreative() { return state.room === ROOM.HEAVEN; }   // unlimited blocks in Heaven!
+function isCreative() { return settings.creative || state.room === ROOM.HEAVEN; }   // unlimited blocks in Heaven (or Creative Mode)
 function invCount(type) { return state.inv[type] || 0; }
 
 // Is it OK to put a block here? (not on you, portals, people, doors, chests or dig spots)
@@ -3031,7 +3084,10 @@ function nextBlock(step = 1) { state.hotbar = (state.hotbar + step + HOTBAR.leng
 
 // ── HELPERS ───────────────────────────────────────────────────
 // Your most hearts: the level's hearts plus any armor you've crafted
-function fullHearts() { return LEVEL_CONFIGS[state.level - 1].playerMaxHp + (state.armor || 0); }
+function fullHearts() {
+    const extra = settings.difficulty === 'easy' ? 2 : settings.difficulty === 'hard' ? -1 : 0;
+    return Math.max(1, LEVEL_CONFIGS[state.level - 1].playerMaxHp + (state.armor || 0) + extra);
+}
 
 function triggerShake(amount = 12) { state.screenShake = amount; }
 
@@ -3111,6 +3167,7 @@ function getPlayerColor() {
 }
 
 function damagePlayer() {
+    if (settings.creative) return;   // nothing can hurt you in Creative Mode
     if (state.playerInvincible > 0) return;
     if (state.bubble) {
         // Shield Bubble pops instead of losing a heart
@@ -3150,7 +3207,7 @@ function resetGame() {
         caveTimer: 0, caveProtectionExpired: false,
         coins: 0, shopOpen: false,
         unlockedSkins: [true, ...Array(AVATAR_COLORS.length - 1).fill(false)], activeSkin: 0,
-        bubble: false, score: 0, newBest: false,
+        bubble: false, score: 0, newBest: false, coinsBackup: undefined,
         job: null, housesOwned: {}, ammoBonus: 0,
         ownedPets: PETS.map(() => false), activePet: -1, petXp: PETS.map(() => 0),
         ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
@@ -3341,7 +3398,7 @@ function updatePlayer() {
     // Move, but blocks are solid (try each direction separately so you slide along walls)
     const nx = Math.max(18, Math.min(canvas.width  - 18, player.x + dx));
     const ny = Math.max(52, Math.min(canvas.height - 18, player.y + dy));
-    const flying = state.mount === 'dragon';   // dragons fly over blocks
+    const flying = state.mount === 'dragon' || settings.creative;   // dragons (and Creative Mode) fly over blocks
     if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
     if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
     if (state.mount === 'duck' && (dx || dy) && Math.random() < 0.01) { tone(700, 0.12, 'square', 0.12, 500); spawnFloatText(player.x, player.y - 30, 'QUACK!', '#FFE066', 40); }
@@ -3542,7 +3599,7 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
 // The Devil calls in Mini-Devils to help him
 function updateDevilMinions() {
     const d = hell.devil;
-    if (state.room !== ROOM.HELL || !d.alive || d.frozen > 0) return;
+    if (state.room !== ROOM.HELL || !d.alive || d.frozen > 0 || settings.creative) return;
     if (--hell.summonTimer > 0) return;
     hell.summonTimer = IMP_SUMMON_FRAMES;
     const imps = hell.enemies.filter(e => e.type === 'imp' && e.alive).length;
@@ -3579,6 +3636,7 @@ function updateRoomEnemies() {
         if (e.hitFlash > 0) e.hitFlash--;
         if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
         if (e.frog) { moveFrog(e); continue; }   // frogs are harmless
+        if (settings.creative) { moveFrog(e); continue; }   // Creative Mode: monsters just potter about
         moveEnemy(e);
         if (e.type === 'monkey' && !(e.flee > 0) && Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
             if (state.coins > 0) {   // 🐒 SNATCH!
@@ -3874,6 +3932,7 @@ function updateEnemies() {
         const d = hell.devil;
         if (!d.alive) return;
         if (d.shieldFlash > 0) d.shieldFlash--;
+        if (settings.creative) return;   // the Devil leaves you alone in Creative Mode
         if (d.frozen > 0) { d.frozen--; return; }   // frozen by ICE
         if (timeFreeze > 0) return;
 
@@ -4710,8 +4769,8 @@ function hatItems() {
 
 // Crafting recipes: turn what you've mined into new things
 function craftItems() {
-    const has = (need) => Object.entries(need).every(([k, v]) => invCount(k) >= v);
-    const take = (need) => { for (const [k, v] of Object.entries(need)) state.inv[k] -= v; };
+    const has = (need) => settings.creative || Object.entries(need).every(([k, v]) => invCount(k) >= v);
+    const take = (need) => { if (!settings.creative) for (const [k, v] of Object.entries(need)) state.inv[k] -= v; };
     const needText = (need) => Object.entries(need).map(([k, v]) => `${v} ${MATERIALS[k] || BLOCKS[k].name}`).join(' + ');
     const recipe = (icon, name, need, give, doneIf, extraDesc) => ({
         icon, name, desc: `${needText(need)}${extraDesc ? ' — ' + extraDesc : ''}`,
@@ -7687,7 +7746,7 @@ function drawHUD() {
     ctx.save();
     ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFAA00'; ctx.shadowBlur = 6;
     ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left';
-    ctx.fillText(`🪙 ${state.coins}`, 14, 46);
+    ctx.fillText(settings.creative ? '🪙 ∞' : `🪙 ${state.coins}`, 14, 46);
     ctx.restore();
 
     // ── SCORE ─────────────────────────────────────────────────
@@ -7713,7 +7772,16 @@ function drawHUD() {
     ctx.font = '15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = '#FFF';
     ctx.fillText(muted ? '🔇' : '🔊', MUTE_BTN.x, MUTE_BTN.y + 1);
+    ctx.beginPath(); ctx.arc(SETTINGS_BTN.x, SETTINGS_BTN.y, SETTINGS_BTN.r, 0, Math.PI * 2);   // ⚙ settings
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
+    ctx.fillStyle = '#FFF'; ctx.fillText('⚙', SETTINGS_BTN.x, SETTINGS_BTN.y + 1);
     ctx.restore();
+    if (settings.creative) {   // a badge so you know you're in Creative Mode
+        ctx.save();
+        ctx.fillStyle = 'rgba(60,160,60,0.9)'; ctx.fillRect(364, 50, 72, 16);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🎮 CREATIVE', 400, 62);
+        ctx.restore();
+    }
 }
 
 // ── DRAW: RAINBOW BACKGROUND ──────────────────────────────────
@@ -8072,6 +8140,10 @@ function update() {
     if (state.gamePhase === 'intro') return;
     if (race) { updateRace(); updateParticles(); return; }   // everything waits while you race
 
+    if (settings.creative) {   // Creative Mode: coins never run out (your real coins are kept safe)
+        if (state.coinsBackup === undefined) state.coinsBackup = state.coins;
+        state.coins = 99999;
+    }
     updatePlayer();
     if (!state.won && !state.levelComplete) {
         updateEnemies();
