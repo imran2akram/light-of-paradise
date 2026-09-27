@@ -235,6 +235,204 @@ const PET_XP_LEVELS  = [0, 20, 60, 120, 200];   // XP needed for levels 1-5
 const UNICORN_HEAL_FRAMES = 720;                // the Unicorn heals 1 heart every 12 s
 const OWL_HEAL_FRAMES = 1200;   // the Owl heals 1 heart every 20 s
 
+// ── FIGHTING MOVES ────────────────────────────────────────────
+// J / RB / 👊 : tap = punch, punch, KICK! combo · hold = SPIN ATTACK · while moving up = UPPERCUT
+//               while dashing = SLIDING KICK · in the air = GROUND POUND · next to a stunned monster = GRAB, again = THROW
+// X / LB / 🛡 : hold to BLOCK (block right as you get hit = PARRY / COUNTER)
+// C / 🦘      : SUPER JUMP (you can't be hurt in the air)
+// Hold SPACE / A / SHOOT : CHARGE SHOT (a giant shot that goes through monsters)
+const COMBO_WINDOW   = 26;    // frames to press again to keep the combo going
+const SPIN_HOLD      = 30;    // hold the punch button this long for a spin attack
+const PARRY_WINDOW   = 12;    // frames after you start blocking when a hit gets parried
+const CHARGE_FRAMES  = 45;    // hold the shoot button this long for a charge shot
+const JUMP_FRAMES    = 40;
+let fight = { combo: 0, since: 99, cooldown: 0, hold: 0, holding: false, blocking: false, blockFrames: 0,
+              jump: 0, pound: false, slide: 0, slideHits: null, charge: 0, fx: [] };
+let grabbed  = null;   // a monster you're carrying
+let slowMo   = 0;      // perfect-dodge slow motion
+let frameNo  = 0;
+
+function canFight() { return playing() && !state.buildMode && !(state.chicken > 0); }
+
+// Hit every monster in reach. arc = only in front of you
+function meleeHit(radius, dmg, knock, stun, arc = true, air = 0) {
+    let hits = 0;
+    for (const e of targetableEnemies()) {
+        const dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy);
+        if (d > radius + e.r) continue;
+        if (arc && d > 12 && (dx * state.faceX + dy * state.faceY) / d < 0.1) continue;
+        damageEnemy(e, POWER.NONE, false, dmg - 1 + state.weaponLevel - 1);
+        hits++;
+        if (!e.alive) continue;
+        if (knock && d > 0 && !BOSS_TYPES.includes(e.type)) { e.x += dx / d * knock; e.y += dy / d * knock; }
+        if (stun) e.stun = Math.max(e.stun || 0, BOSS_TYPES.includes(e.type) ? stun / 3 : stun);
+        if (air && !BOSS_TYPES.includes(e.type)) e.air = air;
+    }
+    // The Devil can be punched too (once you have the crystals)
+    const d = hell.devil;
+    if (state.room === ROOM.HELL && d.alive && Math.hypot(d.x - player.x, d.y - player.y) < radius + d.r) {
+        if (state.lightCrystals >= 3) { d.hp = Math.max(1, d.hp - 1); d.shieldFlash = 15; hits++; } else d.shieldFlash = 20;
+    }
+    if (hits) { triggerShake(4 + dmg); addComboHits(hits); }
+    return hits;
+}
+
+function meleeFx(kind, r) { fight.fx.push({ kind, x: player.x, y: player.y, a: Math.atan2(state.faceY, state.faceX), r, life: 12 }); }
+
+function meleePress() {
+    if (!canFight() || fight.cooldown > 0) return;
+    fight.holding = true; fight.hold = 0;
+    // Carrying a monster? THROW it!
+    if (grabbed) {
+        const g = grabbed; grabbed = null;
+        g.x = player.x + state.faceX * 20; g.y = player.y + state.faceY * 20;   // throw from in front of you
+        g.thrown = { vx: state.faceX * 9, vy: state.faceY * 9, t: 40, hits: new Set() };
+        sfx('whoosh'); fight.cooldown = 12; return;
+    }
+    // Next to a stunned / frozen / tiny monster? GRAB it!
+    const grab = targetableEnemies().find(e => !BOSS_TYPES.includes(e.type) && (e.stun > 0 || e.frozen > 0 || e.shrunk > 0 || e.air > 0)
+                                          && Math.hypot(e.x - player.x, e.y - player.y) < e.r + 22);
+    if (grab) { grabbed = grab; grab.stun = 999; spawnFloatText(grab.x, grab.y - 24, 'GRABBED!', '#FFE066', 40); sfx('bite'); return; }
+    if (fight.jump > 0) { fight.pound = true; fight.jump = Math.min(fight.jump, 8); return; }           // ground pound on landing
+    if (state.dashTimer > 0) { fight.slide = state.dashTimer + 4; fight.slideHits = new Set(); meleeFx('slide', 30); sfx('whoosh'); return; }   // sliding kick
+    const movingUp = keys['KeyW'] || (!p2.active && keys['ArrowUp']) || padMove.y < -0.6 || vTouch.joyDY < -VJOY.maxDist * 0.5;
+    if (movingUp) {   // UPPERCUT!
+        meleeFx('upper', 44);
+        if (meleeHit(44, 3, 20, 45, true, 45)) spawnFloatText(player.x, player.y - 40, 'UPPERCUT!', '#FF8844', 45);
+        fight.cooldown = 22; sfx('superHit'); return;
+    }
+    // Punch, punch, KICK!
+    fight.combo = fight.since < COMBO_WINDOW ? fight.combo % 3 + 1 : 1;
+    fight.since = 0;
+    const kick = fight.combo === 3;
+    meleeFx(kick ? 'kick' : 'punch', kick ? 46 : 38);
+    meleeHit(kick ? 46 : 38, kick ? 3 : 2, kick ? 60 : 12, kick ? 40 : 0);
+    if (kick) { spawnFloatText(player.x, player.y - 40, 'KICK!', '#FFE066', 40); giveAward('combo'); }
+    sfx(kick ? 'superHit' : 'hit');
+    fight.cooldown = kick ? 16 : 8;
+}
+
+function meleeRelease() {
+    if (fight.holding && fight.hold >= SPIN_HOLD && canFight()) {   // SPIN ATTACK!
+        meleeFx('spin', 70);
+        meleeHit(70, 2, 50, 30, false);
+        spawnFloatText(player.x, player.y - 40, 'SPIN ATTACK!', '#88DDFF', 50);
+        sfx('whoosh'); fight.cooldown = 30;
+    }
+    fight.holding = false; fight.hold = 0;
+}
+
+function superJump() {
+    if (!canFight() || fight.jump > 0) return;
+    fight.jump = JUMP_FRAMES; fight.pound = false;
+    sfx('boing');
+}
+
+function startBlock() { if (canFight() && !fight.blocking) { fight.blocking = true; fight.blockFrames = 0; } }
+function stopBlock()  { fight.blocking = false; }
+
+// Charge shots (hold the shoot button)
+function chargeRelease() {
+    if (fight.charge >= CHARGE_FRAMES && canFight() && state.power !== POWER.NONE) {
+        const aim = aimPoint(500), a = Math.atan2(aim.y - player.y, aim.x - player.x);
+        const w = WEAPON_INFO[state.power];
+        projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a) * 7, dy: Math.sin(a) * 7, color: w.color, power: state.power,
+                           life: 110, r: 16, pierce: true, hitSet: new Set(), bonus: 4 });
+        triggerShake(8); sfx('boom');
+        spawnFloatText(player.x, player.y - 36, 'CHARGE SHOT!', w.color, 50);
+    }
+    fight.charge = 0;
+}
+
+function updateFighting() {
+    frameNo++;
+    if (slowMo > 0) slowMo--;
+    if (fight.cooldown > 0) fight.cooldown--;
+    fight.since++;
+    if (fight.holding) fight.hold++;
+    if (fight.blocking) fight.blockFrames++;
+    // Charging a shot while the shoot button is held
+    const shootHeld = (keys['Space'] && !menu) || (padPrev[PAD.A]) || vTouch.shootId !== null;
+    if (shootHeld && state.power !== POWER.NONE && canFight()) fight.charge++;
+    else if (fight.charge > 0) chargeRelease();
+    // Super jump: can't be hurt in the air
+    if (fight.jump > 0) {
+        state.playerInvincible = Math.max(state.playerInvincible, 2);
+        if (--fight.jump === 0) {
+            if (fight.pound) {   // GROUND POUND!
+                fight.pound = false;
+                meleeFx('pound', 100);
+                meleeHit(100, 3, 70, 40, false);
+                triggerShake(16); sfx('boom'); giveAward('groundPound');
+                spawnParticles(player.x, player.y + 16, '#8A6A4A', 20);
+            } else spawnParticles(player.x, player.y + 16, '#CCCCCC', 6);
+        }
+    }
+    // Sliding kick hits everything you slide through
+    if (fight.slide > 0) {
+        fight.slide--;
+        for (const e of targetableEnemies()) {
+            if (fight.slideHits.has(e) || Math.hypot(e.x - player.x, e.y - player.y) > e.r + 24) continue;
+            fight.slideHits.add(e); damageEnemy(e, POWER.NONE, false, 1 + state.weaponLevel - 1); if (e.alive) e.stun = 30;
+        }
+    }
+    // A grabbed monster is carried over your head
+    if (grabbed) {
+        if (!grabbed.alive) grabbed = null;
+        else { grabbed.x = player.x; grabbed.y = player.y - 34; grabbed.stun = 999; }
+    }
+    // Thrown monsters fly and smash into others
+    for (const e of targetableEnemies()) {
+        if (!e.thrown) continue;
+        const th = e.thrown;
+        e.x += th.vx; e.y += th.vy; e.stun = 20;
+        for (const o of targetableEnemies()) {
+            if (o === e || th.hits.has(o) || Math.hypot(o.x - e.x, o.y - e.y) > o.r + e.r) continue;
+            th.hits.add(o); damageEnemy(o, POWER.NONE, false, 2); triggerShake(8);
+        }
+        if (--th.t <= 0 || e.x < 20 || e.x > 780 || e.y < 60 || e.y > 590) {
+            e.thrown = null; e.x = Math.max(30, Math.min(770, e.x)); e.y = Math.max(70, Math.min(580, e.y));
+            damageEnemy(e, POWER.NONE, false, 1); spawnParticles(e.x, e.y, '#FFFFFF', 10);
+        }
+    }
+    for (let i = fight.fx.length - 1; i >= 0; i--) if (--fight.fx[i].life <= 0) fight.fx.splice(i, 1);
+}
+
+function drawFighting() {
+    for (const f of fight.fx) {
+        ctx.save();
+        ctx.globalAlpha = f.life / 12;
+        ctx.strokeStyle = f.kind === 'spin' ? '#88DDFF' : f.kind === 'pound' ? '#C8A070' : f.kind === 'upper' ? '#FF8844' : '#FFFFFF';
+        ctx.lineWidth = f.kind === 'kick' || f.kind === 'upper' ? 6 : 4; ctx.lineCap = 'round';
+        ctx.beginPath();
+        if (f.kind === 'spin' || f.kind === 'pound') ctx.arc(f.x, f.y, f.r * (1.2 - f.life / 24), 0, Math.PI * 2);
+        else ctx.arc(f.x, f.y, f.r, f.a - 0.9, f.a + 0.9);
+        ctx.stroke();
+        ctx.restore();
+    }
+    if (fight.blocking) {   // shield in front of you
+        const a = Math.atan2(state.faceY, state.faceX);
+        ctx.save();
+        ctx.strokeStyle = fight.blockFrames <= PARRY_WINDOW ? '#FFFFFF' : '#66AAFF'; ctx.lineWidth = 6; ctx.shadowColor = '#66AAFF'; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(player.x, player.y, 26, a - 1.1, a + 1.1); ctx.stroke();
+        ctx.restore();
+    }
+    if (fight.charge > 10 && state.power !== POWER.NONE) {   // a glowing ball charging up
+        const k = Math.min(1, fight.charge / CHARGE_FRAMES), c = WEAPON_INFO[state.power].color;
+        ctx.save(); ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 20 * k; ctx.globalAlpha = 0.5 + k * 0.5;
+        ctx.beginPath(); ctx.arc(player.x + state.faceX * 20, player.y + state.faceY * 20, 4 + k * 12, 0, Math.PI * 2); ctx.fill();
+        if (k >= 1) { ctx.strokeStyle = '#FFF'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(player.x + state.faceX * 20, player.y + state.faceY * 20, 18 + Math.sin(Date.now() / 60) * 3, 0, Math.PI * 2); ctx.stroke(); }
+        ctx.restore();
+    }
+    if (slowMo > 0) {
+        ctx.fillStyle = 'rgba(200,200,255,0.12)'; ctx.fillRect(0, 0, 800, 600);
+        ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center'; ctx.fillText('⏳ PERFECT DODGE — SLOW MOTION!', 400, 110);
+    }
+}
+
+// A little counter so the combo counter (and later skills) can hear about hits
+function addComboHits(n) { state.lastHits = (state.lastHits || 0) + n; }
+
 // ── MAGIC POWERS (Merlin's Magic Shop in the Mall; cast with R / X / the ✨ button) ──
 const SPELLS = [
     { id: 'laser',  icon: '🔴', name: 'Mega Laser',       cost: 30, cooldown: 180, desc: 'A laser right across the screen' },
@@ -243,6 +441,7 @@ const SPELLS = [
     { id: 'freeze', icon: '⏸', name: 'Time Freeze',      cost: 45, cooldown: 900, desc: 'Everything stops except you!' },
     { id: 'magnet', icon: '🧲', name: 'Magnet Hand',      cost: 20, cooldown: 300, desc: 'Pulls monsters and coins to you' },
     { id: 'quake',  icon: '💥', name: 'Earthquake Stomp', cost: 35, cooldown: 480, desc: 'Shakes and stuns everything' },
+    { id: 'field',  icon: '🔵', name: 'Force Field',      cost: 30, cooldown: 600, desc: 'Pushes monsters and bullets away' },
 ];
 let timeFreeze = 0, magnetTimer = 0, clones = [], laserBeam = null;
 
@@ -289,6 +488,8 @@ function castSpell() {
         showToast('⏸ TIME FREEZE!', '#AACCFF', 120); sfx('freeze');
     } else if (sp.id === 'magnet') {
         magnetTimer = 150; sfx('magic');
+    } else if (sp.id === 'field') {
+        state.fieldTimer = 300; sfx('magic');
     } else if (sp.id === 'quake') {
         for (const e of foes) { damageEnemy(e, POWER.NONE, false, 1 + bonus); if (e.alive) e.frozen = Math.max(e.frozen || 0, 60); }
         triggerShake(30); sfx('boom');
@@ -311,6 +512,17 @@ function updateSpells() {
         for (const c of roomCoins()) { if (!c.picked) { const d = Math.hypot(player.x - c.x, player.y - c.y) || 1; c.x += (player.x - c.x) / d * 6; c.y += (player.y - c.y) / d * 6; } }
     }
     if (state.chicken > 0 && --state.chicken === 0) showToast('🧑 Phew, you are a person again!', '#FFFFFF', 120);
+    if (state.fieldTimer > 0) {   // 🔵 force field pushes monsters out and pops bullets
+        state.fieldTimer--;
+        for (const e of targetableEnemies()) {
+            const d = Math.hypot(e.x - player.x, e.y - player.y);
+            if (d < 80 && d > 0) { e.x += (e.x - player.x) / d * 4; e.y += (e.y - player.y) / d * 4; }
+        }
+        for (let i = enemyProjectiles.length - 1; i >= 0; i--) {
+            const q = enemyProjectiles[i];
+            if (Math.hypot(q.x - player.x, q.y - player.y) < 80) { spawnParticles(q.x, q.y, '#66AAFF', 4); enemyProjectiles.splice(i, 1); }
+        }
+    }
     if (state.cloneTimer > 0) {
         state.cloneTimer--;
         for (const c of clones) {
@@ -345,6 +557,10 @@ function drawSpells() {
         ctx.save(); ctx.globalAlpha = 0.6;
         drawAvatar(c.x, c.y, player.w, getPlayerColor(), AVATAR_STYLES[state.activeSkin], state.walkPhase);
         ctx.restore();
+    }
+    if (state.fieldTimer > 0) {
+        ctx.save(); ctx.strokeStyle = `rgba(100,170,255,${0.4 + Math.sin(Date.now() / 100) * 0.2})`; ctx.fillStyle = 'rgba(100,170,255,0.12)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(player.x, player.y, 80, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
     }
     if (magnetTimer > 0) {
         ctx.strokeStyle = `rgba(255,80,80,${magnetTimer / 150})`; ctx.lineWidth = 2;
@@ -723,12 +939,13 @@ function shopSelect(i) {
 // A menu is a title plus a function that returns the items, so prices and ticks are always up to date.
 // Each item: { icon, name, desc, cost?, status?, action() }
 let menu = null;   // { title, items, cursor }
-const MENU = { X: 130, Y: 80, W: 540, H: 420 };
+const MENU = { X: 130, Y: 70, W: 540, H: 430 };
 
 function openMenu(title, items) { menu = { title, items, cursor: 0 }; }
 function menuItemRect(i) {
     const col = i % 2, row = Math.floor(i / 2);
-    return { x: MENU.X + 14 + col * 262, y: MENU.Y + 56 + row * 68, w: 250, h: 62 };
+    const tall = menu && menu.items().length > 10;   // squeeze rows when there's a lot to show
+    return { x: MENU.X + 14 + col * 262, y: MENU.Y + 56 + row * (tall ? 58 : 68), w: 250, h: tall ? 54 : 62 };
 }
 function menuSelect(i) {
     const list = menu.items();
@@ -838,6 +1055,9 @@ document.addEventListener('keydown', e => {
     }
     if (e.code === 'KeyB') toggleBuild();
     if (e.code === 'KeyP') toggleP2();
+    if (e.code === 'KeyJ' && !e.repeat) meleePress();
+    if (e.code === 'KeyX' && !e.repeat) startBlock();
+    if (e.code === 'KeyC' && !e.repeat) superJump();
     if (e.code === 'KeyO') openSettings();
     if (e.code === 'KeyR') castSpell();
     if (e.code === 'KeyV') toggleMount();
@@ -851,7 +1071,7 @@ document.addEventListener('keydown', e => {
         if (nav) { e.preventDefault(); moveShopCursor(nav[0], nav[1]); }
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); shopSelect(state.shopCursor); }
     } else {
-        if (e.code === 'Space') { e.preventDefault(); pressAction(); }
+        if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) pressAction(); }   // hold for a charge shot
         if (e.code === 'Enter' && !p2.active) pressStart();
         if (e.code === 'Enter' && p2.active && (state.won || state.levelComplete)) pressStart();
     }
@@ -866,7 +1086,11 @@ document.addEventListener('keydown', e => {
     const digit = /^Digit([1-9])$/.exec(e.code);
     if (digit && state.shopOpen) shopSelect(Number(digit[1]) - 1);
 });
-document.addEventListener('keyup', e => { keys[e.code] = false; });
+document.addEventListener('keyup', e => {
+    keys[e.code] = false;
+    if (e.code === 'KeyJ') meleeRelease();
+    if (e.code === 'KeyX') stopBlock();
+});
 
 canvas.addEventListener('click', e => {
     initAudio();
@@ -1021,8 +1245,10 @@ function pollGamepad() {
     if (pressed(PAD.LT)) dash();
     if (pressed(PAD.X) && state.room !== ROOM.VOID) castSpell();
     if (pressed(PAD.R3)) toggleMount();
-    if (pressed(PAD.LB))    dance();
-    if (pressed(PAD.RB))    fart();
+    if (pressed(PAD.RB)) meleePress();
+    if (was[PAD.RB] && !held[PAD.RB]) meleeRelease();
+    if (pressed(PAD.LB)) startBlock();
+    if (was[PAD.LB] && !held[PAD.LB]) stopBlock();
     if (pressed(PAD.X) && state.gamePhase === 'intro') startFromIntro(true);
     if (pressed(PAD.X) && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
     if (state.awardsOpen && pressed(PAD.B)) state.awardsOpen = false;
@@ -1039,11 +1265,8 @@ function pollGamepad() {
         return;
     }
 
-    const fire = held[PAD.A] || held[PAD.RT];
-    if (pressed(PAD.A) || pressed(PAD.RT)) { pressAction(); padHold = 0; }
-    else if (fire && state.gamePhase === 'playing' && !state.won && !state.levelComplete && ++padHold % PAD_AUTOFIRE === 0) {
-        pressAction();
-    }
+    if (pressed(PAD.A) || pressed(PAD.RT)) pressAction();   // hold A for a charge shot
+    if (pressed(PAD.Y) && state.room !== ROOM.VOID) superJump();
 
     let x = gp.axes[0] || 0, y = gp.axes[1] || 0;
     if (Math.abs(x) < PAD_DEADZONE) x = 0;
@@ -1066,7 +1289,10 @@ const VJOY   = { x: 100, y: 490, baseR: 55, maxDist: 40 };
 const VSHOOT = { x: 700, y: 490, r: 45 };
 const TOUCH_AREA_MULTIPLIER  = 1.5;  // expand tap hit area beyond visible radius
 const JOYSTICK_DEADZONE_RATIO = 0.2; // fraction of maxDist before movement starts
-const vTouch = { joyId: null, joyDX: 0, joyDY: 0, joyOriX: 0, joyOriY: 0, shootId: null };
+const vTouch = { joyId: null, joyDX: 0, joyDY: 0, joyOriX: 0, joyOriY: 0, shootId: null, meleeId: null, blockId: null };
+const VMELEE = { x: 620, y: 350, r: 22 };
+const VBLOCK = { x: 760, y: 350, r: 20 };
+const VJUMP  = { x: 560, y: 405, r: 20 };
 
 function canvasPos(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
@@ -1082,6 +1308,11 @@ canvas.addEventListener('touchstart', e => {
     lastInput = 'touch';
     for (const t of e.changedTouches) {
         const p = canvasPos(t.clientX, t.clientY);
+        if (state.gamePhase === 'playing' && !menu && !state.shopOpen) {   // the fighting buttons can be held
+            if (Math.hypot(p.x - VMELEE.x, p.y - VMELEE.y) < VMELEE.r * 1.3) { vTouch.meleeId = t.identifier; meleePress(); continue; }
+            if (Math.hypot(p.x - VBLOCK.x, p.y - VBLOCK.y) < VBLOCK.r * 1.3) { vTouch.blockId = t.identifier; startBlock(); continue; }
+            if (Math.hypot(p.x - VJUMP.x,  p.y - VJUMP.y)  < VJUMP.r * 1.3)  { superJump(); continue; }
+        }
         if (handleTap(p.x, p.y)) continue;
         if (vTouch.joyId === null && Math.hypot(p.x - VJOY.x, p.y - VJOY.y) < VJOY.baseR * TOUCH_AREA_MULTIPLIER) {
             vTouch.joyId = t.identifier; vTouch.joyOriX = p.x; vTouch.joyOriY = p.y;
@@ -1109,6 +1340,8 @@ canvas.addEventListener('touchmove', e => {
 function clearTouchId(id) {
     if (id === vTouch.joyId)   { vTouch.joyId = null; vTouch.joyDX = 0; vTouch.joyDY = 0; }
     if (id === vTouch.shootId) { vTouch.shootId = null; }
+    if (id === vTouch.meleeId) { vTouch.meleeId = null; meleeRelease(); }
+    if (id === vTouch.blockId) { vTouch.blockId = null; stopBlock(); }
 }
 canvas.addEventListener('touchend',    e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
 canvas.addEventListener('touchcancel', e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
@@ -2702,6 +2935,10 @@ const AWARDS = [
     { id: 'bigBrother',  icon: '😈', name: 'REAL Hero',        desc: "Beat the Devil's Big Brother" },
     { id: 'pyramidSecret', icon: '🏺', name: 'Tomb Raider',    desc: 'Find a secret pyramid room' },
     { id: 'eggs',        icon: '🐣', name: 'Egg Finder',       desc: "Return Mama Bird's eggs" },
+    { id: 'combo',       icon: '👊', name: 'Combo Kid',        desc: 'Do a punch-punch-KICK combo' },
+    { id: 'parry',       icon: '🛡', name: 'Perfect Parry',    desc: 'Parry or counter an attack' },
+    { id: 'perfectDodge',icon: '⏳', name: 'Matrix Mode',      desc: 'Do a perfect dodge' },
+    { id: 'groundPound', icon: '💥', name: 'Ground Pounder',   desc: 'Jump and ground pound' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -2733,7 +2970,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -3366,6 +3603,7 @@ function getPlayerColor() {
 
 function damagePlayer() {
     if (settings.creative) return;   // nothing can hurt you in Creative Mode
+    if (fight.jump > 0) return;      // …or while you're up in the air
     if (state.playerInvincible > 0) return;
     if (state.bubble) {
         // Shield Bubble pops instead of losing a heart
@@ -3503,6 +3741,7 @@ function changeRoom(dest) {
     menu = null;
     gadgetObjs = [];
     clones = []; state.cloneTimer = 0; laserBeam = null; timeFreeze = 0; magnetTimer = 0;
+    grabbed = null; slowMo = 0; fight.blocking = false; fight.jump = 0; fight.charge = 0; fight.fx = []; state.fieldTimer = 0;
     if (dest === ROOM.UNDERGROUND) {   // a fresh cave every time
         worldBlocks.underground = makeWorldBlocks('underground');
         scenery.underground = makeRocks(14, 'boulder', (x, y) => Math.hypot(x - 100, y - 300) < 80 || Math.abs(x - 640) < 70
@@ -3580,6 +3819,7 @@ function updatePlayer() {
     if (len > 1) { dx /= len; dy /= len; }   // diagonals aren't faster
     if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; state.walkPhase += 0.32; }   // remember which way you're going
     dx *= spd; dy *= spd;
+    if (fight.blocking) { dx *= 0.4; dy *= 0.4; }   // slow while holding your shield up
     if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.mount === 'kart') {
         // Slippery ice / floaty space: you speed up and slow down gently
         const grip = state.mount === 'kart' ? 0.12 : state.room === ROOM.ICE ? 0.05 : 0.035;
@@ -3829,8 +4069,11 @@ function creeperBoom(e) {
 function updateRoomEnemies() {
     if (timeFreeze > 0) return;   // ⏸ everything stops except you
     let shrinkTick = (updateRoomEnemies.tick = (updateRoomEnemies.tick || 0) + 1);
+    if (slowMo > 0 && frameNo % 2) return;   // ⏳ slow motion
     for (const e of roomEnemies()) {
         if (e.shrunk > 0 && shrinkTick % 2) continue;   // tiny monsters are slow…
+        if (e.air > 0) { e.air--; continue; }           // launched into the air by an uppercut!
+        if (e.stun > 0) { e.stun--; if (e.hitFlash > 0) e.hitFlash--; continue; }   // seeing stars
         if (!e.alive) continue;
         if (e.emerge > 0) {
             e.emerge--;
@@ -3850,8 +4093,15 @@ function updateRoomEnemies() {
             e.flee = 120;
             continue;
         }
-        if ((!e.hidden || e.type === 'ghostking') && e.type !== 'creeper' && !(e.shrunk > 0) && state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
-            Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
+        const touching = (!e.hidden || e.type === 'ghostking') && e.type !== 'creeper' && !(e.shrunk > 0) && Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16;
+        if (touching && fight.blocking) {   // your shield stops them
+            const d = Math.hypot(e.x - player.x, e.y - player.y) || 1;
+            if (fight.blockFrames <= PARRY_WINDOW) {   // COUNTER ATTACK!
+                damageEnemy(e, POWER.NONE, false, 2); e.stun = 40;
+                spawnFloatText(player.x, player.y - 36, 'COUNTER!', '#FFE066', 45); sfx('superHit'); giveAward('parry');
+            }
+            if (!BOSS_TYPES.includes(e.type)) { e.x += (e.x - player.x) / d * 24; e.y += (e.y - player.y) / d * 24; }
+        } else if (touching && state.playerInvincible === 0 && !isShieldedAgainst(e.type)) {
             damagePlayer();
         }
     }
@@ -4175,6 +4425,7 @@ function updateEnemies() {
         if (!d.alive) return;
         if (d.shieldFlash > 0) d.shieldFlash--;
         if (settings.creative) return;   // the Devil leaves you alone in Creative Mode
+        if (slowMo > 0 && frameNo % 2) return;
         if (d.frozen > 0) { d.frozen--; return; }   // frozen by ICE
         if (timeFreeze > 0) return;
 
@@ -4252,6 +4503,7 @@ function updateEnemyProjectiles() {
     for (let i = enemyProjectiles.length - 1; i >= 0; i--) {
         const p = enemyProjectiles[i];
         if (timeFreeze > 0) continue;   // shots hang in the air
+        if (slowMo > 0 && frameNo % 2) continue;   // slow motion
         p.x += p.dx; p.y += p.dy;
         p.life--;
         if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y < 0 || p.y > 600) {
@@ -4260,6 +4512,15 @@ function updateEnemyProjectiles() {
         if (p2.active && p2.down === 0 && Math.hypot(p.x - p2.x, p.y - p2.y) < p.r + 16) {
             if (!isShieldedAgainst(p.enemyType)) hurtP2();
             spawnParticles(p.x, p.y, p.color, 4);
+            enemyProjectiles.splice(i, 1);
+            continue;
+        }
+        if (Math.hypot(p.x - player.x, p.y - player.y) < p.r + 16 && fight.blocking) {
+            if (fight.blockFrames <= PARRY_WINDOW) {   // PARRY! bat it back
+                const pw = state.power === POWER.NONE ? POWER.ICE : state.power;
+                projectiles.push({ x: p.x, y: p.y, dx: -p.dx * 1.6, dy: -p.dy * 1.6, color: '#FFE066', power: pw, life: 90, r: p.r });
+                spawnFloatText(player.x, player.y - 36, 'PARRY!', '#FFE066', 45); sfx('superHit'); giveAward('parry');
+            } else { spawnParticles(p.x, p.y, '#66AAFF', 6); sfx('hit'); }   // blocked by your shield
             enemyProjectiles.splice(i, 1);
             continue;
         }
@@ -4277,6 +4538,7 @@ function updateEnemyProjectiles() {
 // ── UPDATE: SHOOTING ──────────────────────────────────────────
 function shoot() {
     if (state.won || state.levelComplete || state.power === POWER.NONE || state.room === ROOM.VOID) return;
+    if (fight.blocking) return;
     if (state.ammoReloading || state.ammo <= 0) return;
 
     const enemies = [];
@@ -4330,6 +4592,10 @@ function updateProjectiles() {
         p.x += p.dx; p.y += p.dy;
         p.life--;
         spawnShotTrail(p);
+        if (state.bouncy && !p.fromPet && (p.bounces || 0) < 2) {   // 🎾 bounce off the edges
+            if (p.x < 0 || p.x > 800) { p.dx *= -1; p.bounces = (p.bounces || 0) + 1; p.x = Math.max(0, Math.min(800, p.x)); p.life += 20; }
+            if (p.y < 50 || p.y > 600) { p.dy *= -1; p.bounces = (p.bounces || 0) + 1; p.y = Math.max(50, Math.min(600, p.y)); p.life += 20; }
+        }
         if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y < 0 || p.y > 600) {
             projectiles.splice(i, 1); continue;
         }
@@ -4338,8 +4604,13 @@ function updateProjectiles() {
 
         for (const e of targetableEnemies()) {
             if (Math.hypot(p.x - e.x, p.y - e.y) >= e.r + p.r) continue;
+            if (p.pierce) {   // charge shots go right through, hitting each monster once
+                if (p.hitSet.has(e)) continue;
+                p.hitSet.add(e); damageEnemy(e, p.power, false, state.weaponLevel - 1 + (p.bonus || 0)); addComboHits(1);
+                continue;
+            }
             if (p.fromPet) petHit(e, p.power);
-            else damageEnemy(e, p.power, false, state.weaponLevel - 1);
+            else { damageEnemy(e, p.power, false, state.weaponLevel - 1); addComboHits(1); }
             hit = true; break;
         }
 
@@ -4729,6 +5000,10 @@ function useGadget() {
 
 function dash() {
     if (!playing() || !state.hasDash || state.dashCooldown > 0) return;
+    // Dodged at the very last moment? PERFECT DODGE → slow motion!
+    const close = enemyProjectiles.some(q => Math.hypot(q.x - player.x, q.y - player.y) < 60)
+               || targetableEnemies().some(e => Math.hypot(e.x - player.x, e.y - player.y) < e.r + 30);
+    if (close) { slowMo = 120; sfx('magic'); giveAward('perfectDodge'); }
     state.dashTimer = 8;
     state.dashCooldown = DASH_COOLDOWN;
     sfx('whoosh');
@@ -5057,6 +5332,12 @@ function forgeItems() {
     items.push({ icon: '⚔', name: `Weapon Level ${Math.min(3, state.weaponLevel + 1)}`, desc: `Every shot hits harder (now Lv ${state.weaponLevel})`, cost: lvCost,
                  status: lvCost === undefined ? 'MAXED' : null,
                  action: () => { if (lvCost !== undefined && spend(lvCost)) { state.weaponLevel++; showToast(`⚔ WEAPON LEVEL ${state.weaponLevel}!`); } } });
+    items.push({ icon: '🟨', name: 'Gold Armor', desc: '+1 heart', cost: 30, status: state.armor >= 1 ? 'OWNED' : null,
+                 action: () => { if (state.armor < 1 && spend(30)) { state.armor = 1; state.playerHp++; showToast('🟨 GOLD ARMOR — +1 heart!'); } } });
+    items.push({ icon: '🌈', name: 'Rainbow Armor', desc: '+4 hearts — the best armor!', cost: 150, status: state.armor >= 4 ? 'OWNED' : null,
+                 action: () => { if (state.armor < 4 && spend(150)) { const was = state.armor; state.armor = 4; state.playerHp += 4 - was; showToast('🌈 RAINBOW ARMOR — +4 hearts!'); } } });
+    items.push({ icon: '🎾', name: 'Bouncy Shots', desc: 'Your shots bounce off the walls', cost: 20, status: state.bouncy ? 'OWNED' : null,
+                 action: () => { if (!state.bouncy && spend(20)) { state.bouncy = true; showToast('🎾 Boing! Your shots bounce now!'); } } });
     items.push({ icon: '💨', name: 'Super Dash', desc: 'Zoom super fast (Shift / LT)', cost: DASH_COST,
                  status: state.hasDash ? 'OWNED' : null,
                  action: () => { if (!state.hasDash && spend(DASH_COST)) { state.hasDash = true; showToast('💨 You can DASH now!'); } } });
@@ -6057,6 +6338,17 @@ function drawFrog(e) {
 }
 
 function drawEnemy(e, t) {
+    if (e.air > 0) {   // flying up from an uppercut
+        ctx.save(); ctx.translate(0, -Math.sin((e.air / 45) * Math.PI) * 40); drawEnemyInner(e, t); ctx.restore();
+        return;
+    }
+    drawEnemyInner(e, t);
+    if (e.stun > 0 && e.stun < 900 && e.alive) {   // dizzy stars
+        for (let k = 0; k < 3; k++) { const a = Date.now() / 150 + k * 2.1; drawStar(e.x + Math.cos(a) * 12, e.y - e.r - 10 + Math.sin(a) * 4, 3, '#FFE066'); }
+    }
+}
+
+function drawEnemyInner(e, t) {
     if (e.shrunk > 0) {
         ctx.save(); ctx.translate(e.x, e.y); ctx.scale(0.5, 0.5); ctx.translate(-e.x, -e.y);
         drawEnemyBody(e, t);
@@ -7512,6 +7804,8 @@ function drawPlayer() {
 
     const color = getPlayerColor();
     drawGroundShadow(player.x + (state.mount === 'dragon' ? 12 : 3), player.y + (state.mount === 'dragon' ? 34 : 19), state.mount ? 24 : 16, 5);
+    const jumpUp = fight.jump > 0 ? Math.sin((1 - fight.jump / JUMP_FRAMES) * Math.PI) * 60 : 0;
+    ctx.save(); ctx.translate(0, -jumpUp);
     drawMount();
     if (state.room === ROOM.UNDERWATER) {   // you're in a yellow submarine!
         ctx.save();
@@ -7545,6 +7839,7 @@ function drawPlayer() {
 
     // Your hat
     if (state.hat) drawHatOn(state.danceTimer > 0 ? player.x : player.x, player.y - 23, state.hat);
+    ctx.restore();   // (end of the jump lift)
 
     // Shovel swing while digging
     if (state.digAnim > 0) {
@@ -7844,6 +8139,7 @@ function drawProjectiles() {
         const a = Math.atan2(p.dy, p.dx);
         ctx.save();
         ctx.translate(p.x, p.y); ctx.rotate(a);
+        if (p.pierce) ctx.scale(2.2, 2.2);   // charge shots are HUGE
         if (p.power === POWER.ICE) {
             // Pointy ice crystal
             ctx.shadowColor = '#AEE4FF'; ctx.shadowBlur = 12;
@@ -8371,7 +8667,7 @@ function drawControls() {
     const hint = lastInput === 'pad'   ? 'Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back'
                : lastInput === 'touch' ? 'Move: joystick  |  Shoot / Dig: button'
                : p2.active ? 'P1: WASD + Space   ·   P2: Arrows + Enter   ·   P: Player 2 leaves'
-               : 'Move: WASD  |  Shoot / Dig: Space  |  Build: B  |  2 Players: P  |  Shop: E  |  Sound: M';
+               : 'Move: WASD  |  Shoot: Space (hold = charge)  |  Punch: J  |  Block: X  |  Jump: C  |  Build: B  |  Settings: O';
     ctx.fillText(hint, 792, 592);
 }
 
@@ -8409,7 +8705,7 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
-    const touchBtns = [[VDANCE, '💃'], [VFART, '💨']];
+    const touchBtns = [[VDANCE, '💃'], [VFART, '💨'], [VMELEE, '👊'], [VBLOCK, '🛡'], [VJUMP, '🦘']];
     touchBtns.push([VBUILD, state.buildMode ? '⚔' : '🧱']);
     if (state.spell) touchBtns.push([VSPELL, SPELLS.find(x => x.id === state.spell).icon]);
     if (state.lastMount) touchBtns.push([VMOUNT, state.mount ? '🚶' : MOUNTS.find(m => m.id === state.lastMount).icon]);
@@ -8453,6 +8749,7 @@ function update() {
         updateDanceAndFart();
         updateP2();
         updateSpells();
+        updateFighting();
         updateGadgets();
         updateBlocks();
         updateScenery();
@@ -8513,6 +8810,7 @@ function draw() {
     drawHeartPickups();
     drawGadgets();
     drawSpells();
+    drawFighting();
     drawPet();
     drawProjectiles();
     drawBolts();
