@@ -98,7 +98,8 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 
 // ── CONSTANTS ────────────────────────────────────────────────
 const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house',
-                SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space', ARENA: 'arena', MALL: 'mall' };
+                SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space', ARENA: 'arena', MALL: 'mall',
+                UNDERWATER: 'underwater', DINO: 'dino', VOLCANO: 'volcano', JUNGLE: 'jungle' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -147,6 +148,13 @@ const ENEMY_TYPES = {
     thunderbird:{ name: 'Thunder Bird', hp: 30, weakTo: POWER.ICE,    color: '#FFE033' },  // Sky Castle boss
     alien:     { name: 'Alien',      hp: 3,  weakTo: POWER.ICE,       color: '#66FF66' },  // Space
     mothership:{ name: 'Alien Mothership', hp: 30, weakTo: POWER.LIGHTNING, color: '#AABBCC' },  // Space boss
+    shark:     { name: 'Shark',      hp: 4,  weakTo: POWER.LIGHTNING, color: '#7A8A9A' },  // Underwater
+    jellyfish: { name: 'Jellyfish',  hp: 2,  weakTo: POWER.ICE,       color: '#FF99DD' },  // Underwater (zappy!)
+    octopus:   { name: 'Giant Octopus', hp: 35, weakTo: POWER.LIGHTNING, color: '#AA4488' },  // Underwater boss
+    raptor:    { name: 'Raptor',     hp: 4,  weakTo: POWER.ICE,       color: '#8AA04A' },  // Dinosaur Island
+    lavablob:  { name: 'Lava Blob',  hp: 3,  weakTo: POWER.WATER,     color: '#FF5522' },  // Volcano
+    firedragon:{ name: 'Fire Dragon',hp: 35, weakTo: POWER.WATER,     color: '#DD3311' },  // Volcano boss
+    monkey:    { name: 'Monkey',     hp: 3,  weakTo: POWER.LIGHTNING, color: '#8A5A2A' },  // Jungle: steals coins!
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
@@ -344,10 +352,11 @@ const MOUNTS = [
     { id: 'dragon', icon: '🐉', name: 'Flying Dragon',     cost: 60, speed: 1.5, desc: 'Fly right over walls and blocks!' },
     { id: 'kart',   icon: '🏎', name: 'Go-Kart',           cost: 35, speed: 2.2, desc: 'Zoom zoom! (a bit slidey)' },
     { id: 'duck',   icon: '🦆', name: 'Giant Rubber Duck', cost: 15, speed: 0.9, desc: 'Silly and squeaky. Quack!' },
+    { id: 'dino',   icon: '🦕', name: 'Triceratops',       cost: 0,  speed: 1.6, desc: 'Tame one on Dinosaur Island!', hidden: true },
 ];
 
 function mountItems() {
-    const items = MOUNTS.map(m => ({
+    const items = MOUNTS.filter(m => !m.hidden || state.mounts[m.id]).map(m => ({
         icon: m.icon, name: m.name, desc: m.desc, cost: m.cost,
         status: state.mount === m.id ? 'RIDING' : state.mounts[m.id] ? 'OWNED — ride' : null,
         action: () => {
@@ -395,6 +404,13 @@ function drawMount() {
         ctx.fillStyle = '#E02A2A'; pathRoundRect(-20, -4, 40, 14, 5); ctx.fill();
         ctx.fillStyle = '#FFF'; ctx.font = 'bold 8px Arial'; ctx.textAlign = 'center'; ctx.fillText('1', 0, 7);
         if (Math.hypot(state.vx || 0, state.vy || 0) > 1) { ctx.fillStyle = 'rgba(200,200,200,0.6)'; ctx.beginPath(); ctx.arc(-26 - Math.random() * 6, 4, 4, 0, Math.PI * 2); ctx.fill(); }
+    } else if (state.mount === 'dino') {
+        const g = Math.sin(state.walkPhase * 1.2) * 3;
+        ctx.fillStyle = '#5A7ABA'; for (const lx of [-16, -8, 8, 16]) ctx.fillRect(lx, 6, 6, 10 + (lx > 0 ? g : -g));
+        ctx.fillStyle = '#6A8ACA'; ctx.beginPath(); ctx.ellipse(0, 2, 26, 12, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#8AAAE0'; ctx.beginPath(); ctx.arc(26, -6, 11, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#6A8ACA'; ctx.beginPath(); ctx.ellipse(32, 0, 9, 7, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#F4EED8'; ctx.beginPath(); ctx.moveTo(36, -6); ctx.lineTo(46, -12); ctx.lineTo(38, -1); ctx.fill();
     } else if (state.mount === 'duck') {
         const bob = Math.sin(t / 250) * 2;
         ctx.fillStyle = '#FFD83A'; ctx.beginPath(); ctx.ellipse(0, 2 + bob, 24, 12, 0, 0, Math.PI * 2); ctx.fill();
@@ -716,7 +732,7 @@ function pressAction() {
     }
     if (state.gamePhase === 'intro') startFromIntro();
     else if (state.levelComplete)   advanceLevel();
-    else if (!tryTreasureDig() && !tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction() && !tryMineNearby() && !tryDigGround()) shoot();
+    else if (!tryTreasureDig() && !tryPlaceAction() && !tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction() && !tryMineNearby() && !tryDigGround()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
@@ -1420,7 +1436,7 @@ const PLACES = {
 // ⚔ BOSS RUSH: every boss, one after another (the gate is in the Void)
 const ARENA_GATE  = { x: 270, y: 545 };
 const ARENA_EXIT  = { x: 400, y: 578 };
-const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership'];
+const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon'];
 const BOSS_RUSH   = [
     () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
     () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
@@ -1513,6 +1529,190 @@ function drawMallDoor() {
     ctx.fillStyle = '#C03A3A'; ctx.fillRect(x - 32, y - 34, 64, 10);
     ctx.fillStyle = '#6AB0E0'; ctx.fillRect(x - 12, y - 16, 24, 32);
     ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🏬 THE MALL', x, y + 30);
+}
+
+// 🌊🦕🌋🐒 More islands (Captain Salty sails there; the submarine dives Underwater)
+const LAVA_RIVERS   = [{ x: 0, y: 250, w: 330, h: 34 }, { x: 470, y: 250, w: 330, h: 34 }, { x: 380, y: 380, w: 40, h: 220 }];
+const JUNGLE_PIT    = { x: 300, y: 56, w: 200, h: 544 };   // right across the jungle — swing over it!
+const VINES         = [{ x: 270, y: 305 }, { x: 530, y: 305 }];   // swing from one side of the pit to the other
+const SPIKES        = [{ x: 150, y: 200 }, { x: 180, y: 430 }, { x: 640, y: 180 }, { x: 620, y: 460 }, { x: 110, y: 330 }];
+const TRICERATOPS   = { x: 600, y: 420 };
+const JUNGLE_IDOL   = { x: 690, y: 305 };
+PLACES.underwater = { name: '🌊 UNDERWATER WORLD', spawn: [120, 470], island: true,
+    make: () => ({ coins: [], enemies: [e0('shark', 500, 200, { dx: 2 }), e0('shark', 300, 420, { dx: -2 }), e0('jellyfish', 250, 250), e0('jellyfish', 600, 380),
+                                         e0('jellyfish', 450, 480), e0('octopus', 520, 300, { r: 42, coinDrop: 25, inkTimer: 120 })] }) };
+PLACES.dino = { name: '🦕 DINOSAUR ISLAND', spawn: [120, 470], island: true,
+    make: () => ({ coins: [], tamed: !!state.mounts.dino,
+                   enemies: [e0('raptor', 400, 180), e0('raptor', 650, 250), e0('raptor', 300, 380), e0('raptor', 700, 480)] }) };
+PLACES.volcano = { name: '🌋 THE VOLCANO', spawn: [120, 470], island: true,
+    make: () => ({ coins: [], enemies: [e0('lavablob', 200, 150, { hopTimer: 10 }), e0('lavablob', 600, 150, { hopTimer: 30 }), e0('lavablob', 250, 450, { hopTimer: 50 }),
+                                         e0('firedragon', 400, 150, { r: 40, coinDrop: 25, breath: 140, t: 0 })], lavaTick: 0 }) };
+PLACES.jungle = { name: '🐒 THE JUNGLE TEMPLE', spawn: [120, 470], island: true,
+    make: () => ({ coins: [], swing: null, trapTimer: 90, spikeTimer: 0, idolTaken: false,
+                   enemies: [e0('monkey', 200, 150), e0('monkey', 650, 200), e0('monkey', 600, 480), e0('monkey', 150, 380)] }) };
+
+function inRectXY(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
+function spikesUp() { return place().spikeTimer % 120 < 50; }
+
+function nearVine() {
+    if (state.room !== ROOM.JUNGLE || place().swing) return null;
+    return VINES.findIndex(v => Math.hypot(player.x - v.x, player.y - v.y) < 30);
+}
+
+// The main button in the new places: tame the dinosaur, swing on a vine
+function tryPlaceAction() {
+    if (state.room === ROOM.DINO && !place().tamed && Math.hypot(player.x - TRICERATOPS.x, player.y - TRICERATOPS.y) < 50) {
+        place().tamed = true;
+        state.mounts.dino = true; state.mount = 'dino'; state.lastMount = 'dino';
+        showToast('🦕 You tamed the Triceratops! RIDE IT! (it stomps monsters)', '#AAFF88', 240);
+        sfx('win'); giveAward('dinoRider');
+        return true;
+    }
+    const v = nearVine();
+    if (v !== null && v >= 0) {
+        place().swing = { from: VINES[v], to: VINES[1 - v], t: 0 };
+        sfx('whoosh');
+        return true;
+    }
+    return false;
+}
+
+function updateNewPlaces() {
+    const P = place();
+    if (state.room === ROOM.VOLCANO) {
+        // Hot lava hurts (unless you fly over it on your dragon)
+        if (state.mount !== 'dragon' && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
+            damagePlayer();
+            spawnFloatText(player.x, player.y - 30, 'HOT! 🔥', '#FF6633', 50);
+        }
+    }
+    if (state.room === ROOM.JUNGLE) {
+        P.spikeTimer++;
+        if (P.swing) {   // swinging across the pit
+            P.swing.t += 0.025;
+            const k = Math.min(1, P.swing.t);
+            player.x = P.swing.from.x + (P.swing.to.x - P.swing.from.x) * k;
+            player.y = P.swing.from.y + (P.swing.to.y - P.swing.from.y) * k - Math.sin(k * Math.PI) * 60;
+            if (k >= 1) P.swing = null;
+            return;
+        }
+        if (inRectXY(player.x, player.y + 10, JUNGLE_PIT) && state.mount !== 'dragon') {   // fell in!
+            damagePlayer();
+            [player.x, player.y] = PLACES.jungle.spawn;
+            showToast('😵 You fell in the pit! Use the VINE to swing across.', '#FFAA66', 160);
+        }
+        if (spikesUp() && state.playerInvincible === 0 && SPIKES.some(sp => Math.hypot(player.x - sp.x, player.y + 12 - sp.y) < 16)) damagePlayer();
+        if (--P.trapTimer <= 0) {   // arrow traps in the walls
+            P.trapTimer = 110;
+            for (const y of [150, 460]) {
+                enemyProjectiles.push({ x: 10, y, dx: 6, dy: 0, color: '#8A6A3A', life: 140, r: 5, enemyType: 'trap' });
+                enemyProjectiles.push({ x: 790, y: y + 40, dx: -6, dy: 0, color: '#8A6A3A', life: 140, r: 5, enemyType: 'trap' });
+            }
+            sfx('whoosh');
+        }
+        if (!P.idolTaken && Math.hypot(player.x - JUNGLE_IDOL.x, player.y - JUNGLE_IDOL.y) < 28) {
+            P.idolTaken = true;
+            state.inv.diamond = invCount('diamond') + 2; addScore(150);
+            showToast('🗿 THE GOLDEN IDOL! +2 diamonds and 150 points!', '#FFD700', 240);
+            spawnParticles(JUNGLE_IDOL.x, JUNGLE_IDOL.y, '#FFD700', 20); sfx('win'); giveAward('idol');
+        }
+    }
+    // The tamed dinosaur stomps monsters it runs into
+    if (state.mount === 'dino' && (updateNewPlaces.stomp = (updateNewPlaces.stomp || 0) + 1) % 30 === 0) {
+        for (const e of targetableEnemies()) if (Math.hypot(e.x - player.x, e.y - player.y) < e.r + 26) { damageEnemy(e, POWER.NONE, false, 1); triggerShake(4); }
+    }
+}
+
+function paintUnderwater(g, R) {
+    const sea = g.createLinearGradient(0, 0, 0, 600);
+    sea.addColorStop(0, '#2A8AC8'); sea.addColorStop(1, '#0A2A5A');
+    g.fillStyle = sea; g.fillRect(0, 0, 800, 600);
+    g.fillStyle = '#D8C080'; g.beginPath(); g.moveTo(0, 540); for (let x = 0; x <= 800; x += 40) g.lineTo(x, 530 + Math.sin(x / 50) * 10); g.lineTo(800, 600); g.lineTo(0, 600); g.fill();   // sandy floor
+    for (let i = 0; i < 12; i++) {   // coral
+        const x = 40 + i * 66, y = 545;
+        g.fillStyle = ['#FF6A8A', '#FFAA44', '#AA66FF', '#44DDCC'][i % 4];
+        for (let k = 0; k < 4; k++) { g.beginPath(); g.ellipse(x + (k - 1.5) * 7, y - 12 - k * 5, 5, 14, (k - 1.5) * 0.3, 0, Math.PI * 2); g.fill(); }
+    }
+    for (let i = 0; i < 80; i++) { g.fillStyle = 'rgba(255,255,255,0.08)'; g.beginPath(); g.arc(R() * 800, R() * 520, 2 + R() * 4, 0, Math.PI * 2); g.fill(); }
+}
+function paintDino(g, R) {
+    g.fillStyle = '#7AAA4A'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 900; i++) { g.fillStyle = `hsla(${80 + R() * 30}, 45%, ${28 + R() * 14}%, 0.6)`; g.beginPath(); g.ellipse(R() * 800, R() * 600, 5 + R() * 10, 3 + R() * 6, R() * 3, 0, Math.PI * 2); g.fill(); }
+    for (const [x, y] of [[70, 140], [740, 140], [60, 360], [760, 380], [300, 120], [520, 540]]) {   // giant ferns
+        g.strokeStyle = '#2E6A1E'; g.lineWidth = 3;
+        for (let k = 0; k < 7; k++) { const a = -Math.PI / 2 + (k - 3) * 0.35; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + Math.cos(a) * 25, y + Math.sin(a) * 25 - 10, x + Math.cos(a) * 45, y + Math.sin(a) * 45); g.stroke(); }
+    }
+    g.fillStyle = '#EEE8D0'; g.fillRect(430, 300, 40, 6); g.beginPath(); g.arc(430, 303, 6, 0, Math.PI * 2); g.arc(470, 303, 6, 0, Math.PI * 2); g.fill();   // an old bone
+}
+function paintVolcano(g, R) {
+    g.fillStyle = '#2A1A18'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 700; i++) { g.fillStyle = `hsla(10, 20%, ${8 + R() * 14}%, 0.7)`; g.beginPath(); g.ellipse(R() * 800, R() * 600, 6 + R() * 16, 4 + R() * 9, R() * 3, 0, Math.PI * 2); g.fill(); }
+    g.fillStyle = '#4A2A20'; g.beginPath(); g.moveTo(250, 120); g.lineTo(360, 50); g.lineTo(440, 50); g.lineTo(550, 120); g.fill();   // the crater rim
+}
+function paintJungle(g, R) {
+    g.fillStyle = '#2E6A2A'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 1200; i++) { g.fillStyle = `hsla(${100 + R() * 40}, 50%, ${18 + R() * 16}%, 0.6)`; g.beginPath(); g.ellipse(R() * 800, R() * 600, 6 + R() * 14, 4 + R() * 8, R() * 3, 0, Math.PI * 2); g.fill(); }
+    g.fillStyle = '#8A8A70'; g.fillRect(620, 250, 140, 110);                                          // temple steps
+    for (let k = 0; k < 4; k++) { g.fillStyle = `rgb(${130 - k * 10},${130 - k * 10},${105 - k * 10})`; g.fillRect(620 + k * 12, 250 + k * 10, 140 - k * 24, 110 - k * 20); }
+    const pit = g.createLinearGradient(0, JUNGLE_PIT.y, 0, JUNGLE_PIT.y + JUNGLE_PIT.h);
+    pit.addColorStop(0, '#0A0A05'); pit.addColorStop(1, '#1A1A0A');
+    g.fillStyle = pit; g.fillRect(JUNGLE_PIT.x, JUNGLE_PIT.y, JUNGLE_PIT.w, JUNGLE_PIT.h);          // the deep pit
+    g.strokeStyle = '#4A3A1A'; g.lineWidth = 4; g.strokeRect(JUNGLE_PIT.x, JUNGLE_PIT.y, JUNGLE_PIT.w, JUNGLE_PIT.h);
+}
+
+function drawNewPlaces() {
+    const t = Date.now() / 1000, P = place();
+    const label = (text, x, y, col = 'rgba(255,255,255,0.9)') => { ctx.fillStyle = col; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
+    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    if (state.room === ROOM.UNDERWATER) {
+        for (let k = 0; k < 14; k++) {   // bubbles rising and swaying seaweed
+            const bx = (k * 61) % 800, by = 560 - ((t * 40 + k * 43) % 520);
+            ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(bx + Math.sin(t * 2 + k) * 4, by, 3 + (k % 3), 0, Math.PI * 2); ctx.stroke();
+        }
+        for (let k = 0; k < 10; k++) {
+            ctx.strokeStyle = '#2A8A3A'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(30 + k * 82, 560);
+            ctx.quadraticCurveTo(30 + k * 82 + Math.sin(t + k) * 14, 510, 30 + k * 82 + Math.sin(t * 1.3 + k) * 10, 470); ctx.stroke();
+        }
+    }
+    if (state.room === ROOM.DINO && !P.tamed) {   // the friendly Triceratops, waiting for a friend
+        const { x, y } = TRICERATOPS;
+        drawGroundShadow(x, y + 16, 30, 7);
+        ctx.save(); ctx.translate(x, y);
+        ctx.fillStyle = '#6A8ACA'; ctx.beginPath(); ctx.ellipse(0, 0, 30, 16, 0, 0, Math.PI * 2); ctx.fill();
+        for (const lx of [-18, -8, 8, 18]) ctx.fillRect(lx, 8, 6, 12);
+        ctx.fillStyle = '#8AAAE0'; ctx.beginPath(); ctx.arc(-32, -6, 14, 0, Math.PI * 2); ctx.fill();          // frill
+        ctx.fillStyle = '#6A8ACA'; ctx.beginPath(); ctx.ellipse(-38, 0, 11, 9, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#F4EED8'; for (const [hx, hy] of [[-44, -10], [-36, -14], [-50, 0]]) { ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(hx - 8, hy - 6); ctx.lineTo(hx - 2, hy + 3); ctx.fill(); }
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(-40, -3, 1.8, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        label('Friendly Triceratops 💙', x, y + 36, '#224');
+        if (Math.hypot(player.x - x, player.y - y) < 50) drawSpeech({ x, y: y - 10 }, `${verb}: Tame & ride it! 🦕`);
+    }
+    if (state.room === ROOM.VOLCANO) {
+        for (const r of LAVA_RIVERS) {
+            const lava = ctx.createLinearGradient(r.x, r.y, r.x + r.w, r.y + r.h);
+            lava.addColorStop(0, '#FF7A10'); lava.addColorStop(0.5 + Math.sin(t * 2) * 0.2, '#FFD040'); lava.addColorStop(1, '#E03A00');
+            ctx.fillStyle = lava; ctx.shadowColor = '#FF5500'; ctx.shadowBlur = 16; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.shadowBlur = 0;
+            for (let k = 0; k < 4; k++) { ctx.fillStyle = 'rgba(255,255,200,0.7)'; ctx.beginPath(); ctx.arc(r.x + ((t * 30 + k * 97) % r.w), r.y + r.h / 2 + Math.sin(t * 4 + k) * (r.h / 3), 3, 0, Math.PI * 2); ctx.fill(); }
+        }
+        ctx.fillStyle = `rgba(255,80,0,${0.4 + Math.sin(t * 3) * 0.2})`; ctx.beginPath(); ctx.ellipse(400, 70, 50, 14, 0, 0, Math.PI * 2); ctx.fill();   // glowing crater
+        label("⚠ Don't touch the lava! (a Flying Dragon can fly over it)", 400, 588, '#FFCC88');
+    }
+    if (state.room === ROOM.JUNGLE) {
+        for (const sp of SPIKES) {   // spike traps pop up and down
+            ctx.fillStyle = '#5A4A3A'; ctx.fillRect(sp.x - 12, sp.y - 4, 24, 8);
+            if (spikesUp()) { ctx.fillStyle = '#CCCCCC'; for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(sp.x + k * 7 - 4, sp.y); ctx.lineTo(sp.x + k * 7, sp.y - 14); ctx.lineTo(sp.x + k * 7 + 4, sp.y); ctx.fill(); } }
+        }
+        ctx.strokeStyle = '#3A7A1A'; ctx.lineWidth = 4;   // vines hanging over the pit
+        const swingA = P.swing ? Math.sin(P.swing.t * Math.PI) : 0;
+        ctx.beginPath(); ctx.moveTo(400, 150); ctx.quadraticCurveTo(400, 240, P.swing ? player.x : 400 + Math.sin(t) * 10, P.swing ? player.y - 10 : 250); ctx.stroke();
+        for (const v of VINES) { ctx.fillStyle = '#6A9A2A'; ctx.beginPath(); ctx.arc(v.x, v.y, 8, 0, Math.PI * 2); ctx.fill(); }
+        const vi = nearVine();
+        if (vi !== null && vi >= 0) drawSpeech(VINES[vi], `${verb}: Swing on the vine! 🐒`);
+        label('DEEP PIT', JUNGLE_PIT.x + JUNGLE_PIT.w / 2, JUNGLE_PIT.y + JUNGLE_PIT.h / 2, 'rgba(255,255,255,0.3)');
+        if (!P.idolTaken) { ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 18; ctx.beginPath(); ctx.arc(JUNGLE_IDOL.x, JUNGLE_IDOL.y - 6, 8, 0, Math.PI * 2); ctx.fill(); ctx.fillRect(JUNGLE_IDOL.x - 6, JUNGLE_IDOL.y, 12, 14); ctx.shadowBlur = 0; label('🗿 Golden Idol', JUNGLE_IDOL.x, JUNGLE_IDOL.y + 28, '#FFE066'); }
+        label('Watch out for arrow traps, spikes and sneaky monkeys that steal coins!', 400, 588, '#DDFFAA');
+    }
 }
 
 const HAUNTED_SHELVES = [{ x: 180, y: 118 }, { x: 400, y: 118 }, { x: 620, y: 118 }];   // one is a secret door!
@@ -1613,6 +1813,11 @@ function sailItems() {
         trip(ROOM.CANDY,   '🍭', 'Gummy bears and lollipops'),
         trip(ROOM.ICE,     '❄', 'Snowmen and the Frost Giant'),
         trip(ROOM.HAUNTED, '👻', 'Skeletons, ghosts and a secret door'),
+        trip(ROOM.DINO,    '🦕', 'Raptors — and a dinosaur you can ride!'),
+        trip(ROOM.VOLCANO, '🌋', 'Lava rivers and the Fire Dragon'),
+        trip(ROOM.JUNGLE,  '🐒', 'Vines, traps and a golden idol'),
+        { icon: '🟡', name: 'Submarine Dive', desc: 'Sharks, jellyfish and a Giant Octopus', cost: 0, status: 'DIVE!',
+          action: () => { menu = null; changeRoom(ROOM.UNDERWATER); showToast('🟡 Diving down in the yellow submarine! 🌊', '#88DDFF', 180); giveAward('diver'); } },
     ];
 }
 
@@ -1620,6 +1825,7 @@ function updatePlace() {
     const P = place();
     if (!P) return;
     if (state.room === ROOM.ARENA) updateArena();
+    updateNewPlaces();
     if (state.room === ROOM.SHIP) {
         // Pirates climb aboard in waves until you reach the island
         if (--P.waveTimer <= 0 && P.voyage > 200) {
@@ -1742,6 +1948,7 @@ function drawPlace() {
     const t = Date.now() / 1000, P = place();
     if (!P) return;
     const label = (text, x, y, col = 'rgba(255,255,255,0.9)') => { ctx.fillStyle = col; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
+    drawNewPlaces();
     if (PLACES[state.room].island) {   // the boat home
         ctx.fillStyle = '#6B3E1E'; ctx.beginPath(); ctx.moveTo(DOCK.x - 30, DOCK.y); ctx.lineTo(DOCK.x + 30, DOCK.y); ctx.lineTo(DOCK.x + 20, DOCK.y + 16); ctx.lineTo(DOCK.x - 20, DOCK.y + 16); ctx.fill();
         ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.moveTo(DOCK.x, DOCK.y - 40); ctx.lineTo(DOCK.x + 22, DOCK.y - 6); ctx.lineTo(DOCK.x, DOCK.y - 6); ctx.fill();
@@ -1970,6 +2177,10 @@ const PORTALS = {
     space:   [{ x: 740, y: 470, shape: 'star'    }],
     arena:   [],
     mall:    [],
+    underwater: [{ x: 740, y: 120, shape: 'circle' }],
+    dino:    [{ x: 740, y: 120, shape: 'star'    }],
+    volcano: [{ x: 740, y: 470, shape: 'diamond' }],
+    jungle:  [{ x: 740, y: 520, shape: 'hexagon' }],
     heaven: [
         { x: 60,  y: 330, shape: 'circle'   },
         { x: 740, y: 330, shape: 'star'     },
@@ -2107,6 +2318,18 @@ const SONGS = {
     secret: { bpm: 100, lead: 'triangle',   // sparkly treasure music
         melody: [84, 88, 91, 88, 96, 0, 91, 0, 86, 89, 93, 89, 98, 0, 93, 0,  84, 88, 91, 96, 95, 91, 88, 0, 86, 91, 95, 98, 96, 0, 0, 0],
         bass:   [48, 0, 55, 0, 52, 0, 55, 0, 50, 0, 57, 0, 53, 0, 57, 0,  48, 0, 55, 0, 52, 0, 55, 0, 55, 0, 50, 0, 48, 0, 0, 0] },
+    underwater: { bpm: 70, lead: 'sine',   // bubbly and dreamy
+        melody: [67, 0, 71, 0, 74, 0, 72, 71, 69, 0, 0, 0, 67, 0, 64, 0,  67, 0, 71, 0, 76, 0, 74, 72, 71, 0, 0, 0, 0, 0, 0, 0],
+        bass:   [43, 0, 0, 0, 50, 0, 0, 0, 45, 0, 0, 0, 48, 0, 0, 0,  43, 0, 0, 0, 52, 0, 0, 0, 50, 0, 0, 0, 43, 0, 0, 0] },
+    dino: { bpm: 112, lead: 'square',   // stompy
+        melody: [60, 0, 60, 63, 0, 65, 0, 63, 60, 0, 58, 0, 60, 0, 0, 0,  60, 0, 60, 63, 0, 67, 0, 65, 63, 0, 60, 0, 58, 0, 0, 0],
+        bass:   [36, 36, 0, 36, 0, 36, 0, 0, 34, 34, 0, 34, 0, 34, 0, 0,  36, 36, 0, 36, 0, 36, 0, 0, 39, 39, 0, 39, 34, 0, 0, 0] },
+    volcano: { bpm: 150, lead: 'sawtooth',   // hot and fast
+        melody: [64, 0, 67, 64, 70, 0, 69, 67, 64, 0, 62, 0, 63, 0, 64, 0,  64, 0, 67, 64, 71, 70, 69, 67, 66, 0, 64, 0, 63, 0, 0, 0],
+        bass:   [40, 40, 0, 40, 40, 0, 40, 40, 38, 38, 0, 38, 39, 0, 40, 0,  40, 40, 0, 40, 40, 0, 40, 40, 38, 38, 0, 38, 35, 0, 0, 0] },
+    jungle: { bpm: 124, lead: 'triangle',   // bongo-bouncy
+        melody: [69, 0, 72, 0, 76, 74, 72, 0, 69, 0, 67, 69, 72, 0, 0, 0,  69, 0, 72, 0, 77, 76, 74, 72, 71, 0, 69, 0, 67, 0, 0, 0],
+        bass:   [45, 0, 45, 52, 0, 45, 0, 52, 43, 0, 43, 50, 0, 43, 0, 50,  45, 0, 45, 52, 0, 45, 0, 52, 40, 0, 40, 47, 0, 45, 0, 0] },
     ship: { bpm: 126, lead: 'square',   // sea shanty
         melody: [69, 0, 69, 71, 72, 0, 69, 0, 67, 0, 64, 0, 67, 69, 0, 0,  69, 0, 69, 71, 72, 0, 74, 0, 76, 74, 72, 71, 69, 0, 0, 0],
         bass:   [45, 0, 52, 0, 45, 0, 52, 0, 43, 0, 50, 0, 45, 0, 52, 0,  45, 0, 52, 0, 45, 0, 52, 0, 40, 0, 47, 0, 45, 0, 0, 0] },
@@ -2224,6 +2447,11 @@ const AWARDS = [
     { id: 'treasure',    icon: '💰', name: 'Treasure Hunter',  desc: 'Follow a treasure map to the end' },
     { id: 'wizard',      icon: '🪄', name: 'Little Wizard',    desc: 'Buy a magic power' },
     { id: 'rider',       icon: '🐴', name: 'Giddy Up!',        desc: 'Buy a ride' },
+    { id: 'diver',       icon: '🟡', name: 'Deep Diver',       desc: 'Dive in the submarine' },
+    { id: 'octopus',     icon: '🐙', name: 'Octopus Boss',     desc: 'Beat the Giant Octopus' },
+    { id: 'dinoRider',   icon: '🦕', name: 'Dino Rider',       desc: 'Tame a Triceratops' },
+    { id: 'firedragon',  icon: '🔥', name: 'Dragon Tamer',     desc: 'Beat the Fire Dragon' },
+    { id: 'idol',        icon: '🗿', name: 'Idol Hunter',      desc: 'Grab the Golden Idol' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -3097,7 +3325,7 @@ function updatePlayer() {
     if (len > 1) { dx /= len; dy /= len; }   // diagonals aren't faster
     if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; state.walkPhase += 0.32; }   // remember which way you're going
     dx *= spd; dy *= spd;
-    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.mount === 'kart') {
+    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.mount === 'kart') {
         // Slippery ice / floaty space: you speed up and slow down gently
         const grip = state.mount === 'kart' ? 0.12 : state.room === ROOM.ICE ? 0.05 : 0.035;
         state.vx = (state.vx || 0) + (dx - (state.vx || 0)) * grip;
@@ -3291,6 +3519,8 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
         countStat('kills');
         if (e.type === 'king') giveAward('king');
         if (e.type === 'ghostking' || e.type === 'dragon' || e.type === 'shadow') giveAward(e.type);
+        if (e.type === 'monkey' && e.stolen) showToast(`🐒 You got your coins back — and more! (+${e.coinDrop})`, '#FFE066', 150);
+        if (e.type === 'octopus' || e.type === 'firedragon') { giveAward(e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
         if (e.type === 'frostgiant' || e.type === 'thunderbird' || e.type === 'mothership') { giveAward(e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
         if (e.type === 'dragon') showToast('🐉 You beat the CAVE DRAGON!', '#FFD700', 200);
     } else if (power === POWER.ICE && !e.frog) {
@@ -3350,6 +3580,14 @@ function updateRoomEnemies() {
         if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
         if (e.frog) { moveFrog(e); continue; }   // frogs are harmless
         moveEnemy(e);
+        if (e.type === 'monkey' && !(e.flee > 0) && Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
+            if (state.coins > 0) {   // 🐒 SNATCH!
+                state.coins--; e.stolen = (e.stolen || 0) + 1; e.coinDrop = (e.stolen * 2);
+                spawnFloatText(player.x, player.y - 30, '🐒 A monkey stole a coin!', '#FFCC66', 60); sfx('ribbit');
+            }
+            e.flee = 120;
+            continue;
+        }
         if ((!e.hidden || e.type === 'ghostking') && e.type !== 'creeper' && !(e.shrunk > 0) && state.playerInvincible === 0 && !isShieldedAgainst(e.type) &&
             Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
             damagePlayer();
@@ -3383,6 +3621,36 @@ function enemyShoot(e, speed, color, spread = [0]) {
 function moveEnemy(e) {
     const chase = (spd) => { const a = Math.atan2(player.y - e.y, player.x - e.x); e.x += Math.cos(a) * spd; e.y += Math.sin(a) * spd; e.walk = (e.walk || 0) + spd * 0.15; };
     if (e.type === 'pirate')   { chase(1.3); return; }
+    if (e.type === 'shark')    { e.x += e.dx; e.y += Math.sin(Date.now() / 400 + e.home.y) * 0.8; if (e.x < 60 || e.x > 740) e.dx *= -1;
+                                 if (Math.hypot(player.x - e.x, player.y - e.y) < 160) chase(1.6); return; }
+    if (e.type === 'jellyfish'){ e.y += Math.sin(Date.now() / 600 + e.home.x) * 0.9; e.x += Math.cos(Date.now() / 900 + e.home.y) * 0.5; return; }
+    if (e.type === 'raptor')   { chase(1.9); return; }
+    if (e.type === 'lavablob') {
+        if (--e.hopTimer <= 0) { e.hopTimer = 60; const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 4; e.dy = Math.sin(a) * 4; }
+        e.x += e.dx; e.y += e.dy; e.dx *= 0.92; e.dy *= 0.92; return;
+    }
+    if (e.type === 'monkey') {
+        if (e.flee > 0) { e.flee--; const a = Math.atan2(e.y - player.y, e.x - player.x); e.x += Math.cos(a) * 2.6; e.y += Math.sin(a) * 2.6; }
+        else chase(1.6);
+        e.x = Math.max(30, Math.min(770, e.x)); e.y = Math.max(70, Math.min(570, e.y));
+        e.walk = (e.walk || 0) + 0.3;
+        return;
+    }
+    if (e.type === 'octopus') {   // squirts ink all around
+        e.x = 520 + Math.sin(Date.now() / 1600) * 160; e.y = 300 + Math.cos(Date.now() / 1300) * 90;
+        if (--e.inkTimer <= 0) {
+            e.inkTimer = 110;
+            for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 + Math.random() * 0.2; enemyProjectiles.push({ x: e.x, y: e.y, dx: Math.cos(a) * 3.5, dy: Math.sin(a) * 3.5, color: '#221133', life: 140, r: 8, enemyType: e.type }); }
+            sfx('splash');
+        }
+        return;
+    }
+    if (e.type === 'firedragon') {   // circles the crater and breathes fire
+        e.t = (e.t || 0) + 0.01;
+        e.x = 400 + Math.cos(e.t) * 280; e.y = 190 + Math.sin(e.t * 2) * 70;
+        if (--e.breath <= 0) { e.breath = 120; enemyShoot(e, 5, '#FF6A00', [-0.3, -0.15, 0, 0.15, 0.3]); sfx('dragonRoar'); }
+        return;
+    }
     if (e.type === 'skeleton') { chase(0.9); if (Math.random() < 0.008) enemyShoot(e, 4, '#EEEEDD'); return; }
     if (e.type === 'snowman')  { chase(0.4); if (Math.random() < 0.01) enemyShoot(e, 4.5, '#FFFFFF'); return; }
     if (e.type === 'alien')    { e.x += Math.sin(Date.now() / 500 + e.y) * 1.2; e.y += Math.cos(Date.now() / 700 + e.x) * 0.8; if (Math.random() < 0.01) enemyShoot(e, 5, '#66FF66'); return; }
@@ -5558,6 +5826,67 @@ function drawEnemyBody(e, t) {
         ctx.arc(e.x - 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.arc(e.x + 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.fill();
+    } else if (e.type === 'shark') {
+        const f = e.dx < 0 ? -1 : 1;
+        ctx.translate(e.x, e.y); ctx.scale(f, 1);
+        ctx.fillStyle = '#7A8A9A'; ctx.beginPath(); ctx.ellipse(0, 0, 24, 10, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-4, -8); ctx.lineTo(4, -22); ctx.lineTo(10, -8); ctx.fill();                          // fin
+        ctx.beginPath(); ctx.moveTo(-22, 0); ctx.lineTo(-34, -10); ctx.lineTo(-32, 10); ctx.fill();                       // tail
+        ctx.fillStyle = '#EEE'; ctx.beginPath(); ctx.ellipse(4, 4, 16, 5, 0, 0, Math.PI); ctx.fill();                     // white tummy
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(14, -3, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFF'; for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.moveTo(10 + k * 3, 3); ctx.lineTo(11.5 + k * 3, 7); ctx.lineTo(13 + k * 3, 3); ctx.fill(); }
+    } else if (e.type === 'jellyfish') {
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = '#FF99DD'; ctx.shadowColor = '#FF66CC'; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(e.x, e.y, 12, Math.PI, 0); ctx.fill();
+        ctx.strokeStyle = '#FFBBEE'; ctx.lineWidth = 2;
+        for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(e.x + k * 4, e.y); ctx.quadraticCurveTo(e.x + k * 4 + Math.sin(Date.now() / 200 + k) * 4, e.y + 10, e.x + k * 4, e.y + 20); ctx.stroke(); }
+    } else if (e.type === 'octopus') {
+        const r = e.r, t2 = Date.now() / 300;
+        ctx.strokeStyle = '#AA4488'; ctx.lineCap = 'round';
+        for (let k = 0; k < 8; k++) {   // 8 wiggly arms
+            const a = (k / 8) * Math.PI + 0.1;
+            ctx.lineWidth = 9; ctx.beginPath(); ctx.moveTo(e.x + Math.cos(a) * r * 0.5, e.y + Math.sin(a) * r * 0.3);
+            ctx.quadraticCurveTo(e.x + Math.cos(a) * r * 1.2 + Math.sin(t2 + k) * 10, e.y + r * 0.8, e.x + Math.cos(a) * r * 1.6, e.y + r * 1.3 + Math.sin(t2 * 1.3 + k) * 8); ctx.stroke();
+        }
+        const head = ctx.createRadialGradient(e.x - r * 0.3, e.y - r * 0.4, 4, e.x, e.y, r);
+        head.addColorStop(0, '#DD77BB'); head.addColorStop(1, '#772255');
+        ctx.fillStyle = head; ctx.beginPath(); ctx.ellipse(e.x, e.y - r * 0.2, r * 0.8, r * 0.9, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(e.x - r * 0.3, e.y, r * 0.18, 0, Math.PI * 2); ctx.arc(e.x + r * 0.3, e.y, r * 0.18, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(e.x - r * 0.3, e.y + 2, r * 0.09, 0, Math.PI * 2); ctx.arc(e.x + r * 0.3, e.y + 2, r * 0.09, 0, Math.PI * 2); ctx.fill();
+    } else if (e.type === 'raptor') {
+        const step = Math.sin((e.walk || 0) * 2) * 4, f = player.x < e.x ? -1 : 1;
+        ctx.translate(e.x, e.y); ctx.scale(f, 1);
+        ctx.fillStyle = '#6A8A3A'; ctx.fillRect(-6, 4, 4, 12 + step); ctx.fillRect(2, 4, 4, 12 - step);                // legs
+        ctx.fillStyle = '#8AA04A'; ctx.beginPath(); ctx.ellipse(0, 0, 14, 8, -0.2, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-12, -2); ctx.lineTo(-30, 2); ctx.lineTo(-12, 4); ctx.fill();                       // tail
+        ctx.beginPath(); ctx.ellipse(14, -10, 9, 6, -0.3, 0, Math.PI * 2); ctx.fill();                                   // head
+        ctx.fillStyle = '#FFEE33'; ctx.beginPath(); ctx.arc(16, -12, 1.8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFF'; for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(17 + k * 2.5, -7); ctx.lineTo(18 + k * 2.5, -4); ctx.lineTo(19 + k * 2.5, -7); ctx.fill(); }
+    } else if (e.type === 'lavablob') {
+        const sq = 1 + Math.min(0.3, Math.hypot(e.dx, e.dy) / 12);
+        const g2 = ctx.createRadialGradient(e.x - 4, e.y - 4, 2, e.x, e.y, 14);
+        g2.addColorStop(0, '#FFE070'); g2.addColorStop(1, '#D03000');
+        ctx.fillStyle = g2; ctx.shadowColor = '#FF5500'; ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.ellipse(e.x, e.y, 14 / sq, 12 * sq, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0; ctx.fillStyle = '#300';
+        ctx.beginPath(); ctx.arc(e.x - 4, e.y - 2, 2, 0, Math.PI * 2); ctx.arc(e.x + 4, e.y - 2, 2, 0, Math.PI * 2); ctx.fill();
+    } else if (e.type === 'firedragon') {
+        const r = e.r, flap = Math.sin(Date.now() / 110) * 12;
+        ctx.fillStyle = '#8A1A08';
+        for (const side of [-1, 1]) { ctx.beginPath(); ctx.moveTo(e.x, e.y - 4); ctx.lineTo(e.x + side * r * 1.9, e.y - r * 0.6 - flap); ctx.lineTo(e.x + side * r * 1.2, e.y + r * 0.4); ctx.closePath(); ctx.fill(); }
+        const body = ctx.createRadialGradient(e.x - 8, e.y - 8, 4, e.x, e.y, r);
+        body.addColorStop(0, '#FF7A3A'); body.addColorStop(1, '#9A1A08');
+        ctx.fillStyle = body; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 20;
+        ctx.beginPath(); ctx.ellipse(e.x, e.y, r * 0.7, r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(e.x, e.y + r * 0.55, r * 0.35, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();          // head (facing you)
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#FFEE33'; ctx.beginPath(); ctx.arc(e.x - 7, e.y + r * 0.5, 3, 0, Math.PI * 2); ctx.arc(e.x + 7, e.y + r * 0.5, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#F4E8C8'; for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(e.x + s * 8, e.y + r * 0.35); ctx.lineTo(e.x + s * 16, e.y + r * 0.05); ctx.lineTo(e.x + s * 12, e.y + r * 0.4); ctx.fill(); }   // horns
+    } else if (e.type === 'monkey') {
+        drawHuman(e.x, e.y, 0.8, { shirt: '#8A5A2A', sleeves: '#8A5A2A', pants: '#7A4A1A', shoes: '#6A3A1A', skin: '#D8A878', hands: '#D8A878', hair: '#6A3A1A', hairStyle: 'short', walk: e.walk });
+        ctx.strokeStyle = '#7A4A1A'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(e.x + 6, e.y + 8); ctx.quadraticCurveTo(e.x + 20, e.y + 4, e.x + 16, e.y - 8); ctx.stroke();   // curly tail
+        if (e.stolen) { ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(e.x + 10, e.y + 2, 4, 0, Math.PI * 2); ctx.fill(); }   // holding your coin!
     } else if (e.type === 'pirate') {
         drawHuman(e.x, e.y, 1, { shirt: '#EEEEEE', sleeves: '#C03030', pants: '#3A2A1A', shoes: '#111', hair: '#2A1A0A', hairStyle: 'short', walk: e.walk, beard: '#2A1A0A' });
         ctx.fillStyle = '#C03030'; ctx.fillRect(e.x - 7, e.y - 24, 14, 4);                  // bandana
@@ -6462,7 +6791,8 @@ function roomBackground(room) {
         c.width = 800; c.height = 600;
         if (room === 'void') { c.width = 900; c.height = 700; }   // fog is bigger than the screen so it can drift
         const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse,
-                           ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace, arena: paintArena, mall: paintMall };
+                           ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace, arena: paintArena, mall: paintMall,
+                           underwater: paintUnderwater, dino: paintDino, volcano: paintVolcano, jungle: paintJungle };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
@@ -6832,6 +7162,14 @@ function drawPlayer() {
     const color = getPlayerColor();
     drawGroundShadow(player.x + (state.mount === 'dragon' ? 12 : 3), player.y + (state.mount === 'dragon' ? 34 : 19), state.mount ? 24 : 16, 5);
     drawMount();
+    if (state.room === ROOM.UNDERWATER) {   // you're in a yellow submarine!
+        ctx.save();
+        ctx.fillStyle = '#FFD02A'; ctx.beginPath(); ctx.ellipse(player.x, player.y + 2, 30, 18, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(player.x - 6, player.y - 26, 12, 12); ctx.fillStyle = '#888'; ctx.fillRect(player.x + 2, player.y - 34, 3, 10);   // tower + periscope
+        ctx.fillStyle = 'rgba(160,220,255,0.6)'; ctx.beginPath(); ctx.arc(player.x, player.y - 4, 13, 0, Math.PI * 2); ctx.fill();   // window you look out of
+        ctx.fillStyle = '#C8A020'; ctx.beginPath(); ctx.moveTo(player.x - 30, player.y); ctx.lineTo(player.x - 40, player.y - 8 + Math.sin(Date.now() / 60) * 3); ctx.lineTo(player.x - 40, player.y + 8); ctx.fill();   // propeller
+        ctx.restore();
+    }
     ctx.save();
     ctx.shadowColor = color; ctx.shadowBlur = 14;
     if (state.danceTimer > 0) {
