@@ -441,6 +441,16 @@ function drawFighting() {
         if (k >= 1) { ctx.strokeStyle = '#FFF'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(player.x + state.faceX * 20, player.y + state.faceY * 20, 18 + Math.sin(Date.now() / 60) * 3, 0, Math.PI * 2); ctx.stroke(); }
         ctx.restore();
     }
+    if (mod('disco')) {   // 🪩 party lights
+        const t = Date.now() / 1000;
+        for (let k = 0; k < 6; k++) {
+            const x = 400 + Math.cos(t * (0.7 + k * 0.2) + k) * 320, y = 320 + Math.sin(t * (0.9 + k * 0.15) + k * 2) * 220;
+            const g = ctx.createRadialGradient(x, y, 5, x, y, 120);
+            g.addColorStop(0, `hsla(${(k * 60 + t * 90) % 360}, 100%, 60%, 0.35)`); g.addColorStop(1, 'hsla(0, 0%, 0%, 0)');
+            ctx.fillStyle = g; ctx.fillRect(x - 120, y - 120, 240, 240);
+        }
+    }
+    if (mod('rainbow')) { ctx.fillStyle = `hsla(${(Date.now() / 10) % 360}, 100%, 60%, 0.1)`; ctx.fillRect(0, 0, 800, 600); }
     if (slowMo > 0) {
         ctx.fillStyle = 'rgba(200,200,255,0.12)'; ctx.fillRect(0, 0, 800, 600);
         ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center'; ctx.fillText('⏳ PERFECT DODGE — SLOW MOTION!', 400, 110);
@@ -709,6 +719,43 @@ const DIG_HITS_PER_LAYER  = [3, 4, 8];         // Space / DIG presses per layer 
 const DIG_MOLE_CHANCE     = [0.3, 0.6, 1.0];   // chance a mole monster pops out of each layer
 const DIG_RANGE           = 24;                // how close the player must stand to a dig spot
 // Layer 1: Ice / Fire / Lightning / Water · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (strong vs everything)
+
+// ── SETTINGS (⚙ button / O / Start) ───────────────────────────
+// Creative Mode is like Minecraft creative: nothing attacks you, everything is free,
+// unlimited blocks everywhere, one-hit mining and you can walk through blocks.
+let settings = { creative: false, difficulty: 'normal', music: true, sfx: true, upsideDown: false,
+                 playerSpeed: 'normal', monsterSpeed: 'normal', dayLength: 'normal', caveTime: 'normal',
+                 damageNumbers: true, hints: true, mods: {} };
+try { settings = Object.assign(settings, JSON.parse(localStorage.getItem('lop_settings')) || {}); } catch (e) {}
+settings.mods = settings.mods || {};
+if (settings.upsideDown) settings.mods.upsideDown = true;   // (upside-down moved into the Mods list)
+const mod = name => !!settings.mods[name];
+
+// 🧩 MODS: fun switches that change how the game works
+const MODS = [
+    { id: 'bigHead',      icon: '🗿', name: 'Big Heads',        desc: 'Everyone has a HUGE head' },
+    { id: 'tinyMonsters', icon: '🐜', name: 'Tiny Monsters',    desc: 'All the monsters are teeny' },
+    { id: 'superSpeed',   icon: '⚡', name: 'Super Speed',      desc: 'You run twice as fast' },
+    { id: 'chickens',     icon: '🐔', name: 'Chicken Monsters', desc: 'Every monster is a chicken!' },
+    { id: 'doubleCoins',  icon: '🪙', name: 'Double Coins',     desc: 'Monsters drop twice the coins' },
+    { id: 'disco',        icon: '🪩', name: 'Disco Party',      desc: 'Flashing party lights everywhere' },
+    { id: 'rainbow',      icon: '🌈', name: 'Rainbow Mode',     desc: 'Everything goes rainbow' },
+    { id: 'oneHit',       icon: '💥', name: 'One-Hit Wonder',   desc: 'Monsters fall in 1 hit (not bosses)' },
+    { id: 'lowGravity',   icon: '🎈', name: 'Low Gravity',      desc: 'Floaty, slidey moving everywhere' },
+    { id: 'mirror',       icon: '🪞', name: 'Mirror World',     desc: 'Left and right swap sides' },
+    { id: 'upsideDown',   icon: '🙃', name: 'Upside Down',      desc: 'The whole game flips over' },
+];
+
+function modItems() {
+    return MODS.map(m => ({ icon: m.icon, name: m.name, desc: m.desc, cost: 0, status: mod(m.id) ? 'ON ✓' : 'OFF',
+        action: () => { settings.mods[m.id] = !mod(m.id); applyUpsideDown(); saveSettings(); if (mod(m.id)) giveAward('modder'); } }));
+}
+
+// Speeds and times picked in Settings
+function dayFrames()  { return { short: 900, normal: 1800, long: 3600 }[settings.dayLength] || 1800; }
+function caveMax()    { return { short: 1800, normal: 3600, long: 7200 }[settings.caveTime] || 3600; }
+function playerSpeedFactor() { return ({ slow: 0.75, normal: 1, fast: 1.35 }[settings.playerSpeed] || 1) * (mod('superSpeed') ? 2 : 1); }
+const SETTINGS_BTN = { x: 26, y: 534, r: 16 };
 
 // ── PARADISE ISLAND TOWN ─────────────────────────────────────
 // Daytime is peaceful: talk to the townspeople, do jobs, buy houses.
@@ -1129,91 +1176,108 @@ canvas.addEventListener('contextmenu', e => {
     if (!blockAtCell(cx, cy)) buildAt(cx, cy, -9999, -9999);   // (far-away aim so it never chops a tree by accident)
 });
 
-// ── PLAYER 2 (press P to join: arrow keys + Enter, or a second controller) ──
-const p2 = { active: false, x: 0, y: 0, hp: 3, inv: 0, down: 0, cooldown: 0, walk: 0, faceX: 1, faceY: 0 };
-const P2_DOWN_FRAMES = 600;   // if Player 2 runs out of hearts they rest for 10 s, then pop back up
+// ── FRIENDS: Players 2, 3 and 4 on the same screen ──────────
+// P2: press P (arrow keys + Enter) or Start on the 2nd controller · P3 / P4: Start on the 3rd / 4th controller
+const FRIENDS = [2, 3, 4].map((n, i) => ({ n, pad: i + 1, color: ['#FF8844', '#44CC66', '#AA66FF'][i],
+                                           active: false, x: 0, y: 0, hp: 3, inv: 0, down: 0, cooldown: 0, walk: 0, faceX: 1, faceY: 0 }));
+const p2 = FRIENDS[0];
+const P2_DOWN_FRAMES = 600;   // if a friend runs out of hearts they rest for 10 s, then pop back up
+function activeFriends() { return FRIENDS.filter(f => f.active); }
 
-function toggleP2() {
+function toggleFriend(f) {
     if (state.gamePhase !== 'playing') return;
-    p2.active = !p2.active;
-    if (p2.active) { Object.assign(p2, { x: player.x + 30, y: player.y, hp: 3, inv: 60, down: 0 }); showToast('👫 PLAYER 2 JOINED! Arrow keys to move, ENTER to shoot', '#88DDFF', 240); }
-    else showToast('Player 2 left the game. Bye!', '#88DDFF', 120);
+    f.active = !f.active;
+    if (f.active) {
+        Object.assign(f, { x: player.x + 30 * (f.n - 1), y: player.y, hp: 3, inv: 60, down: 0 });
+        showToast(f.n === 2 ? '👫 PLAYER 2 JOINED! Arrow keys to move, ENTER to shoot' : `🎮 PLAYER ${f.n} JOINED!`, f.color, 240);
+        if (activeFriends().length === 3) giveAward('party4');
+    } else showToast(`Player ${f.n} left the game. Bye!`, f.color, 120);
 }
+function toggleP2() { toggleFriend(p2); }
 
-function hurtP2() {
-    if (!p2.active || p2.down > 0 || p2.inv > 0 || settings.creative) return;
-    p2.hp--; p2.inv = 90;
-    spawnParticles(p2.x, p2.y, '#FF4444', 8); sfx('hurt');
-    if (p2.hp <= 0) { p2.down = P2_DOWN_FRAMES; showToast('Player 2 needs a rest… back in 10 s!', '#FFAA88', 150); }
+function hurtFriend(f) {
+    if (!f.active || f.down > 0 || f.inv > 0 || settings.creative) return;
+    f.hp--; f.inv = 90;
+    spawnParticles(f.x, f.y, '#FF4444', 8); sfx('hurt');
+    if (f.hp <= 0) { f.down = P2_DOWN_FRAMES; showToast(`Player ${f.n} needs a rest… back in 10 s!`, '#FFAA88', 150); }
 }
+function hurtP2() { hurtFriend(p2); }
 
-function p2Shoot() {
-    if (!p2.active || p2.down > 0 || p2.cooldown > 0 || state.power === POWER.NONE) return;
+function friendShoot(f) {
+    if (!f.active || f.down > 0 || f.cooldown > 0 || state.power === POWER.NONE) return;
     let target = null, best = 500;
-    for (const e of targetableEnemies()) { const d = Math.hypot(e.x - p2.x, e.y - p2.y); if (d < best) { best = d; target = e; } }
+    for (const e of targetableEnemies()) { const d = Math.hypot(e.x - f.x, e.y - f.y); if (d < best) { best = d; target = e; } }
     if (!target && state.room === ROOM.HELL && hell.devil.alive) target = hell.devil;
     if (!target) return;
-    p2.cooldown = 16;
-    const a = Math.atan2(target.y - p2.y, target.x - p2.x), w = WEAPON_INFO[state.power];
+    f.cooldown = 16;
+    const a = Math.atan2(target.y - f.y, target.x - f.x), w = WEAPON_INFO[state.power];
     const color = state.power === POWER.RAINBOW ? `hsl(${Math.random() * 360}, 100%, 60%)` : w.color;
     for (const off of (state.powerTier >= 2 ? [-0.2, 0, 0.2] : [0])) {
-        projectiles.push({ x: p2.x, y: p2.y, dx: Math.cos(a + off) * w.speed, dy: Math.sin(a + off) * w.speed, color, power: state.power, life: 90, r: w.size });
+        projectiles.push({ x: f.x, y: f.y, dx: Math.cos(a + off) * w.speed, dy: Math.sin(a + off) * w.speed, color, power: state.power, life: 90, r: w.size });
     }
     sfx('shoot');
 }
 
-function updateP2() {
-    if (!p2.active) return;
-    if (p2.cooldown > 0) p2.cooldown--;
-    if (p2.inv > 0) p2.inv--;
-    if (p2.down > 0) {
-        if (--p2.down === 0) { p2.hp = 3; p2.inv = 120; p2.x = player.x + 30; p2.y = player.y; showToast('Player 2 is back! 💪', '#88DDFF', 120); }
+function updateFriend(f, pads) {
+    if (!f.active) return;
+    if (f.cooldown > 0) f.cooldown--;
+    if (f.inv > 0) f.inv--;
+    if (f.down > 0) {
+        if (--f.down === 0) { f.hp = 3; f.inv = 120; f.x = player.x + 30; f.y = player.y; showToast(`Player ${f.n} is back! 💪`, f.color, 120); }
         return;
     }
     let dx = 0, dy = 0;
-    if (keys['ArrowLeft'])  dx -= 1;
-    if (keys['ArrowRight']) dx += 1;
-    if (keys['ArrowUp'])    dy -= 1;
-    if (keys['ArrowDown'])  dy += 1;
-    if (keys['Enter'] || keys['NumpadEnter'] || keys['Numpad0']) p2Shoot();
-    // A second game controller drives Player 2
-    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(p => p && p.connected) : [];
-    if (pads[1]) {
-        const gp = pads[1];
+    if (f.n === 2) {   // Player 2 can use the keyboard
+        if (keys['ArrowLeft'])  dx -= 1;
+        if (keys['ArrowRight']) dx += 1;
+        if (keys['ArrowUp'])    dy -= 1;
+        if (keys['ArrowDown'])  dy += 1;
+        if (keys['Enter'] || keys['NumpadEnter'] || keys['Numpad0']) friendShoot(f);
+    }
+    const gp = pads[f.pad];   // their own game controller
+    if (gp) {
         if (Math.abs(gp.axes[0] || 0) > PAD_DEADZONE) dx += gp.axes[0];
         if (Math.abs(gp.axes[1] || 0) > PAD_DEADZONE) dy += gp.axes[1];
-        if (gp.buttons[PAD.A] && gp.buttons[PAD.A].pressed) p2Shoot();
+        const b = i => gp.buttons[i] && gp.buttons[i].pressed;
+        if (b(PAD.LEFT)) dx -= 1; if (b(PAD.RIGHT)) dx += 1; if (b(PAD.UP)) dy -= 1; if (b(PAD.DOWN)) dy += 1;
+        if (b(PAD.A) || b(PAD.RT)) friendShoot(f);
     }
     const len = Math.hypot(dx, dy);
     if (len > 1) { dx /= len; dy /= len; }
-    if (len > 0.2) { p2.faceX = dx; p2.faceY = dy; p2.walk += 0.32; }
-    const spd = BASE_SPEED * (state.room === ROOM.PARADISE ? 1.2 : 1);
-    const nx = Math.max(18, Math.min(782, p2.x + dx * spd)), ny = Math.max(52, Math.min(582, p2.y + dy * spd));
-    if (!playerHitsBlock(nx, p2.y)) p2.x = nx;
-    if (!playerHitsBlock(p2.x, ny)) p2.y = ny;
-    // Bad guys hurt Player 2 too
+    if (len > 0.2) { f.faceX = dx; f.faceY = dy; f.walk += 0.32; }
+    const spd = BASE_SPEED * (state.room === ROOM.PARADISE ? 1.2 : 1) * playerSpeedFactor();
+    const nx = Math.max(18, Math.min(782, f.x + dx * spd)), ny = Math.max(52, Math.min(582, f.y + dy * spd));
+    if (settings.creative || !playerHitsBlock(nx, f.y)) f.x = nx;
+    if (settings.creative || !playerHitsBlock(f.x, ny)) f.y = ny;
+    // Bad guys hurt friends too
     for (const e of targetableEnemies()) {
         if (e.frog || e.type === 'creeper' || isShieldedAgainst(e.type)) continue;
-        if (Math.hypot(e.x - p2.x, e.y - p2.y) < e.r + 16) hurtP2();
+        if (Math.hypot(e.x - f.x, e.y - f.y) < e.r + 16) hurtFriend(f);
     }
-    if (state.room === ROOM.HELL && hell.devil.alive && Math.hypot(hell.devil.x - p2.x, hell.devil.y - p2.y) < hell.devil.r + 16) hurtP2();
+    if (state.room === ROOM.HELL && hell.devil.alive && Math.hypot(hell.devil.x - f.x, hell.devil.y - f.y) < hell.devil.r + 16) hurtFriend(f);
+}
+
+function updateP2() {
+    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(p => p && p.connected) : [];
+    for (const f of FRIENDS) updateFriend(f, pads);
 }
 
 function drawP2() {
-    if (!p2.active) return;
-    if (p2.down > 0) {   // resting
-        ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(`💤 P2 back in ${Math.ceil(p2.down / 60)}s`, p2.x, p2.y);
-        return;
+    for (const f of activeFriends()) {
+        if (f.down > 0) {   // resting
+            ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+            ctx.fillText(`💤 P${f.n} back in ${Math.ceil(f.down / 60)}s`, f.x, f.y);
+            continue;
+        }
+        if (f.inv > 0 && Math.floor(Date.now() / 80) % 2 === 0) continue;
+        drawGroundShadow(f.x + 3, f.y + 19, 16, 5);
+        const color = state.power === POWER.NONE ? f.color : getPlayerColor();
+        ctx.save(); ctx.shadowColor = f.color; ctx.shadowBlur = 10;
+        drawAvatar(f.x, f.y, player.w, color, 'plain', f.walk);
+        ctx.restore();
+        ctx.fillStyle = f.color; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(`P${f.n}`, f.x, f.y - 30);
     }
-    if (p2.inv > 0 && Math.floor(Date.now() / 80) % 2 === 0) return;
-    drawGroundShadow(p2.x + 3, p2.y + 19, 16, 5);
-    const color = state.power === POWER.NONE ? '#FF8844' : getPlayerColor();
-    ctx.save(); ctx.shadowColor = '#FF8844'; ctx.shadowBlur = 10;
-    drawAvatar(p2.x, p2.y, player.w, color, 'plain', p2.walk);
-    ctx.restore();
-    ctx.fillStyle = '#FF8844'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('P2', p2.x, p2.y - 30);
 }
 
 // ── GAME CONTROLLER (Xbox, PlayStation, Switch Pro… anything the browser maps as "standard") ──
@@ -1231,10 +1295,11 @@ function pollGamepad() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const connected = Array.from(pads).filter(p => p && p.connected);
     const gp = connected[0];
-    if (connected[1]) {
-        const start = connected[1].buttons[PAD.START] && connected[1].buttons[PAD.START].pressed;
-        if (start && !pad2StartHeld && state.gamePhase === 'playing') toggleP2();
-        pad2StartHeld = start;
+    for (const f of FRIENDS) {   // Start on controller 2, 3 or 4 adds that player
+        const pd = connected[f.pad];
+        const start = !!(pd && pd.buttons[PAD.START] && pd.buttons[PAD.START].pressed);
+        if (start && !f.startHeld && state.gamePhase === 'playing') toggleFriend(f);
+        f.startHeld = start;
     }
     if (!gp) { padPrev = []; return; }
     const held = gp.buttons.map(b => b.pressed);
@@ -1315,7 +1380,8 @@ function canvasPos(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const x = (clientX - rect.left) * (GAME_W / rect.width);
     const y = (clientY - rect.top)  * (GAME_H / rect.height);
-    return settings.upsideDown ? { x: GAME_W - x, y: GAME_H - y } : { x, y };   // the picture is turned round
+    const flipX = mod('upsideDown') !== mod('mirror'), flipY = mod('upsideDown');   // the picture may be turned or mirrored
+    return { x: flipX ? GAME_W - x : x, y: flipY ? GAME_H - y : y };
 }
 
 canvas.addEventListener('touchstart', e => {
@@ -1475,7 +1541,7 @@ function makeParadise() {
         rainbowTimer: 0,
         coins:  [],           // coins only come from beating monsters
         phase:  'day',        // 'day' → 'dusk' → 'night' → (chest opened) → 'day'
-        timer:  DAY_FRAMES,
+        timer:  dayFrames(),
         apples: [],           // for the Mayor's apple-picking job
         speech: null,         // { npc, text, timer } — speech bubble over a townsperson
     };
@@ -2835,13 +2901,6 @@ function musicTick() {
 }
 setInterval(musicTick, 50);
 
-// ── SETTINGS (⚙ button / O / Start) ───────────────────────────
-// Creative Mode is like Minecraft creative: nothing attacks you, everything is free,
-// unlimited blocks everywhere, one-hit mining and you can walk through blocks.
-let settings = { creative: false, difficulty: 'normal', music: true, sfx: true, upsideDown: false };
-try { settings = Object.assign(settings, JSON.parse(localStorage.getItem('lop_settings')) || {}); } catch (e) {}
-const SETTINGS_BTN = { x: 26, y: 534, r: 16 };
-
 function saveSettings() { try { localStorage.setItem('lop_settings', JSON.stringify(settings)); } catch (e) {} }
 
 function setCreative(on) {
@@ -2854,24 +2913,31 @@ function setCreative(on) {
 }
 
 function applyUpsideDown() {
-    canvas.style.transform = settings.upsideDown ? 'rotate(180deg)' : '';
+    canvas.style.transform = [mod('upsideDown') ? 'rotate(180deg)' : '', mod('mirror') ? 'scaleX(-1)' : ''].join(' ').trim();
 }
 applyUpsideDown();
 
 function settingsItems() {
-    const diffName = { easy: 'EASY (+2 hearts)', normal: 'NORMAL', hard: 'HARD (1 less heart)' };
-    const next = { easy: 'normal', normal: 'hard', hard: 'easy' };
+    const cycle = (key, order) => () => { settings[key] = order[(order.indexOf(settings[key]) + 1) % order.length]; saveSettings(); };
+    const onOff = key => () => { settings[key] = !settings[key]; saveSettings(); };
+    const speedName = { slow: 'SLOW', normal: 'NORMAL', fast: 'FAST' };
     return [
         { icon: '🎮', name: 'Game Mode', desc: 'Creative: free stuff, no monsters attack', cost: 0, status: settings.creative ? 'CREATIVE' : 'SURVIVAL',
           action: () => setCreative(!settings.creative) },
-        { icon: '😊', name: 'Difficulty', desc: 'Tap to change', cost: 0, status: diffName[settings.difficulty],
-          action: () => { settings.difficulty = next[settings.difficulty]; state.playerHp = Math.min(state.playerHp, fullHearts()); saveSettings(); } },
-        { icon: '🎵', name: 'Music', desc: 'The songs in every place', cost: 0, status: settings.music ? 'ON' : 'OFF',
-          action: () => { settings.music = !settings.music; saveSettings(); } },
-        { icon: '🔊', name: 'Sound Effects', desc: 'Pew pew, boing, quack…', cost: 0, status: settings.sfx ? 'ON' : 'OFF',
-          action: () => { settings.sfx = !settings.sfx; saveSettings(); } },
-        { icon: '🙃', name: 'Upside Down', desc: 'Turn the whole game upside down!', cost: 0, status: settings.upsideDown ? 'ON' : 'OFF',
-          action: () => { settings.upsideDown = !settings.upsideDown; applyUpsideDown(); saveSettings(); } },
+        { icon: '😊', name: 'Difficulty', desc: 'Easy +2 hearts · Hard 1 less', cost: 0, status: settings.difficulty.toUpperCase(),
+          action: () => { cycle('difficulty', ['easy', 'normal', 'hard'])(); state.playerHp = Math.min(state.playerHp, fullHearts()); } },
+        { icon: '🏃', name: 'Your Speed', desc: 'How fast you move', cost: 0, status: speedName[settings.playerSpeed], action: cycle('playerSpeed', ['slow', 'normal', 'fast']) },
+        { icon: '👾', name: 'Monster Speed', desc: 'How fast monsters move', cost: 0, status: speedName[settings.monsterSpeed], action: cycle('monsterSpeed', ['slow', 'normal', 'fast']) },
+        { icon: '☀', name: 'Day Length', desc: 'Paradise day before night falls', cost: 0, status: { short: '15 s', normal: '30 s', long: '1 min' }[settings.dayLength],
+          action: cycle('dayLength', ['short', 'normal', 'long']) },
+        { icon: '🕳', name: 'Cave Hiding Time', desc: 'How long caves keep you safe', cost: 0, status: { short: '30 s', normal: '1 min', long: '2 min' }[settings.caveTime],
+          action: cycle('caveTime', ['short', 'normal', 'long']) },
+        { icon: '🎵', name: 'Music', desc: 'The songs in every place', cost: 0, status: settings.music ? 'ON' : 'OFF', action: onOff('music') },
+        { icon: '🔊', name: 'Sound Effects', desc: 'Pew pew, boing, quack…', cost: 0, status: settings.sfx ? 'ON' : 'OFF', action: onOff('sfx') },
+        { icon: '🔢', name: 'Damage Numbers', desc: 'Show "-3 SUPER HIT!" numbers', cost: 0, status: settings.damageNumbers ? 'ON' : 'OFF', action: onOff('damageNumbers') },
+        { icon: '💬', name: 'Control Hints', desc: 'The help text at the bottom', cost: 0, status: settings.hints ? 'ON' : 'OFF', action: onOff('hints') },
+        { icon: '🧩', name: 'MODS', desc: 'Big heads, chickens, disco…', cost: 0, status: `${MODS.filter(m => mod(m.id)).length} ON`,
+          action: () => openMenu('🧩 MODS — change how the game works!', modItems) },
         { icon: '💾', name: 'Save Now', desc: 'The game also saves by itself', cost: 0, status: 'SAVE',
           action: () => { saveGame(); saveWorld(); showToast('💾 Saved!', '#88EEFF', 90); } },
     ];
@@ -2955,6 +3021,8 @@ const AWARDS = [
     { id: 'combo',       icon: '👊', name: 'Combo Kid',        desc: 'Do a punch-punch-KICK combo' },
     { id: 'parry',       icon: '🛡', name: 'Perfect Parry',    desc: 'Parry or counter an attack' },
     { id: 'perfectDodge',icon: '⏳', name: 'Matrix Mode',      desc: 'Do a perfect dodge' },
+    { id: 'modder',      icon: '🧩', name: 'Game Modder',      desc: 'Turn on a mod' },
+    { id: 'party4',      icon: '👨‍👩‍👧‍👦', name: 'Party of 4',       desc: 'Play with 4 players' },
     { id: 'groundPound', icon: '💥', name: 'Ground Pounder',   desc: 'Jump and ground pound' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
@@ -3613,7 +3681,7 @@ function allMonstersDefeated() {
 
 function getPlayerColor() {
     if (state.playerFlash > 0) return '#FFFF00';
-    if (state.power === POWER.RAINBOW)   return `hsl(${(Date.now() / 5) % 360}, 100%, 60%)`;
+    if (state.power === POWER.RAINBOW || mod('rainbow')) return `hsl(${(Date.now() / 5) % 360}, 100%, 60%)`;
     if (state.power !== POWER.NONE)      return WEAPON_INFO[state.power].color;
     return AVATAR_COLORS[state.activeSkin];
 }
@@ -3808,14 +3876,14 @@ function changeRoom(dest) {
     goldenPortal = MAIN_ROOMS.includes(dest) && Math.random() < SECRET_PORTAL_CHANCE
         ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
     placePetBesidePlayer();
-    if (p2.active) { p2.x = player.x + 30; p2.y = player.y; }   // Player 2 comes along through portals
+    for (const f of activeFriends()) { f.x = player.x + 30 * (f.n - 1); f.y = player.y; }   // friends come along through portals
 }
 
 // ── UPDATE: PLAYER ────────────────────────────────────────────
 function updatePlayer() {
     if (state.won || state.levelComplete || state.gamePhase !== 'playing') return;
 
-    const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1) * mountSpeed();
+    const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1) * mountSpeed() * playerSpeedFactor();
     let dx = 0, dy = 0;
     if (!state.shopOpen && !state.awardsOpen && !menu) {
         const arrows = !p2.active;   // with 2 players, the arrow keys belong to Player 2
@@ -3837,7 +3905,7 @@ function updatePlayer() {
     if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; state.walkPhase += 0.32; }   // remember which way you're going
     dx *= spd; dy *= spd;
     if (fight.blocking) { dx *= 0.4; dy *= 0.4; }   // slow while holding your shield up
-    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.mount === 'kart') {
+    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.mount === 'kart' || mod('lowGravity')) {
         // Slippery ice / floaty space: you speed up and slow down gently
         const grip = state.mount === 'kart' ? 0.12 : state.room === ROOM.ICE ? 0.05 : 0.035;
         state.vx = (state.vx || 0) + (dx - (state.vx || 0)) * grip;
@@ -3894,7 +3962,7 @@ function updatePlayer() {
     // ── CAVE TIMER ─────────────────────────────────────────────
     if (isPlayerPhysicallyInCave()) {
         state.caveTimer++;
-        if (state.caveTimer >= CAVE_MAX_FRAMES) {
+        if (state.caveTimer >= caveMax()) {
             state.caveProtectionExpired = true;
         }
     } else {
@@ -3934,11 +4002,12 @@ function isShieldedAgainst(enemyType) {
 
 // Hurts a bad guy; returns true if it was defeated
 function hitEnemy(e, power, bonus = 0) {
-    const dmg = weaponDamage(power, e.type) + bonus;
+    let dmg = weaponDamage(power, e.type) + bonus;
+    if (mod('oneHit') && !BOSS_TYPES.includes(e.type)) dmg = Math.max(dmg, e.hp);   // 💥 One-Hit Wonder
     e.hp -= dmg;
     e.hitFlash = 8;
     const strong = dmg >= DAMAGE_STRONG;
-    spawnFloatText(e.x, e.y - e.r - 8, strong ? `-${dmg} SUPER HIT!` : `-${dmg}`, strong ? '#FFEE44' : '#FFFFFF');
+    if (settings.damageNumbers) spawnFloatText(e.x, e.y - e.r - 8, strong ? `-${dmg} SUPER HIT!` : `-${dmg}`, strong ? '#FFEE44' : '#FFFFFF');
     spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, strong ? 10 : 4);
     if (e.hp > 0) { sfx(strong ? 'superHit' : 'hit'); return false; }
     spawnParticles(e.x, e.y, ENEMY_TYPES[e.type].color, 16);
@@ -3984,7 +4053,7 @@ function roomCoins() {
 
 // Reward for beating a bad guy: a coin, and sometimes a heart
 function dropLoot(e) {
-    const count = e.coinDrop || COINS_PER_KILL;
+    const count = (e.coinDrop || COINS_PER_KILL) * (mod('doubleCoins') ? 2 : 1);
     for (let i = 0; i < count; i++) {
         roomCoins().push({
             x: Math.max(30, Math.min(770, e.x + (Math.random() - 0.5) * 16 * count)),
@@ -4101,7 +4170,9 @@ function updateRoomEnemies() {
         if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
         if (e.frog) { moveFrog(e); continue; }   // frogs are harmless
         if (settings.creative) { moveFrog(e); continue; }   // Creative Mode: monsters just potter about
-        moveEnemy(e);
+        // Monster speed setting: slow skips some steps, fast takes extra ones
+        if (!(settings.monsterSpeed === 'slow' && frameNo % 3 === 0)) moveEnemy(e);
+        if (settings.monsterSpeed === 'fast' && frameNo % 2 === 0) moveEnemy(e);
         if (e.type === 'monkey' && !(e.flee > 0) && Math.hypot(e.x - player.x, e.y - player.y) < e.r + 16) {
             if (state.coins > 0) {   // 🐒 SNATCH!
                 state.coins--; e.stolen = (e.stolen || 0) + 1; e.coinDrop = (e.stolen * 2);
@@ -4526,8 +4597,9 @@ function updateEnemyProjectiles() {
         if (p.life <= 0 || p.x < 0 || p.x > 800 || p.y < 0 || p.y > 600) {
             enemyProjectiles.splice(i, 1); continue;
         }
-        if (p2.active && p2.down === 0 && Math.hypot(p.x - p2.x, p.y - p2.y) < p.r + 16) {
-            if (!isShieldedAgainst(p.enemyType)) hurtP2();
+        const friendHit = activeFriends().find(f => f.down === 0 && Math.hypot(p.x - f.x, p.y - f.y) < p.r + 16);
+        if (friendHit) {
+            if (!isShieldedAgainst(p.enemyType)) hurtFriend(friendHit);
             spawnParticles(p.x, p.y, p.color, 4);
             enemyProjectiles.splice(i, 1);
             continue;
@@ -5685,7 +5757,7 @@ function updateTown() {
         if (P.quiet) { P.timer = QUIET_NIGHT_FRAMES; showToast('🌙 A quiet night… no monsters tonight!', '#AABBFF'); }
         else         { respawnParadiseWave(); sfx('laugh'); }
     } else if (P.phase === 'night' && P.quiet && --P.timer <= 0) {
-        P.phase = 'day'; P.timer = DAY_FRAMES; P.quiet = false;
+        P.phase = 'day'; P.timer = dayFrames(); P.quiet = false;
         showToast('☀ Good morning, Paradise Island!', '#FFE066');
         maybeBirthday();
     }
@@ -5764,7 +5836,7 @@ function checkPickups() {
                 spawnParticles(c.x, c.y, '#FFD700', 14);
                 // Morning comes!
                 paradise.phase = 'day';
-                paradise.timer = DAY_FRAMES;
+                paradise.timer = dayFrames();
                 maybeBirthday();
             }
         }
@@ -6285,7 +6357,8 @@ function drawHell() {
         const telegraphing = d.telegraphTimer > 0;
         const flashOn      = telegraphing && Math.floor(Date.now() / 80) % 2 === 0;
 
-        drawDevil(d, telegraphing, flashOn);
+        if (mod('chickens')) { ctx.save(); ctx.translate(d.x, d.y); ctx.scale(3, 3); drawChicken(0, 0); ctx.restore(); }
+        else drawDevil(d, telegraphing, flashOn);
         if (d.frozen > 0) drawIceBlock(d.x, d.y, d.r * 0.85, d.frozen);
 
         // State label
@@ -6320,8 +6393,8 @@ function drawHell() {
 
     // Cave timer warning
     if (isPlayerPhysicallyInCave() && state.caveTimer > 0) {
-        const frac = state.caveTimer / CAVE_MAX_FRAMES;
-        const secsLeft = Math.max(0, Math.ceil((CAVE_MAX_FRAMES - state.caveTimer) / 60));
+        const frac = state.caveTimer / caveMax();
+        const secsLeft = Math.max(0, Math.ceil((caveMax() - state.caveTimer) / 60));
         if (frac >= 0.5) {
             const flash = state.caveProtectionExpired ? (Math.floor(Date.now() / 200) % 2 === 0) : true;
             ctx.fillStyle = state.caveProtectionExpired
@@ -6355,6 +6428,19 @@ function drawFrog(e) {
 }
 
 function drawEnemy(e, t) {
+    if (mod('chickens') && !e.hidden) {   // 🐔 Chicken Monsters mod
+        const k = Math.max(0.8, e.r / 14) * (mod('tinyMonsters') ? 0.5 : 1);
+        ctx.save(); ctx.translate(e.x, e.y); ctx.scale(k, k); drawChicken(0, 0); ctx.restore();
+        return;
+    }
+    if (mod('tinyMonsters')) {   // 🐜 Tiny Monsters mod
+        ctx.save(); ctx.translate(e.x, e.y); ctx.scale(0.5, 0.5); ctx.translate(-e.x, -e.y); drawEnemyAir(e, t); ctx.restore();
+        return;
+    }
+    drawEnemyAir(e, t);
+}
+
+function drawEnemyAir(e, t) {
     if (e.air > 0) {   // flying up from an uppercut
         ctx.save(); ctx.translate(0, -Math.sin((e.air / 45) * Math.PI) * 40); drawEnemyInner(e, t); ctx.restore();
         return;
@@ -7745,7 +7831,7 @@ function drawInsideCave() {
     glow.addColorStop(0, 'rgba(255,170,90,0.12)'); glow.addColorStop(1, 'rgba(255,170,90,0)');
     ctx.fillStyle = glow; ctx.fillRect(c.x - 20, c.y - 20, c.w + 40, c.h + 40);
     // How long you can stay hidden
-    const secs = Math.max(0, Math.ceil((CAVE_MAX_FRAMES - state.caveTimer) / 60));
+    const secs = Math.max(0, Math.ceil((caveMax() - state.caveTimer) / 60));
     ctx.fillStyle = state.caveProtectionExpired ? '#FF7744' : '#FFD08A'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center';
     ctx.fillText(state.caveProtectionExpired ? '⚠ The Devil found you — get out of the cave!' : `🕳 Hiding in the cave… the Devil can't see you (${secs}s)`,
                  400, c.y > 300 ? c.y - 24 : c.y + c.h + 34);
@@ -7937,33 +8023,34 @@ function drawHuman(x, y, k, o) {
     shade.addColorStop(0, 'rgba(255,255,255,0.18)'); shade.addColorStop(1, 'rgba(0,0,0,0.22)');
     ctx.fillStyle = shade; pathRoundRect(x - 8 * k, y - 8.5 * k, 16 * k, 14 * k, 3.5 * k); ctx.fill();
     // Neck, head and ears
-    const hy = y - 16 * k;
+    const hk = k * (mod('bigHead') ? 1.8 : 1);   // 🗿 Big Heads mod
+    const hy = y - 16 * k - (hk - k) * 6;
     ctx.fillStyle = skin;
     ctx.fillRect(x - 2 * k, y - 11 * k, 4 * k, 3 * k);
-    ctx.beginPath(); ctx.arc(x - 6.4 * k, hy + 0.5 * k, 1.7 * k, 0, Math.PI * 2); ctx.arc(x + 6.4 * k, hy + 0.5 * k, 1.7 * k, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(x, hy, 6.4 * k, 7.2 * k, 0, 0, Math.PI * 2); ctx.fill();
-    const face = ctx.createRadialGradient(x - 2 * k, hy - 2 * k, 1, x, hy, 7.5 * k);
+    ctx.beginPath(); ctx.arc(x - 6.4 * hk, hy + 0.5 * hk, 1.7 * hk, 0, Math.PI * 2); ctx.arc(x + 6.4 * hk, hy + 0.5 * hk, 1.7 * hk, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x, hy, 6.4 * hk, 7.2 * hk, 0, 0, Math.PI * 2); ctx.fill();
+    const face = ctx.createRadialGradient(x - 2 * hk, hy - 2 * hk, 1, x, hy, 7.5 * hk);
     face.addColorStop(0, 'rgba(255,255,255,0.15)'); face.addColorStop(1, 'rgba(120,60,30,0.18)');
-    ctx.fillStyle = face; ctx.beginPath(); ctx.ellipse(x, hy, 6.4 * k, 7.2 * k, 0, 0, Math.PI * 2); ctx.fill();
-    drawHair(x, hy, k, o.hairStyle, o.hair || '#5A3A1E');
+    ctx.fillStyle = face; ctx.beginPath(); ctx.ellipse(x, hy, 6.4 * hk, 7.2 * hk, 0, 0, Math.PI * 2); ctx.fill();
+    drawHair(x, hy, hk, o.hairStyle, o.hair || '#5A3A1E');
     if (o.noFace) return;
     // Face: eyes with whites, eyebrows, nose, smile, rosy cheeks
     ctx.fillStyle = '#FFFFFF';
-    ctx.beginPath(); ctx.ellipse(x - 2.6 * k, hy - 0.5 * k, 1.8 * k, 1.4 * k, 0, 0, Math.PI * 2); ctx.ellipse(x + 2.6 * k, hy - 0.5 * k, 1.8 * k, 1.4 * k, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x - 2.6 * hk, hy - 0.5 * hk, 1.8 * hk, 1.4 * hk, 0, 0, Math.PI * 2); ctx.ellipse(x + 2.6 * hk, hy - 0.5 * hk, 1.8 * hk, 1.4 * hk, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = o.eyes || '#3A2A1A';
-    ctx.beginPath(); ctx.arc(x - 2.4 * k, hy - 0.4 * k, 1 * k, 0, Math.PI * 2); ctx.arc(x + 2.8 * k, hy - 0.4 * k, 1 * k, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = o.hair || '#5A3A1E'; ctx.lineWidth = 0.9 * k;
-    ctx.beginPath(); ctx.moveTo(x - 4.2 * k, hy - 2.6 * k); ctx.lineTo(x - 1.2 * k, hy - 2.9 * k); ctx.moveTo(x + 1.2 * k, hy - 2.9 * k); ctx.lineTo(x + 4.2 * k, hy - 2.6 * k); ctx.stroke();
-    ctx.strokeStyle = 'rgba(150,80,50,0.6)'; ctx.lineWidth = 0.8 * k;
-    ctx.beginPath(); ctx.moveTo(x + 0.2 * k, hy + 0.5 * k); ctx.lineTo(x + 0.8 * k, hy + 2.3 * k); ctx.lineTo(x - 0.4 * k, hy + 2.4 * k); ctx.stroke();
-    ctx.strokeStyle = '#8A3A2A'; ctx.lineWidth = 1 * k;
-    ctx.beginPath(); ctx.arc(x, hy + 3 * k, 2 * k, 0.2, Math.PI - 0.2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x - 2.4 * hk, hy - 0.4 * hk, 1 * hk, 0, Math.PI * 2); ctx.arc(x + 2.8 * hk, hy - 0.4 * hk, 1 * hk, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = o.hair || '#5A3A1E'; ctx.lineWidth = 0.9 * hk;
+    ctx.beginPath(); ctx.moveTo(x - 4.2 * hk, hy - 2.6 * hk); ctx.lineTo(x - 1.2 * hk, hy - 2.9 * hk); ctx.moveTo(x + 1.2 * hk, hy - 2.9 * hk); ctx.lineTo(x + 4.2 * hk, hy - 2.6 * hk); ctx.stroke();
+    ctx.strokeStyle = 'rgba(150,80,50,0.6)'; ctx.lineWidth = 0.8 * hk;
+    ctx.beginPath(); ctx.moveTo(x + 0.2 * hk, hy + 0.5 * hk); ctx.lineTo(x + 0.8 * hk, hy + 2.3 * hk); ctx.lineTo(x - 0.4 * hk, hy + 2.4 * hk); ctx.stroke();
+    ctx.strokeStyle = '#8A3A2A'; ctx.lineWidth = 1 * hk;
+    ctx.beginPath(); ctx.arc(x, hy + 3 * hk, 2 * hk, 0.2, Math.PI - 0.2); ctx.stroke();
     ctx.fillStyle = 'rgba(255,120,120,0.25)';
-    ctx.beginPath(); ctx.arc(x - 4 * k, hy + 2.2 * k, 1.5 * k, 0, Math.PI * 2); ctx.arc(x + 4 * k, hy + 2.2 * k, 1.5 * k, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x - 4 * hk, hy + 2.2 * hk, 1.5 * hk, 0, Math.PI * 2); ctx.arc(x + 4 * hk, hy + 2.2 * hk, 1.5 * hk, 0, Math.PI * 2); ctx.fill();
     if (o.beard) {
         ctx.fillStyle = o.beard;
-        ctx.beginPath(); ctx.moveTo(x - 5.5 * k, hy + 1.5 * k); ctx.quadraticCurveTo(x, hy + 11 * k, x + 5.5 * k, hy + 1.5 * k);
-        ctx.quadraticCurveTo(x, hy + 5.5 * k, x - 5.5 * k, hy + 1.5 * k); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x - 5.5 * hk, hy + 1.5 * hk); ctx.quadraticCurveTo(x, hy + 11 * hk, x + 5.5 * hk, hy + 1.5 * hk);
+        ctx.quadraticCurveTo(x, hy + 5.5 * hk, x - 5.5 * hk, hy + 1.5 * hk); ctx.fill();
     }
 }
 
@@ -8302,11 +8389,11 @@ function drawHUD() {
     for (let i = 0; i < maxHp; i++) hearts += i < state.playerHp ? '❤' : '♡';
     ctx.fillStyle = '#FF4444';
     ctx.fillText(hearts, 400, 20);
-    if (p2.active) {   // Player 2's hearts
-        ctx.fillStyle = '#FF8844'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
-        ctx.fillText('P2 ' + (p2.down > 0 ? '💤' : '❤'.repeat(Math.max(0, p2.hp)) + '♡'.repeat(Math.max(0, 3 - p2.hp))), 446, 20);
+    activeFriends().forEach((f, i) => {   // friends' hearts
+        ctx.fillStyle = f.color; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'left';
+        ctx.fillText(`P${f.n} ` + (f.down > 0 ? '💤' : '❤'.repeat(Math.max(0, f.hp)) + '♡'.repeat(Math.max(0, 3 - f.hp))), 446 + i * 66, 20);
         ctx.textAlign = 'center';
-    }
+    });
 
     // Room name + Level
     const names = { void: 'THE VOID', hell: 'HELL', paradise: 'PARADISE ISLAND', secret: '✨ SECRET GOLDEN ROOM ✨', underground: 'UNDERGROUND CAVES', heaven: '☁ HEAVEN ☁', house: '🏠 YOUR HOME',
@@ -8679,6 +8766,7 @@ function drawShop() {
 
 // ── DRAW: CONTROLS ────────────────────────────────────────────
 function drawControls() {
+    if (!settings.hints) return;
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
     const hint = lastInput === 'pad'   ? 'Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back'
