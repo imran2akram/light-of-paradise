@@ -6,8 +6,8 @@
     <title>The Light of Paradise</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: Arial, sans-serif; overflow: hidden; }
-        canvas { display: block; border: 2px solid #333; cursor: pointer; max-width: 100%; max-height: 100vh; height: auto; touch-action: none; }
+        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; font-family: Arial, sans-serif; overflow: hidden; }
+        canvas { display: block; cursor: pointer; touch-action: none; }
 
         #videoOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -42,8 +42,25 @@
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-canvas.width  = 800;
-canvas.height = 600;
+
+// ── SCREEN SIZE ───────────────────────────────────────────────
+// The game always thinks in 800×600. The canvas is stretched to fill the
+// window (keeping its shape), and drawn with more real pixels on big or
+// sharp screens so it stays crisp instead of blurry.
+const GAME_W = 800, GAME_H = 600;
+const MAX_RENDER_SCALE = 3;   // more than this gets slow on big 4K screens
+let renderScale = 1;
+
+function fitCanvas() {
+    const fit = Math.min(window.innerWidth / GAME_W, window.innerHeight / GAME_H);
+    canvas.style.width  = Math.floor(GAME_W * fit) + 'px';
+    canvas.style.height = Math.floor(GAME_H * fit) + 'px';
+    renderScale = Math.max(1, Math.min(MAX_RENDER_SCALE, fit * (window.devicePixelRatio || 1)));
+    canvas.width  = Math.round(GAME_W * renderScale);
+    canvas.height = Math.round(GAME_H * renderScale);
+}
+window.addEventListener('resize', fitCanvas);
+fitCanvas();
 
 // ── VIDEO INTRO ───────────────────────────────────────────────
 let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
@@ -1296,9 +1313,9 @@ const VJUMP  = { x: 560, y: 405, r: 20 };
 
 function canvasPos(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (canvas.width  / rect.width);
-    const y = (clientY - rect.top)  * (canvas.height / rect.height);
-    return settings.upsideDown ? { x: canvas.width - x, y: canvas.height - y } : { x, y };   // the picture is turned round
+    const x = (clientX - rect.left) * (GAME_W / rect.width);
+    const y = (clientY - rect.top)  * (GAME_H / rect.height);
+    return settings.upsideDown ? { x: GAME_W - x, y: GAME_H - y } : { x, y };   // the picture is turned round
 }
 
 canvas.addEventListener('touchstart', e => {
@@ -3834,8 +3851,8 @@ function updatePlayer() {
     }
 
     // Move, but blocks are solid (try each direction separately so you slide along walls)
-    const nx = Math.max(18, Math.min(canvas.width  - 18, player.x + dx));
-    const ny = Math.max(52, Math.min(canvas.height - 18, player.y + dy));
+    const nx = Math.max(18, Math.min(GAME_W - 18, player.x + dx));
+    const ny = Math.max(52, Math.min(GAME_H - 18, player.y + dy));
     const flying = state.mount === 'dragon' || settings.creative;   // dragons (and Creative Mode) fly over blocks
     if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
     if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
@@ -8774,6 +8791,7 @@ function update() {
 let lastSave = 0;
 
 function draw() {
+    ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);   // 800×600 drawing onto however many real pixels we have
     ctx.save();
     if (state.screenShake > 0) {
         const s = state.screenShake * 0.8;
