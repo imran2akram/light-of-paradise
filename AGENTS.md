@@ -8,7 +8,7 @@ This file gives AI coding agents the orientation they need to work on this codeb
 
 A browser action-adventure game written in **vanilla JavaScript** using the **HTML5 Canvas 2D API**. No framework, no bundler, no package manager. The entire game ships as one file: `index.html` (~7,500 lines).
 
-It is being designed by a 7-year-old (Goldwinner), so features are frequent, playful and kid-friendly. Keep text on screen short and simple.
+Features are requested by a young player, so they come often and should be playful and kid-friendly. Keep text on screen short and simple.
 
 Live site: `https://imran2akram.github.io/light-of-paradise/`. GitHub Pages deploys from the `main` branch directly; `.github/workflows/deploy.yml` targets `master` and never runs.
 
@@ -80,4 +80,4 @@ There is no test framework. Validate changes by:
 - Aligned object literals with spaces, 4-space indent, no tabs.
 - No external libraries, no `import`/`export`, no TypeScript.
 - All coordinates are logical canvas pixels (800×600).
-- Comments explain *why* in plain words (the owner is a kid and a parent).
+- Comments explain *why* in plain words.
