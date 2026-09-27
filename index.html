@@ -99,7 +99,8 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 // ── CONSTANTS ────────────────────────────────────────────────
 const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house',
                 SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space', ARENA: 'arena', MALL: 'mall',
-                UNDERWATER: 'underwater', DINO: 'dino', VOLCANO: 'volcano', JUNGLE: 'jungle' };
+                UNDERWATER: 'underwater', DINO: 'dino', VOLCANO: 'volcano', JUNGLE: 'jungle',
+                TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -155,6 +156,15 @@ const ENEMY_TYPES = {
     lavablob:  { name: 'Lava Blob',  hp: 3,  weakTo: POWER.WATER,     color: '#FF5522' },  // Volcano
     firedragon:{ name: 'Fire Dragon',hp: 35, weakTo: POWER.WATER,     color: '#DD3311' },  // Volcano boss
     monkey:    { name: 'Monkey',     hp: 3,  weakTo: POWER.LIGHTNING, color: '#8A5A2A' },  // Jungle: steals coins!
+    windup:    { name: 'Wind-up Mouse', hp: 3, weakTo: POWER.WATER,   color: '#AAAAAA' },  // Toy Land: zooms, then winds up
+    toysoldier:{ name: 'Toy Soldier', hp: 4, weakTo: POWER.BRIMSTONE, color: '#CC2222' },  // Toy Land: marches and pops corks
+    wizard:    { name: 'Evil Wizard', hp: 35, weakTo: POWER.LIGHTNING, color: '#7A3ACC' }, // Toy Land boss: teleports, chicken spell!
+    mummy:     { name: 'Mummy',      hp: 5,  weakTo: POWER.BRIMSTONE, color: '#E8DCC0' },  // Pyramid
+    scarab:    { name: 'Scarab Beetle', hp: 2, weakTo: POWER.ICE,     color: '#2A6A6A' },  // Pyramid: fast little beetles
+    mummyking: { name: 'Mummy King', hp: 35, weakTo: POWER.BRIMSTONE, color: '#FFD700' },  // Pyramid boss
+    candymonster:{ name: 'Candy Monster', hp: 30, weakTo: POWER.BRIMSTONE, color: '#FF66AA' }, // Candy Land boss: splits into jelly beans
+    jellybean: { name: 'Jelly Bean', hp: 1,  weakTo: POWER.BRIMSTONE, color: '#FF3388' },
+    bigdevil:  { name: "The Devil's Big Brother", hp: 45, weakTo: POWER.LIGHTNING, color: '#442266' },  // the secret final boss
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
@@ -300,6 +310,7 @@ function updateSpells() {
         }
         for (const c of roomCoins()) { if (!c.picked) { const d = Math.hypot(player.x - c.x, player.y - c.y) || 1; c.x += (player.x - c.x) / d * 6; c.y += (player.y - c.y) / d * 6; } }
     }
+    if (state.chicken > 0 && --state.chicken === 0) showToast('🧑 Phew, you are a person again!', '#FFFFFF', 120);
     if (state.cloneTimer > 0) {
         state.cloneTimer--;
         for (const c of clones) {
@@ -344,6 +355,23 @@ function drawSpells() {
         ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center';
         ctx.fillText(`⏸ TIME FROZEN ${Math.ceil(timeFreeze / 60)}s`, 400, 90);
     }
+}
+
+// 🐔 The Evil Wizard's chicken spell: cluck cluck for 8 seconds (you can't shoot!)
+function turnIntoChicken() {
+    state.chicken = 480;
+    showToast('🐔 BAWK! The Evil Wizard turned you into a CHICKEN!', '#FFE066', 200);
+    sfx('magic');
+}
+function drawChicken(x, y) {
+    ctx.save();
+    ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.ellipse(x, y, 14, 12, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 9, y - 12, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#E02A2A'; ctx.beginPath(); ctx.arc(x + 9, y - 20, 3, 0, Math.PI * 2); ctx.arc(x + 12, y - 19, 3, 0, Math.PI * 2); ctx.fill();   // comb
+    ctx.fillStyle = '#FFAA22'; ctx.beginPath(); ctx.moveTo(x + 15, y - 13); ctx.lineTo(x + 21, y - 11); ctx.lineTo(x + 15, y - 9); ctx.fill();
+    ctx.fillRect(x - 5, y + 11, 2, 7); ctx.fillRect(x + 3, y + 11, 2, 7);
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(x + 11, y - 13, 1.4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
 }
 
 // ── RIDES (Rita's Stable in the Mall; get on / off with V / the 🐴 button) ──
@@ -594,6 +622,7 @@ let state = {
     gotStarterBlocks:   true,
     // Island life
     furniture:          { bed: true },   // what's in your house
+    chicken:            0,               // frames left as a chicken 🐔
     lessonHealTimer:    0,
     garden:             [0, 0, 0, 0],    // when each pot was planted (Date.now()), 0 = empty
     lessons:            {},              // School lessons you've learned
@@ -724,6 +753,11 @@ function spend(cost) {
 // The main button: Space, A on a controller, or the on-screen SHOOT / DIG button
 function pressAction() {
     if (menu) return;
+    if (state.chicken > 0 && state.gamePhase === 'playing') {   // chickens can only cluck
+        tone(900, 0.08, 'square', 0.12, 700); tone(800, 0.1, 'square', 0.1, 600, 0.1);
+        spawnFloatText(player.x, player.y - 30, 'BAWK!', '#FFFFFF', 40);
+        return;
+    }
     if (race) { raceTap(); return; }
     if (nearRaceMaster() && state.gamePhase === 'playing') { startRace(); return; }
     if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
@@ -1418,7 +1452,8 @@ const PLACES = {
                make: () => ({ enemies: [], coins: [], voyage: VOYAGE_FRAMES, waveTimer: 120 }) },
     candy:   { name: '🍭 CANDY LAND', spawn: [120, 470], island: true,
                make: () => ({ coins: [],
-                   enemies: [0, 1, 2, 3, 4, 5].map(i => e0('gummy', 200 + (i % 3) * 200, 150 + Math.floor(i / 3) * 220, { hue: i * 60, hopTimer: i * 12 })),
+                   enemies: [...[0, 1, 2, 3, 4, 5].map(i => e0('gummy', 200 + (i % 3) * 200, 150 + Math.floor(i / 3) * 220, { hue: i * 60, hopTimer: i * 12 })),
+                             e0('candymonster', 620, 420, { r: 38, coinDrop: 25, hopTimer: 60 })],
                    lollipops: [0, 1, 2, 3, 4].map(i => ({ x: 150 + i * 130, y: 120 + (i % 2) * 330, picked: false })) }) },
     ice:     { name: '❄ THE ICE KINGDOM', spawn: [120, 470], island: true,
                make: () => ({ coins: [],
@@ -1440,7 +1475,8 @@ const PLACES = {
 // ⚔ BOSS RUSH: every boss, one after another (the gate is in the Void)
 const ARENA_GATE  = { x: 270, y: 545 };
 const ARENA_EXIT  = { x: 400, y: 578 };
-const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon'];
+const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon',
+                     'wizard', 'mummyking', 'candymonster', 'bigdevil'];
 const BOSS_RUSH   = [
     () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
     () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
@@ -1489,6 +1525,9 @@ const MALL_EXIT  = { x: 400, y: 578 };
 const MALL_SHOPS = [
     { id: 'magic',  name: '✨ MAGIC SHOP', keeper: 'Merlin', x: 140, awning: '#6A3AAA', coat: '#3A2A9A', hat: 'wizard', items: () => spellItems(), title: "✨ MERLIN'S MAGIC SHOP" },
     { id: 'stable', name: '🐴 STABLE',     keeper: 'Rita',   x: 300, awning: '#8A5A2A', coat: '#6A8A3A', hat: 'cowboy', items: () => mountItems(), title: "🐴 RITA'S STABLE — pick a ride!" },
+    { id: 'toys',   name: '🧸 TOY SHOP',   keeper: 'Tilly',  x: 460, awning: '#E04A8A', coat: '#FF88CC', hat: 'party',  title: '🧸 TILLY\'S TOY SHOP',
+      items: () => [{ icon: '🚪', name: 'Step into TOY LAND', desc: 'Toys come alive… and an Evil Wizard!', cost: 0, status: 'GO!',
+                      action: () => { menu = null; changeRoom(ROOM.TOY); showToast('🧸 Whoa! You shrank down into TOY LAND!', '#FFE066', 200); } }] },
 ];
 PLACES.mall = { name: '🏬 THE MALL', spawn: [400, 500], make: () => ({ enemies: [], coins: [] }) };
 
@@ -1555,6 +1594,23 @@ PLACES.jungle = { name: '🐒 THE JUNGLE TEMPLE', spawn: [120, 470], island: tru
     make: () => ({ coins: [], swing: null, trapTimer: 90, spikeTimer: 0, idolTaken: false,
                    enemies: [e0('monkey', 200, 150), e0('monkey', 650, 200), e0('monkey', 600, 480), e0('monkey', 150, 380)] }) };
 
+// 🧸 Toy Land (through the Toy Shop in the Mall), 🏜 Desert Pyramid (Captain Salty), ☁ Cloud City (hot air balloon in Heaven)
+const BALLOON      = { x: 180, y: 470 };   // in Heaven
+const TOY_EXIT     = { x: 400, y: 578 };
+const PYRAMID_WALLS = [{ x: 60, y: 200 }, { x: 740, y: 420 }];   // walk into the glowing hieroglyphs… secret rooms!
+const MAMA_BIRD    = { x: 400, y: 240 };
+PLACES.toy = { name: '🧸 TOY LAND', spawn: [400, 500],
+    make: () => ({ coins: [], enemies: [e0('windup', 200, 200, { dx: 3, dy: 0, windTimer: 90 }), e0('windup', 600, 380, { dx: -3, dy: 0, windTimer: 40 }),
+                                         e0('toysoldier', 180, 420), e0('toysoldier', 620, 180), e0('wizard', 400, 200, { r: 26, coinDrop: 25, teleTimer: 150, spellTimer: 100 })] }) };
+PLACES.pyramid = { name: '🏜 THE DESERT PYRAMID', spawn: [120, 470], island: true,
+    make: () => ({ coins: [], found: [false, false],
+                   enemies: [e0('mummy', 300, 200), e0('mummy', 550, 420), e0('scarab', 450, 150), e0('scarab', 650, 300), e0('scarab', 250, 400),
+                             e0('mummyking', 520, 250, { r: 32, coinDrop: 25, summonTimer: 360, wrapTimer: 120 })] }) };
+PLACES.cloudcity = { name: '☁ CLOUD CITY', spawn: [270, 470],
+    make: () => ({ coins: [], enemies: [], eggs: [0, 1, 2].map(() => ({ x: 100 + Math.random() * 600, y: 120 + Math.random() * 380, got: false })), returned: false,
+                   birds: [0, 1, 2, 3, 4].map(i => ({ x: 150 + i * 130, y: 200 + (i % 2) * 180, t: i })) }) };
+const BIRD_CHAT = ['Tweet tweet! Welcome to Cloud City!', 'Have you seen Mama Bird\'s eggs?', 'I love flying! 🐦', 'The clouds are so soft today!', 'Chirp! You can\'t fly? Poor thing!'];
+
 function inRectXY(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
 function spikesUp() { return place().spikeTimer % 120 < 50; }
 
@@ -1572,6 +1628,19 @@ function tryPlaceAction() {
         sfx('win'); giveAward('dinoRider');
         return true;
     }
+    if (state.room === ROOM.CLOUDCITY) {
+        const P = place();
+        if (Math.hypot(player.x - MAMA_BIRD.x, player.y - MAMA_BIRD.y) < 40) {
+            const got = P.eggs.filter(e => e.got).length;
+            if (got === 3 && !P.returned) {
+                P.returned = true; state.inv.diamond = invCount('diamond') + 3; addScore(200);
+                showToast('🐣 Mama Bird: "My eggs! THANK YOU!" (+3 diamonds, +200)', '#FFE066', 240); sfx('win'); giveAward('eggs');
+            } else showToast(P.returned ? '🐦 Mama Bird: "My babies are hatching! Thank you!"' : `🐦 Mama Bird: "I lost 3 eggs in the clouds! You found ${got}."`, '#FFFFFF', 200);
+            return true;
+        }
+        const bird = P.birds.find(b => Math.hypot(player.x - b.x, player.y - b.y) < 40);
+        if (bird) { showToast(`🐦 ${BIRD_CHAT[Math.floor(Math.random() * BIRD_CHAT.length)]}`, '#FFFFFF', 150); sfx('hoot'); return true; }
+    }
     const v = nearVine();
     if (v !== null && v >= 0) {
         place().swing = { from: VINES[v], to: VINES[1 - v], t: 0 };
@@ -1583,6 +1652,23 @@ function tryPlaceAction() {
 
 function updateNewPlaces() {
     const P = place();
+    if (state.room === ROOM.PYRAMID) {
+        PYRAMID_WALLS.forEach((w, i) => {
+            if (P.found[i] || Math.hypot(player.x - w.x, player.y - w.y) > 34) return;
+            P.found[i] = true;
+            const prize = i === 0 ? () => { state.inv.diamond = invCount('diamond') + 2; return '💎 2 diamonds'; } : () => { state.playerHp = fullHearts(); state.bubble = true; addScore(150); return '❤ full hearts, a Shield Bubble and 150 points'; };
+            showToast(`🏺 A SECRET TREASURE ROOM! You found ${prize()}!`, '#FFE066', 240);
+            spawnParticles(w.x, w.y, '#FFD700', 20); sfx('win'); giveAward('pyramidSecret');
+        });
+    }
+    if (state.room === ROOM.CLOUDCITY) {
+        for (const b of P.birds) { b.t += 0.01; b.x += Math.sin(b.t * 2) * 0.8; b.y += Math.cos(b.t * 3) * 0.4; }
+        for (const e of P.eggs) {
+            if (e.got || Math.hypot(player.x - e.x, player.y - e.y) > 22) continue;
+            e.got = true; sfx('coin');
+            spawnFloatText(e.x, e.y - 20, `🥚 Found an egg! (${P.eggs.filter(x => x.got).length}/3)`, '#FFFFFF', 80);
+        }
+    }
     if (state.room === ROOM.VOLCANO) {
         // Hot lava hurts (unless you fly over it on your dragon)
         if (state.mount !== 'dragon' && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
@@ -1627,6 +1713,50 @@ function updateNewPlaces() {
     }
 }
 
+function paintToy(g, R) {
+    for (let y = 46; y < 600; y += 50) for (let x = 0; x < 800; x += 50) {   // play-mat squares
+        g.fillStyle = ['#FFD84A', '#4AC8FF', '#FF6A8A', '#7AE07A'][(x / 50 + (y - 46) / 50) % 4]; g.fillRect(x, y, 50, 50);
+    }
+    g.fillStyle = 'rgba(255,255,255,0.25)'; for (let i = 0; i < 40; i++) g.fillRect(R() * 800, 46 + R() * 554, 20, 3);
+    g.strokeStyle = '#8A5A2A'; g.lineWidth = 6; g.beginPath(); g.ellipse(400, 330, 330, 230, 0, 0, Math.PI * 2); g.stroke();   // train track
+    g.strokeStyle = '#555'; g.lineWidth = 2; for (let k = 0; k < 60; k++) { const a = k / 60 * Math.PI * 2; g.beginPath(); g.moveTo(400 + Math.cos(a) * 322, 330 + Math.sin(a) * 222); g.lineTo(400 + Math.cos(a) * 338, 330 + Math.sin(a) * 238); g.stroke(); }
+    for (const [x, y, c, l] of [[80, 120, '#E03030', 'A'], [720, 140, '#3060E0', 'B'], [90, 520, '#30A040', 'C'], [700, 520, '#FFAA22', 'D']]) {   // big toy blocks
+        g.fillStyle = c; g.fillRect(x - 22, y - 22, 44, 44); g.fillStyle = '#FFF'; g.font = 'bold 26px Arial'; g.textAlign = 'center'; g.fillText(l, x, y + 9);
+    }
+}
+function paintPyramid(g, R) {
+    g.fillStyle = '#C8A060'; g.fillRect(0, 0, 800, 600);
+    for (let y = 46; y < 600; y += 24) for (let x = (y / 24) % 2 ? -30 : 0; x < 800; x += 60) { g.fillStyle = `hsl(38, ${40 + R() * 10}%, ${50 + R() * 10}%)`; g.fillRect(x + 1, y + 1, 58, 22); }   // sandstone blocks
+    g.fillStyle = 'rgba(80,50,20,0.35)';
+    for (let i = 0; i < 40; i++) { const sym = ['𓀀', '𓁐', '𓃾', '𓆉', '𓇳', '𓋹'][Math.floor(R() * 6)]; g.font = '16px Arial'; g.fillText(sym, R() * 780, 60 + R() * 530); }
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, 46, 800, 30);
+}
+function paintCloudCity(g, R) {
+    const sky = g.createLinearGradient(0, 0, 0, 600);
+    sky.addColorStop(0, '#6AB8FF'); sky.addColorStop(1, '#E8F4FF');
+    g.fillStyle = sky; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 60; i++) { g.fillStyle = 'rgba(255,255,255,0.85)'; g.beginPath(); g.arc(R() * 800, 300 + R() * 320, 30 + R() * 50, 0, Math.PI * 2); g.fill(); }   // cloud ground
+    for (const [x, y, c] of [[120, 160, '#FFB0C8'], [640, 150, '#B0D8FF'], [680, 400, '#C8FFB0'], [300, 420, '#FFE8A0']]) {   // round cloud houses
+        g.fillStyle = '#FFFFFF'; g.beginPath(); g.arc(x, y, 34, 0, Math.PI * 2); g.fill();
+        g.fillStyle = c; g.beginPath(); g.arc(x, y - 30, 20, Math.PI, 0); g.fill();
+        g.fillStyle = '#8AB8E0'; g.beginPath(); g.arc(x, y + 14, 9, Math.PI, 0); g.fill(); g.fillRect(x - 9, y + 14, 18, 14);
+    }
+    ['#FF4466', '#FFAA22', '#FFEE33', '#44DD66', '#44AAFF', '#AA66FF'].forEach((c, i) => { g.strokeStyle = c; g.lineWidth = 5; g.beginPath(); g.arc(400, 560, 260 - i * 5, Math.PI * 1.1, Math.PI * 1.9); g.stroke(); });   // rainbow bridge
+}
+
+function drawBalloon(x, y, text) {
+    const bob = Math.sin(Date.now() / 600) * 4;
+    ctx.save();
+    ctx.strokeStyle = '#6B3E1E'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x - 14, y - 26 + bob); ctx.lineTo(x - 9, y - 4 + bob); ctx.moveTo(x + 14, y - 26 + bob); ctx.lineTo(x + 9, y - 4 + bob); ctx.stroke();
+    ['#FF4466', '#FFDD33', '#44AAFF', '#FF4466'].forEach((c, i) => {
+        ctx.fillStyle = c; ctx.beginPath(); ctx.ellipse(x - 18 + i * 12, y - 52 + bob, 8, 28, 0, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.fillStyle = '#A0703A'; ctx.fillRect(x - 10, y - 6 + bob, 20, 14);   // basket
+    ctx.fillStyle = '#446'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(`🎈 ${text}`, x, y + 24);
+    ctx.restore();
+}
+
 function paintUnderwater(g, R) {
     const sea = g.createLinearGradient(0, 0, 0, 600);
     sea.addColorStop(0, '#2A8AC8'); sea.addColorStop(1, '#0A2A5A');
@@ -1668,6 +1798,51 @@ function drawNewPlaces() {
     const t = Date.now() / 1000, P = place();
     const label = (text, x, y, col = 'rgba(255,255,255,0.9)') => { ctx.fillStyle = col; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
     const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    if (state.room === ROOM.TOY) {
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(TOY_EXIT.x - 24, 560, 48, 40);
+        label('🚪 Back to the Mall', TOY_EXIT.x, 556, '#223');
+        for (let k = 0; k < 3; k++) {   // a toy train going round and round
+            const a = t * 0.6 + k * 0.25, tx = 400 + Math.cos(a) * 330, ty = 330 + Math.sin(a) * 230;
+            ctx.fillStyle = ['#E03030', '#3060E0', '#30A040'][k]; ctx.fillRect(tx - 12, ty - 8, 24, 16);
+            ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(tx - 7, ty + 9, 4, 0, Math.PI * 2); ctx.arc(tx + 7, ty + 9, 4, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+    if (state.room === ROOM.PYRAMID) {
+        PYRAMID_WALLS.forEach((w, i) => {
+            if (P.found[i]) { ctx.fillStyle = '#0A0602'; ctx.fillRect(w.x - 26, w.y - 30, 52, 60); label('🏺 empty now', w.x, w.y + 44, '#FFE8A0'); return; }
+            const glow = Math.hypot(player.x - w.x, player.y - w.y) < 150 ? 0.5 + Math.sin(t * 4) * 0.3 : 0.15;
+            ctx.fillStyle = `rgba(255,220,120,${glow})`; ctx.font = '18px Arial'; ctx.textAlign = 'center';
+            ctx.fillText('𓂀', w.x, w.y); ctx.fillText('𓆣', w.x, w.y + 22);
+        });
+        for (const [x, y] of [[40, 110], [760, 110], [40, 560], [760, 300]]) {   // flickering torches
+            ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x - 2, y, 4, 16);
+            ctx.fillStyle = `rgba(255,${160 + Math.random() * 80},40,0.9)`; ctx.beginPath(); ctx.ellipse(x, y - 4, 4, 8 + Math.random() * 2, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        label('Psst… some glowing hieroglyphs hide SECRET ROOMS. Walk into them!', 400, 588, '#FFE8A0');
+    }
+    if (state.room === ROOM.CLOUDCITY) {
+        for (const b of P.birds) {   // friendly birds flapping about
+            const flap = Math.sin(t * 10 + b.t) * 5;
+            ctx.fillStyle = ['#FF6A4A', '#4AAAFF', '#FFD24A', '#6AD86A', '#CC88FF'][P.birds.indexOf(b)];
+            ctx.beginPath(); ctx.ellipse(b.x, b.y, 12, 9, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(b.x - 4, b.y); ctx.lineTo(b.x - 16, b.y - 8 - flap); ctx.lineTo(b.x + 2, b.y - 2); ctx.fill();
+            ctx.fillStyle = '#FFAA22'; ctx.beginPath(); ctx.moveTo(b.x + 11, b.y - 2); ctx.lineTo(b.x + 18, b.y); ctx.lineTo(b.x + 11, b.y + 2); ctx.fill();
+            ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(b.x + 6, b.y - 3, 1.6, 0, Math.PI * 2); ctx.fill();
+        }
+        // Mama Bird on her nest
+        ctx.fillStyle = '#8A5A2A'; ctx.beginPath(); ctx.ellipse(MAMA_BIRD.x, MAMA_BIRD.y + 14, 30, 11, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FF88AA'; ctx.beginPath(); ctx.ellipse(MAMA_BIRD.x, MAMA_BIRD.y, 18, 14, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFAA22'; ctx.beginPath(); ctx.moveTo(MAMA_BIRD.x + 16, MAMA_BIRD.y - 4); ctx.lineTo(MAMA_BIRD.x + 26, MAMA_BIRD.y); ctx.lineTo(MAMA_BIRD.x + 16, MAMA_BIRD.y + 3); ctx.fill();
+        label('🐦 Mama Bird', MAMA_BIRD.x, MAMA_BIRD.y + 38, '#446');
+        if (P.returned) for (let k = 0; k < 3; k++) { ctx.fillStyle = '#FFE066'; ctx.beginPath(); ctx.arc(MAMA_BIRD.x - 14 + k * 14, MAMA_BIRD.y + 6, 5, 0, Math.PI * 2); ctx.fill(); }   // baby chicks!
+        for (const e of P.eggs) {
+            if (e.got) continue;
+            ctx.fillStyle = '#FFF8E8'; ctx.strokeStyle = '#C8B898'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.ellipse(e.x, e.y + Math.sin(t * 3 + e.x) * 2, 7, 9, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+        if (Math.hypot(player.x - MAMA_BIRD.x, player.y - MAMA_BIRD.y) < 40) drawSpeech(MAMA_BIRD, `${verb}: Talk to Mama Bird`);
+        drawBalloon(BALLOON.x, BALLOON.y, 'Balloon back to Heaven');
+    }
     if (state.room === ROOM.UNDERWATER) {
         for (let k = 0; k < 14; k++) {   // bubbles rising and swaying seaweed
             const bx = (k * 61) % 800, by = 560 - ((t * 40 + k * 43) % 520);
@@ -1729,6 +1904,9 @@ function updatePlaceExits() {
     if (state.room === ROOM.VOID && near(ROCKET, 28))        { showToast('🚀 3… 2… 1… BLAST OFF!', '#FFE066'); sfx('boom'); changeRoom(ROOM.SPACE); return true; }
     if (state.room === ROOM.SPACE && near(ROCKET, 28))       { showToast('🚀 Back home to the Void!', '#FFE066'); changeRoom(ROOM.VOID); player.x = ROCKET.x + 60; return true; }
     if (state.room === ROOM.HEAVEN && near(SKY_STAIRS, 30))  { changeRoom(ROOM.SKY); return true; }
+    if (state.room === ROOM.HEAVEN && near(BALLOON, 30))     { showToast('🎈 Up, up and away to Cloud City!', '#AADDFF', 160); changeRoom(ROOM.CLOUDCITY); return true; }
+    if (state.room === ROOM.CLOUDCITY && near(BALLOON, 30))  { changeRoom(ROOM.HEAVEN); player.x = BALLOON.x + 60; player.y = BALLOON.y - 20; return true; }
+    if (state.room === ROOM.TOY && near(TOY_EXIT, 26))       { changeRoom(ROOM.MALL); player.x = 460; player.y = 300; return true; }
     if (state.room === ROOM.VOID && near(MALL_DOOR, 24))     { changeRoom(ROOM.MALL); showToast('🏬 Welcome to the Mall! Walk up to a shop.', '#FFE066', 160); return true; }
     if (state.room === ROOM.MALL && near(MALL_EXIT, 26))     { changeRoom(ROOM.VOID); player.x = MALL_DOOR.x + 40; player.y = MALL_DOOR.y + 50; return true; }
     if (state.room === ROOM.VOID && near(ARENA_GATE, 26))    { changeRoom(ROOM.ARENA); showToast('⚔ BOSS RUSH! Beat all 6 bosses in a row!', '#FF8866', 200); return true; }
@@ -1820,6 +1998,7 @@ function sailItems() {
         trip(ROOM.DINO,    '🦕', 'Raptors — and a dinosaur you can ride!'),
         trip(ROOM.VOLCANO, '🌋', 'Lava rivers and the Fire Dragon'),
         trip(ROOM.JUNGLE,  '🐒', 'Vines, traps and a golden idol'),
+        trip(ROOM.PYRAMID, '🏜', 'Mummies, scarabs and secret rooms'),
         { icon: '🟡', name: 'Submarine Dive', desc: 'Sharks, jellyfish and a Giant Octopus', cost: 0, status: 'DIVE!',
           action: () => { menu = null; changeRoom(ROOM.UNDERWATER); showToast('🟡 Diving down in the yellow submarine! 🌊', '#88DDFF', 180); giveAward('diver'); } },
     ];
@@ -2125,6 +2304,7 @@ function drawAngel(x, y, big = false) {
 }
 
 function drawHeaven() {
+    drawBalloon(BALLOON.x, BALLOON.y, 'To CLOUD CITY');
     // Cloud stairs up to the Sky Castle
     for (let k = 0; k < 5; k++) {
         ctx.fillStyle = `rgba(255,255,255,${0.95 - k * 0.1})`;
@@ -2182,6 +2362,9 @@ const PORTALS = {
     arena:   [],
     mall:    [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
+    toy:     [{ x: 740, y: 120, shape: 'star'    }],
+    pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
+    cloudcity: [{ x: 740, y: 470, shape: 'circle' }],
     dino:    [{ x: 740, y: 120, shape: 'star'    }],
     volcano: [{ x: 740, y: 470, shape: 'diamond' }],
     jungle:  [{ x: 740, y: 520, shape: 'hexagon' }],
@@ -2322,6 +2505,15 @@ const SONGS = {
     secret: { bpm: 100, lead: 'triangle',   // sparkly treasure music
         melody: [84, 88, 91, 88, 96, 0, 91, 0, 86, 89, 93, 89, 98, 0, 93, 0,  84, 88, 91, 96, 95, 91, 88, 0, 86, 91, 95, 98, 96, 0, 0, 0],
         bass:   [48, 0, 55, 0, 52, 0, 55, 0, 50, 0, 57, 0, 53, 0, 57, 0,  48, 0, 55, 0, 52, 0, 55, 0, 55, 0, 50, 0, 48, 0, 0, 0] },
+    toy: { bpm: 132, lead: 'square',   // music-box march
+        melody: [72, 72, 79, 79, 81, 81, 79, 0, 77, 77, 76, 76, 74, 74, 72, 0,  79, 79, 77, 77, 76, 76, 74, 0, 79, 79, 77, 77, 76, 76, 74, 0],
+        bass:   [48, 0, 55, 0, 53, 0, 55, 0, 53, 0, 52, 0, 50, 0, 48, 0,  55, 0, 53, 0, 52, 0, 50, 0, 55, 0, 53, 0, 52, 0, 50, 0] },
+    pyramid: { bpm: 108, lead: 'sawtooth',   // mysterious desert
+        melody: [62, 63, 66, 67, 69, 0, 67, 66, 63, 0, 62, 0, 0, 0, 0, 0,  62, 63, 66, 67, 70, 69, 67, 66, 67, 0, 63, 62, 0, 0, 0, 0],
+        bass:   [38, 0, 0, 38, 0, 0, 38, 0, 38, 0, 0, 38, 0, 0, 37, 0,  38, 0, 0, 38, 0, 0, 38, 0, 38, 0, 0, 38, 0, 0, 37, 0] },
+    cloudcity: { bpm: 96, lead: 'triangle',   // light and floaty
+        melody: [79, 0, 83, 0, 86, 0, 84, 83, 81, 0, 79, 0, 76, 0, 0, 0,  79, 0, 83, 0, 88, 0, 86, 84, 83, 0, 81, 0, 79, 0, 0, 0],
+        bass:   [55, 0, 0, 0, 59, 0, 0, 0, 57, 0, 0, 0, 55, 0, 0, 0,  55, 0, 0, 0, 60, 0, 0, 0, 62, 0, 0, 0, 55, 0, 0, 0] },
     underwater: { bpm: 70, lead: 'sine',   // bubbly and dreamy
         melody: [67, 0, 71, 0, 74, 0, 72, 71, 69, 0, 0, 0, 67, 0, 64, 0,  67, 0, 71, 0, 76, 0, 74, 72, 71, 0, 0, 0, 0, 0, 0, 0],
         bass:   [43, 0, 0, 0, 50, 0, 0, 0, 45, 0, 0, 0, 48, 0, 0, 0,  43, 0, 0, 0, 52, 0, 0, 0, 50, 0, 0, 0, 43, 0, 0, 0] },
@@ -2504,6 +2696,12 @@ const AWARDS = [
     { id: 'dinoRider',   icon: '🦕', name: 'Dino Rider',       desc: 'Tame a Triceratops' },
     { id: 'firedragon',  icon: '🔥', name: 'Dragon Tamer',     desc: 'Beat the Fire Dragon' },
     { id: 'idol',        icon: '🗿', name: 'Idol Hunter',      desc: 'Grab the Golden Idol' },
+    { id: 'wizard',      icon: '🧙', name: 'Wizard Beater',    desc: 'Beat the Evil Wizard' },
+    { id: 'mummyking',   icon: '🏺', name: 'Pharaoh Beater',   desc: 'Beat the Mummy King' },
+    { id: 'candymonster',icon: '🍬', name: 'Sugar Rush',       desc: 'Beat the Candy Monster' },
+    { id: 'bigBrother',  icon: '😈', name: 'REAL Hero',        desc: "Beat the Devil's Big Brother" },
+    { id: 'pyramidSecret', icon: '🏺', name: 'Tomb Raider',    desc: 'Find a secret pyramid room' },
+    { id: 'eggs',        icon: '🐣', name: 'Egg Finder',       desc: "Return Mama Bird's eggs" },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -3577,6 +3775,9 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
         if (e.type === 'king') giveAward('king');
         if (e.type === 'ghostking' || e.type === 'dragon' || e.type === 'shadow') giveAward(e.type);
         if (e.type === 'monkey' && e.stolen) showToast(`🐒 You got your coins back — and more! (+${e.coinDrop})`, '#FFE066', 150);
+        if (['wizard', 'mummyking', 'candymonster'].includes(e.type)) { giveAward(e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
+        if (e.type === 'wizard' && state.chicken) state.chicken = 0;
+        if (e.type === 'bigdevil') { giveAward('bigBrother'); state.won = true; showToast("🏆 YOU BEAT THE DEVIL'S BIG BROTHER!!!", '#FFD700', 300); }
         if (e.type === 'octopus' || e.type === 'firedragon') { giveAward(e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
         if (e.type === 'frostgiant' || e.type === 'thunderbird' || e.type === 'mothership') { giveAward(e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
         if (e.type === 'dragon') showToast('🐉 You beat the CAVE DRAGON!', '#FFD700', 200);
@@ -3586,6 +3787,9 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
     }
 
     if (e.type === 'king') kingSplit(e, e.alive ? 1 : 3);
+    if (e.type === 'candymonster' && spawnList().filter(x => x.type === 'jellybean' && x.alive).length < 8) {
+        for (let k = 0; k < (e.alive ? 1 : 4); k++) spawnList().push(e0('jellybean', e.x + (Math.random() - 0.5) * 40, e.y + (Math.random() - 0.5) * 40, { r: 7, emerge: 5, hue: Math.random() * 360, coinDrop: 1 }));
+    }
 
     let from = e;
     for (const o of jumps) {
@@ -3679,6 +3883,44 @@ function enemyShoot(e, speed, color, spread = [0]) {
 function moveEnemy(e) {
     const chase = (spd) => { const a = Math.atan2(player.y - e.y, player.x - e.x); e.x += Math.cos(a) * spd; e.y += Math.sin(a) * spd; e.walk = (e.walk || 0) + spd * 0.15; };
     if (e.type === 'pirate')   { chase(1.3); return; }
+    if (e.type === 'windup') {   // zooms in a straight line, then stops to wind up again
+        if (--e.windTimer <= 0) { e.windTimer = 110; const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 4.5; e.dy = Math.sin(a) * 4.5; }
+        if (e.windTimer > 50) { e.x += e.dx; e.y += e.dy; }
+        e.x = Math.max(30, Math.min(770, e.x)); e.y = Math.max(70, Math.min(570, e.y));
+        return;
+    }
+    if (e.type === 'toysoldier') { chase(0.8); if (Math.random() < 0.008) enemyShoot(e, 4.5, '#DDAA66'); return; }
+    if (e.type === 'mummy')      { chase(0.6); return; }
+    if (e.type === 'scarab')     { chase(2.1); e.x += Math.sin(Date.now() / 70 + e.home.x) * 1.2; return; }
+    if (e.type === 'jellybean')  { chase(2.0); return; }
+    if (e.type === 'wizard') {   // teleports about, throws magic orbs — and sometimes turns you into a CHICKEN!
+        if (--e.teleTimer <= 0) { e.teleTimer = 160; spawnParticles(e.x, e.y, '#AA66FF', 14); const s2 = randomSpawnSpot(160); e.x = s2.x; e.y = s2.y; spawnParticles(e.x, e.y, '#AA66FF', 14); sfx('magic'); }
+        if (--e.spellTimer <= 0) {
+            e.spellTimer = 110;
+            if (Math.random() < 0.25 && !state.chicken) { turnIntoChicken(); bolts.push({ x1: e.x, y1: e.y, x2: player.x, y2: player.y, life: 14 }); }
+            else enemyShoot(e, 4.5, '#CC66FF', [-0.25, 0, 0.25]);
+        }
+        return;
+    }
+    if (e.type === 'mummyking') {
+        chase(0.5);
+        if (--e.wrapTimer <= 0) { e.wrapTimer = 120; enemyShoot(e, 4, '#F0E6CC', [-0.3, 0, 0.3]); }
+        if (--e.summonTimer <= 0) { e.summonTimer = 360; spawnList().push(e0('mummy', e.x + 40, e.y, { emerge: 30 }), e0('scarab', e.x - 40, e.y, { emerge: 30 })); showToast('🏺 The Mummy King calls his servants!', '#FFE8A0', 120); }
+        return;
+    }
+    if (e.type === 'candymonster') {   // big bouncy blob of candy
+        if (--e.hopTimer <= 0) { e.hopTimer = 90; const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 3; e.dy = Math.sin(a) * 3; sfx('bigBoing'); }
+        e.x += e.dx; e.y += e.dy; e.dx *= 0.93; e.dy *= 0.93;
+        return;
+    }
+    if (e.type === 'bigdevil') {   // the Devil's BIG BROTHER
+        chase(1.1);
+        e.fireTimer = (e.fireTimer || 90) - 1;
+        if (e.fireTimer <= 0) { e.fireTimer = 90; enemyShoot(e, 5.5, '#AA33FF', [-0.4, -0.2, 0, 0.2, 0.4]); if (Date.now() - lastDevilLaugh > 3000) { lastDevilLaugh = Date.now(); sfx('laugh'); } }
+        e.summon = (e.summon || 400) - 1;
+        if (e.summon <= 0) { e.summon = 400; spawnList().push({ type: 'imp', x: e.x + 30, y: e.y + 40, r: 11, hp: 3, maxHp: 3, alive: true, hitFlash: 0, frozen: 0, emerge: 30, dx: 0, dy: 0 }); }
+        return;
+    }
     if (e.type === 'shark')    { e.x += e.dx; e.y += Math.sin(Date.now() / 400 + e.home.y) * 0.8; if (e.x < 60 || e.x > 740) e.dx *= -1;
                                  if (Math.hypot(player.x - e.x, player.y - e.y) < 160) chase(1.6); return; }
     if (e.type === 'jellyfish'){ e.y += Math.sin(Date.now() / 600 + e.home.x) * 0.9; e.x += Math.cos(Date.now() / 900 + e.home.y) * 0.5; return; }
@@ -4122,7 +4364,10 @@ function updateProjectiles() {
                         if (state.level < MAX_LEVELS) {
                             state.levelComplete = true;
                         } else {
-                            state.won = true;
+                            // 😈😈 SURPRISE: his big brother shows up for the real final battle!
+                            hell.enemies.push(e0('bigdevil', 400, 150, { r: 56, emerge: 90, coinDrop: 40 }));
+                            showToast("😈😈 WAIT… THE DEVIL'S BIG BROTHER IS HERE! This is the REAL final battle!", '#CC88FF', 320);
+                            triggerShake(30); sfx('laugh');
                         }
                     }
                 } else {
@@ -5885,6 +6130,52 @@ function drawEnemyBody(e, t) {
         ctx.arc(e.x - 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.arc(e.x + 3.5, e.y - 1, 2.2, 0, Math.PI * 2);
         ctx.fill();
+    } else if (e.type === 'windup') {
+        ctx.fillStyle = '#AAAAAA'; ctx.beginPath(); ctx.ellipse(e.x, e.y, 14, 9, Math.atan2(e.dy, e.dx), 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFB0C0'; ctx.beginPath(); ctx.arc(e.x - 6, e.y - 8, 4, 0, Math.PI * 2); ctx.arc(e.x + 6, e.y - 8, 4, 0, Math.PI * 2); ctx.fill();   // ears
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(e.x - 3, e.y - 2, 1.5, 0, Math.PI * 2); ctx.arc(e.x + 3, e.y - 2, 1.5, 0, Math.PI * 2); ctx.fill();
+        ctx.save(); ctx.translate(e.x, e.y + 2); ctx.rotate(Date.now() / (e.windTimer > 50 ? 30 : 200));   // wind-up key
+        ctx.strokeStyle = '#C8A040'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(8, 0); ctx.stroke(); ctx.restore();
+    } else if (e.type === 'toysoldier') {
+        drawHuman(e.x, e.y, 1, { shirt: '#CC2222', sleeves: '#CC2222', pants: '#223388', shoes: '#111', skin: '#F2C8A0', hair: '#111', hairStyle: 'short', walk: e.walk });
+        ctx.fillStyle = '#111'; ctx.fillRect(e.x - 6, e.y - 36, 12, 14);                 // tall hat
+        ctx.fillStyle = '#FFD700'; ctx.fillRect(e.x - 6, e.y - 26, 12, 2); ctx.fillRect(e.x - 1, e.y - 6, 2, 10);   // gold trim & buttons
+        ctx.strokeStyle = '#8A5A2A'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(e.x + 10, e.y + 6); ctx.lineTo(e.x + 14, e.y - 16); ctx.stroke();   // toy rifle
+    } else if (e.type === 'wizard') {
+        drawHuman(e.x, e.y, 1.2, { shirt: '#4A1A8A', sleeves: '#4A1A8A', pants: '#2A0A5A', shoes: '#111', hair: '#DDD', hairStyle: 'long', beard: '#EEE' });
+        drawHatOn(e.x, e.y - 28, 'wizard');
+        ctx.strokeStyle = '#6B3E1E'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(e.x + 14, e.y + 14); ctx.lineTo(e.x + 18, e.y - 22); ctx.stroke();   // staff
+        ctx.fillStyle = `hsl(${(Date.now() / 5) % 360}, 100%, 60%)`; ctx.shadowColor = '#AA66FF'; ctx.shadowBlur = 16; ctx.beginPath(); ctx.arc(e.x + 18, e.y - 24, 5, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+        ctx.fillStyle = '#FF3344'; ctx.beginPath(); ctx.arc(e.x - 3, e.y - 19, 1.4, 0, Math.PI * 2); ctx.arc(e.x + 3, e.y - 19, 1.4, 0, Math.PI * 2); ctx.fill();   // evil red eyes
+    } else if (e.type === 'mummy' || e.type === 'mummyking') {
+        const k = e.type === 'mummyking' ? 1.5 : 1;
+        drawHuman(e.x, e.y, k, { shirt: '#E8DCC0', sleeves: '#E8DCC0', pants: '#D8CCB0', shoes: '#C8BCA0', skin: '#E8DCC0', hands: '#E8DCC0', walk: e.walk, noFace: true });
+        ctx.strokeStyle = 'rgba(140,120,90,0.6)'; ctx.lineWidth = 1;   // bandage lines
+        for (let b = 0; b < 7; b++) { ctx.beginPath(); ctx.moveTo(e.x - 8 * k, e.y - (26 - b * 6) * k); ctx.lineTo(e.x + 8 * k, e.y - (23 - b * 6) * k); ctx.stroke(); }
+        ctx.fillStyle = e.type === 'mummyking' ? '#44FF88' : '#FF2222'; ctx.beginPath(); ctx.arc(e.x - 2.6 * k, e.y - 16 * k, 1.8 * k, 0, Math.PI * 2); ctx.arc(e.x + 2.6 * k, e.y - 16 * k, 1.8 * k, 0, Math.PI * 2); ctx.fill();
+        if (e.type === 'mummyking') {   // golden pharaoh headdress
+            ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.moveTo(e.x - 13, e.y - 20); ctx.lineTo(e.x, e.y - 40); ctx.lineTo(e.x + 13, e.y - 20); ctx.lineTo(e.x + 15, e.y - 4); ctx.lineTo(e.x - 15, e.y - 4); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#2A4AAA'; for (let b = 0; b < 3; b++) ctx.fillRect(e.x - 13, e.y - 16 + b * 5, 26, 2);
+            ctx.fillStyle = '#E8DCC0'; ctx.beginPath(); ctx.ellipse(e.x, e.y - 22, 8, 9, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#44FF88'; ctx.beginPath(); ctx.arc(e.x - 3, e.y - 23, 1.8, 0, Math.PI * 2); ctx.arc(e.x + 3, e.y - 23, 1.8, 0, Math.PI * 2); ctx.fill();
+        }
+    } else if (e.type === 'scarab') {
+        ctx.fillStyle = '#1A4A4A'; ctx.beginPath(); ctx.ellipse(e.x, e.y, 9, 11, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#3AAAAA'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(e.x, e.y - 11); ctx.lineTo(e.x, e.y + 11); ctx.stroke();
+        ctx.strokeStyle = '#1A2A2A'; ctx.lineWidth = 1.5; for (const s of [-1, 1]) for (let k2 = 0; k2 < 3; k2++) { ctx.beginPath(); ctx.moveTo(e.x + s * 8, e.y - 5 + k2 * 5); ctx.lineTo(e.x + s * 14, e.y - 7 + k2 * 6 + Math.sin(Date.now() / 50 + k2) * 2); ctx.stroke(); }
+    } else if (e.type === 'candymonster' || e.type === 'jellybean') {
+        const r = e.type === 'jellybean' ? 7 : e.r, hue = e.hue || 330;
+        const g2 = ctx.createRadialGradient(e.x - r * 0.3, e.y - r * 0.3, 2, e.x, e.y, r);
+        g2.addColorStop(0, `hsl(${hue}, 100%, 85%)`); g2.addColorStop(1, `hsl(${hue}, 90%, 50%)`);
+        ctx.fillStyle = g2; ctx.beginPath(); ctx.ellipse(e.x, e.y, r * 1.2, r, 0, 0, Math.PI * 2); ctx.fill();
+        if (e.type === 'candymonster') {
+            for (let k2 = 0; k2 < 8; k2++) { ctx.fillStyle = ['#FF4466', '#FFDD33', '#44DDFF', '#88FF66'][k2 % 4]; ctx.fillRect(e.x - r + (k2 * 13) % (r * 2), e.y - r * 0.4 + (k2 * 7) % r, 5, 2); }   // sprinkles
+            ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(e.x - 12, e.y - 8, 7, 0, Math.PI * 2); ctx.arc(e.x + 12, e.y - 8, 7, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(e.x - 12, e.y - 7, 3.5, 0, Math.PI * 2); ctx.arc(e.x + 12, e.y - 7, 3.5, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#6A1030'; ctx.beginPath(); ctx.arc(e.x, e.y + 8, 10, 0, Math.PI); ctx.fill();
+        }
+    } else if (e.type === 'bigdevil') {
+        drawDevil({ ...e, shieldFlash: e.hitFlash > 0 ? 5 : 0, skinA: '#8A3ACC', skinB: '#2A0A4A' }, false, false);
     } else if (e.type === 'shark') {
         const f = e.dx < 0 ? -1 : 1;
         ctx.translate(e.x, e.y); ctx.scale(f, 1);
@@ -6305,8 +6596,8 @@ function drawEnemyHp(e) {
 function drawDevil(d, telegraphing, flashOn) {
     const r = d.r, t = Date.now() / 1000, x = d.x, y = d.y;
     const flash = d.shieldFlash > 0;
-    const skinA = telegraphing ? (flashOn ? '#FFFF66' : '#FFFFFF') : flash ? '#FFFFFF' : '#D42A1A';
-    const skinB = telegraphing ? '#FF9900' : flash ? '#CCCCCC' : '#6A0A05';
+    const skinA = telegraphing ? (flashOn ? '#FFFF66' : '#FFFFFF') : flash ? '#FFFFFF' : d.skinA || '#D42A1A';
+    const skinB = telegraphing ? '#FF9900' : flash ? '#CCCCCC' : d.skinB || '#6A0A05';
     ctx.save();
     ctx.shadowColor = telegraphing ? '#FFFF00' : flash ? '#FFFFFF' : '#FF2200';
     ctx.shadowBlur  = telegraphing ? 45 : flash ? 35 : 18;
@@ -6851,7 +7142,8 @@ function roomBackground(room) {
         if (room === 'void') { c.width = 900; c.height = 700; }   // fog is bigger than the screen so it can drift
         const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse,
                            ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace, arena: paintArena, mall: paintMall,
-                           underwater: paintUnderwater, dino: paintDino, volcano: paintVolcano, jungle: paintJungle };
+                           underwater: paintUnderwater, dino: paintDino, volcano: paintVolcano, jungle: paintJungle,
+                           toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
@@ -7231,7 +7523,9 @@ function drawPlayer() {
     }
     ctx.save();
     ctx.shadowColor = color; ctx.shadowBlur = 14;
-    if (state.danceTimer > 0) {
+    if (state.chicken > 0) {
+        drawChicken(player.x, player.y);
+    } else if (state.danceTimer > 0) {
         // Dance! Bounce, wiggle and spin
         const d = state.danceTimer;
         ctx.translate(player.x, player.y - Math.abs(Math.sin(d / 5)) * 10);
@@ -7932,20 +8226,20 @@ function drawAwards() {
     ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
     AWARDS.forEach((a, i) => {
         const col = i % 4, row = Math.floor(i / 4);
-        const x = X + 10 + col * 152, y = Y + 54 + row * 40;
+        const x = X + 10 + col * 152, y = Y + 54 + row * 36;
         const has = awards.got[a.id];
         ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
-        ctx.fillRect(x, y, 146, 36);
-        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 146, 36);
+        ctx.fillRect(x, y, 146, 33);
+        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 146, 33);
         ctx.globalAlpha = has ? 1 : 0.35;
         ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(a.icon, x + 17, y + 25);
+        ctx.fillText(a.icon, x + 17, y + 23);
         ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
         ctx.fillStyle = has ? '#FFE680' : '#888'; ctx.font = 'bold 10px Arial';
-        ctx.fillText(a.name, x + 32, y + 15);
+        ctx.fillText(a.name, x + 32, y + 14);
         ctx.fillStyle = has ? 'rgba(255,255,255,0.75)' : '#666'; ctx.font = '8px Arial';
-        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 32, y + 28);
+        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 32, y + 26);
     });
     ctx.restore();
 }
