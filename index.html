@@ -318,6 +318,7 @@ function meleePress() {
         if (meleeHit(44, 3, 20, 45, true, 45)) spawnFloatText(player.x, player.y - 40, 'UPPERCUT!', '#FF8844', 45);
         fight.cooldown = 22; sfx('superHit'); return;
     }
+    if (state.melee) { weaponSwing(); return; }   // holding a sword, hammer…
     // Punch, punch, KICK!
     fight.combo = fight.since < COMBO_WINDOW ? fight.combo % 3 + 1 : 1;
     fight.since = 0;
@@ -327,6 +328,67 @@ function meleePress() {
     if (kick) { spawnFloatText(player.x, player.y - 40, 'KICK!', '#FFE066', 40); giveAward('combo'); }
     sfx(kick ? 'superHit' : 'hit');
     fight.cooldown = kick ? 16 : 8;
+}
+
+// ── FIGHTING WEAPONS (the Blacksmith sells them; they change what your punch button does) ──
+const MELEE_WEAPONS = [
+    { id: 'sword',     name: 'Sword',     icon: '🗡', cost: 20, desc: 'Long slashes — 3rd slash is HUGE' },
+    { id: 'hammer',    name: 'Hammer',    icon: '🔨', cost: 30, desc: 'Slow but SMASHES all around you' },
+    { id: 'nunchucks', name: 'Nunchucks', icon: '🥢', cost: 25, desc: 'Super fast hits — keep bashing!' },
+    { id: 'spear',     name: 'Spear',     icon: '🔱', cost: 25, desc: 'Pokes far, through a whole line' },
+    { id: 'whip',      name: 'Whip',      icon: '〰', cost: 20, desc: 'Reaches really far and pulls them in' },
+];
+
+// Hit every monster along a straight line in front of you (knock < 0 pulls them in)
+function lineHit(len, width, dmg, knock, stun) {
+    let hits = 0;
+    for (const e of targetableEnemies()) {
+        const dx = e.x - player.x, dy = e.y - player.y;
+        const along = dx * state.faceX + dy * state.faceY, side = Math.abs(dx * state.faceY - dy * state.faceX);
+        if (along < -e.r || along > len + e.r || side > width + e.r) continue;
+        damageEnemy(e, POWER.NONE, false, dmg - 1 + state.weaponLevel - 1);
+        hits++;
+        if (!e.alive) continue;
+        if (knock && !BOSS_TYPES.includes(e.type)) {
+            const move = knock > 0 ? knock : Math.max(knock, -(along - 30));   // don't pull them right on top of you
+            e.x += state.faceX * move; e.y += state.faceY * move;
+        }
+        if (stun) e.stun = Math.max(e.stun || 0, BOSS_TYPES.includes(e.type) ? stun / 3 : stun);
+    }
+    if (hits) { triggerShake(3 + dmg); addComboHits(hits); }
+    return hits;
+}
+
+function weaponSwing() {
+    const w = state.melee;
+    fight.combo = fight.since < COMBO_WINDOW ? fight.combo + 1 : 1;
+    fight.since = 0;
+    if (w === 'sword') {
+        const big = fight.combo % 3 === 0;
+        meleeFx('sword', big ? 64 : 54);
+        meleeHit(big ? 64 : 54, big ? 4 : 3, big ? 60 : 18, big ? 30 : 0);
+        if (big) spawnFloatText(player.x, player.y - 40, 'MEGA SLASH!', '#DDEEFF', 45);
+        sfx(big ? 'superHit' : 'whoosh'); fight.cooldown = big ? 16 : 10;
+    } else if (w === 'hammer') {
+        meleeFx('hammer', 78);
+        if (meleeHit(78, 4, 70, 50, false)) spawnFloatText(player.x, player.y - 40, 'SMASH!', '#C8A070', 45);
+        spawnParticles(player.x + state.faceX * 24, player.y + state.faceY * 24 + 10, '#8A6A4A', 14);
+        triggerShake(12); sfx('boom'); fight.cooldown = 32;
+    } else if (w === 'nunchucks') {
+        const flurry = fight.combo % 6 === 0;   // every 6th hit spins all the way round
+        meleeFx(flurry ? 'spin' : 'nunchuck', flurry ? 56 : 40);
+        meleeHit(flurry ? 56 : 40, flurry ? 2 : 1, flurry ? 30 : 6, flurry ? 25 : 6, !flurry);
+        if (flurry) spawnFloatText(player.x, player.y - 40, 'WHA-POW!', '#FFCC44', 40);
+        sfx('hit'); fight.cooldown = flurry ? 12 : 5;
+    } else if (w === 'spear') {
+        meleeFx('spear', 100);
+        if (lineHit(100, 10, 3, 30, 10) >= 2) spawnFloatText(player.x, player.y - 40, 'SHISH KEBAB!', '#FFE066', 45);
+        sfx('whoosh'); fight.cooldown = 16;
+    } else if (w === 'whip') {
+        meleeFx('whip', 140);
+        if (lineHit(140, 8, 2, -45, 25)) spawnFloatText(player.x, player.y - 40, 'CRACK!', '#FFAA66', 40);
+        sfx('zap'); fight.cooldown = 20;
+    }
 }
 
 function meleeRelease() {
@@ -422,9 +484,30 @@ function drawFighting() {
         ctx.strokeStyle = f.kind === 'spin' ? '#88DDFF' : f.kind === 'pound' ? '#C8A070' : f.kind === 'upper' ? '#FF8844' : '#FFFFFF';
         ctx.lineWidth = f.kind === 'kick' || f.kind === 'upper' ? 6 : 4; ctx.lineCap = 'round';
         ctx.beginPath();
-        if (f.kind === 'spin' || f.kind === 'pound') ctx.arc(f.x, f.y, f.r * (1.2 - f.life / 24), 0, Math.PI * 2);
+        if (f.kind === 'sword') { ctx.strokeStyle = '#DDEEFF'; ctx.lineWidth = 7; ctx.shadowColor = '#AACCFF'; ctx.shadowBlur = 10; }
+        if (f.kind === 'hammer') { ctx.strokeStyle = '#C8A070'; ctx.lineWidth = 8; }
+        if (f.kind === 'nunchuck') { ctx.strokeStyle = '#FFCC44'; ctx.lineWidth = 3; }
+        if (f.kind === 'spear' || f.kind === 'whip') {   // a straight poke / a wiggly whip crack
+            const reach = f.r * Math.min(1, (13 - f.life) / 4);
+            ctx.strokeStyle = f.kind === 'spear' ? '#D8D8E0' : '#8A5A2A'; ctx.lineWidth = f.kind === 'spear' ? 5 : 3;
+            ctx.moveTo(f.x, f.y);
+            for (let k = 1; k <= 10; k++) {
+                const d = reach * k / 10, wig = f.kind === 'whip' ? Math.sin(k * 1.3 + f.life) * 6 * (k / 10) : 0;
+                ctx.lineTo(f.x + Math.cos(f.a) * d - Math.sin(f.a) * wig, f.y + Math.sin(f.a) * d + Math.cos(f.a) * wig);
+            }
+        }
+        else if (f.kind === 'spin' || f.kind === 'pound' || f.kind === 'hammer') ctx.arc(f.x, f.y, f.r * (1.2 - f.life / 24), 0, Math.PI * 2);
         else ctx.arc(f.x, f.y, f.r, f.a - 0.9, f.a + 0.9);
         ctx.stroke();
+        ctx.restore();
+    }
+    if (state.melee && canFight()) {   // the weapon you're holding
+        const w = MELEE_WEAPONS.find(m => m.id === state.melee);
+        ctx.save();
+        ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.translate(player.x + (state.faceX >= 0 ? 16 : -16), player.y + 4);
+        if (state.faceX < 0) ctx.scale(-1, 1);
+        ctx.fillText(w.icon, 0, 0);
         ctx.restore();
     }
     if (fight.blocking) {   // shield in front of you
@@ -698,7 +781,19 @@ const GADGETS = [
     { id: 'bomb',      name: 'Bombs',     icon: '💣', cost: 18, cooldown: 90,  desc: 'BOOM! Hits everything nearby' },
     { id: 'wand',      name: 'Frog Wand', icon: '🪄', cost: 25, cooldown: 150, desc: 'Turns a monster into a frog' },
     { id: 'tornado',   name: 'Tornado',   icon: '🌪', cost: 30, cooldown: 240, desc: 'Sucks monsters in and spins them' },
+    { id: 'bow',       name: 'Bow & Arrows',      icon: '🏹', cost: 20, cooldown: 30,  desc: 'Fire, ice and bomb arrows in turn' },
+    { id: 'watergun',  name: 'Water Gun',         icon: '🔫', cost: 15, cooldown: 6,   desc: 'Squirts monsters far away' },
+    { id: 'snowball',  name: 'Snowball Launcher', icon: '☃', cost: 20, cooldown: 25,  desc: 'Snowballs freeze monsters' },
+    { id: 'paint',     name: 'Paint Gun',         icon: '🎨', cost: 20, cooldown: 45,  desc: "Splat! Painted monsters can't see you" },
+    { id: 'banana',    name: 'Banana Peels',      icon: '🍌', cost: 10, cooldown: 40,  desc: 'Drop a peel — monsters slip over!' },
 ];
+const ARROWS = [
+    { kind: 'fire', power: POWER.BRIMSTONE, color: '#FF5522', label: '🔥 Fire arrow' },
+    { kind: 'ice',  power: POWER.ICE,       color: '#66AAFF', label: '❄ Ice arrow'  },
+    { kind: 'bomb', power: POWER.NONE,      color: '#333333', label: '💣 Bomb arrow' },
+];
+const MAX_PEELS    = 3;     // banana peels on the ground at once
+const PAINT_FRAMES = 300;   // painted monsters wander about blind for 5 s
 const DASH_COST          = 10;
 const DASH_COOLDOWN      = 70;
 const WEAPON_LEVEL_COST  = [0, 15, 30];   // Weapon Level 2 and 3: every shot does +1 / +2 damage
@@ -877,6 +972,9 @@ let state = {
     // Forge
     ownedGadgets:       {},        // e.g. { bomb: true }
     gadget:             null,      // id of the gadget you're holding
+    melee:              null,      // fighting weapon in your hand (null = fists)
+    ownedMelee:         {},
+    arrowKind:          0,
     gadgetCooldown:     0,
     hasDash:            false,
     dashTimer:          0,
@@ -3024,6 +3122,8 @@ const AWARDS = [
     { id: 'modder',      icon: '🧩', name: 'Game Modder',      desc: 'Turn on a mod' },
     { id: 'party4',      icon: '👨‍👩‍👧‍👦', name: 'Party of 4',       desc: 'Play with 4 players' },
     { id: 'groundPound', icon: '💥', name: 'Ground Pounder',   desc: 'Jump and ground pound' },
+    { id: 'weaponMaster',icon: '🗡', name: 'Weapon Master',    desc: 'Buy a fighting weapon' },
+    { id: 'banana',      icon: '🍌', name: 'Slippery!',        desc: 'Make a monster slip on a peel' },
 ];
 let awards = { got: {}, kills: 0, fish: 0, farts: 0 };
 try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards')) || {}); } catch (e) {}
@@ -3055,7 +3155,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -3731,7 +3831,7 @@ function resetGame() {
         bubble: false, score: 0, newBest: false, coinsBackup: undefined,
         job: null, housesOwned: {}, ammoBonus: 0,
         ownedPets: PETS.map(() => false), activePet: -1, petXp: PETS.map(() => 0),
-        ownedGadgets: {}, gadget: null, gadgetCooldown: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
+        ownedGadgets: {}, gadget: null, gadgetCooldown: 0, melee: null, ownedMelee: {}, arrowKind: 0, hasDash: false, dashTimer: 0, dashCooldown: 0, weaponLevel: 1,
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
@@ -4159,6 +4259,7 @@ function updateRoomEnemies() {
     for (const e of roomEnemies()) {
         if (e.shrunk > 0 && shrinkTick % 2) continue;   // tiny monsters are slow…
         if (e.air > 0) { e.air--; continue; }           // launched into the air by an uppercut!
+        if (e.slip > 0) e.slip--;
         if (e.stun > 0) { e.stun--; if (e.hitFlash > 0) e.hitFlash--; continue; }   // seeing stars
         if (!e.alive) continue;
         if (e.emerge > 0) {
@@ -4169,6 +4270,7 @@ function updateRoomEnemies() {
         if (e.hitFlash > 0) e.hitFlash--;
         if (e.frozen > 0) { e.frozen--; continue; }   // frozen solid: can't move or hurt you
         if (e.frog) { moveFrog(e); continue; }   // frogs are harmless
+        if (e.painted > 0) { e.painted--; moveConfused(e); continue; }   // 🎨 can't see you!
         if (settings.creative) { moveFrog(e); continue; }   // Creative Mode: monsters just potter about
         // Monster speed setting: slow skips some steps, fast takes extra ones
         if (!(settings.monsterSpeed === 'slow' && frameNo % 3 === 0)) moveEnemy(e);
@@ -5083,6 +5185,25 @@ function useGadget() {
     } else if (g.id === 'tornado') {
         gadgetObjs.push({ kind: 'tornado', x: aim.x, y: aim.y, t: 0, dur: 180 });
         sfx('whoosh');
+    } else if (g.id === 'bow') {
+        const ar = ARROWS[state.arrowKind = ((state.arrowKind || 0) + 1) % ARROWS.length];
+        gadgetObjs.push({ kind: 'arrow', arrow: ar, x: player.x, y: player.y, vx: Math.cos(a) * 12, vy: Math.sin(a) * 12, t: 0 });
+        spawnFloatText(player.x, player.y - 30, ar.label, ar.color, 30); sfx('whoosh');
+    } else if (g.id === 'watergun') {
+        const wob = (Math.random() - 0.5) * 0.15;
+        gadgetObjs.push({ kind: 'squirt', x: player.x, y: player.y, vx: Math.cos(a + wob) * 10, vy: Math.sin(a + wob) * 10, t: 0 });
+        if (Math.random() < 0.3) sfx('splash');
+    } else if (g.id === 'snowball') {
+        gadgetObjs.push({ kind: 'snowball', x: player.x, y: player.y, vx: Math.cos(a) * 8, vy: Math.sin(a) * 8, t: 0 });
+        sfx('whoosh');
+    } else if (g.id === 'paint') {
+        gadgetObjs.push({ kind: 'paint', x: player.x, y: player.y, vx: Math.cos(a) * 9, vy: Math.sin(a) * 9, t: 0, hue: Math.floor(Math.random() * 360) });
+        sfx('whoosh');
+    } else if (g.id === 'banana') {
+        const peels = gadgetObjs.filter(o => o.kind === 'peel');
+        if (peels.length >= MAX_PEELS) gadgetObjs.splice(gadgetObjs.indexOf(peels[0]), 1);   // the oldest one goes
+        gadgetObjs.push({ kind: 'peel', x: player.x - state.faceX * 16, y: player.y + 12, t: 0, spin: Math.random() * 6 });
+        spawnFloatText(player.x, player.y - 30, '🍌 peel dropped!', '#FFE066', 40); sfx('pop');
     }
     state.gadgetCooldown = g.cooldown;
 }
@@ -5130,6 +5251,28 @@ function updateGadgets() {
                 sfx('boom');
                 gadgetObjs.splice(i, 1);
             }
+        } else if (o.kind === 'arrow' || o.kind === 'squirt' || o.kind === 'snowball' || o.kind === 'paint') {
+            o.x += o.vx; o.y += o.vy;
+            if (o.kind === 'snowball' || o.kind === 'paint') o.vy += 0.05;   // a little bit of an arc
+            const e = targetableEnemies().find(e => Math.hypot(e.x - o.x, e.y - o.y) < e.r + 6);
+            if (e) { gadgetHit(o, e); gadgetObjs.splice(i, 1); continue; }
+            if (o.t > 80 || o.x < 0 || o.x > 800 || o.y < 50 || o.y > 600) {
+                if (o.kind === 'arrow' && o.arrow.kind === 'bomb') arrowBoom(o.x, o.y);
+                if (o.kind === 'paint') spawnParticles(o.x, o.y, `hsl(${o.hue},90%,55%)`, 6);
+                gadgetObjs.splice(i, 1);
+            }
+        } else if (o.kind === 'peel') {
+            const e = targetableEnemies().find(e => !(e.stun > 0) && !(e.air > 0) && Math.hypot(e.x - o.x, e.y - o.y) < e.r + 8);
+            if (e && BOSS_TYPES.includes(e.type)) {   // far too big to slip — they just squash it
+                spawnFloatText(o.x, o.y - 20, 'squish!', '#FFE066', 40); gadgetObjs.splice(i, 1); continue;
+            }
+            if (e) {
+                e.stun = 90; e.slip = 30;
+                damageEnemy(e, POWER.NONE, false, state.weaponLevel - 1);
+                spawnFloatText(e.x, e.y - e.r - 14, 'WHOOPS! SLIP!', '#FFE066', 60); sfx('boing'); giveAward('banana');
+                gadgetObjs.splice(i, 1); continue;
+            }
+            if (o.t > 1800) gadgetObjs.splice(i, 1);   // peels rot away after 30 s
         } else if (o.kind === 'tornado') {
             const tgt = nearestTarget(600);
             if (tgt) { o.x += Math.sign(tgt.x - o.x) * 1.2; o.y += Math.sign(tgt.y - o.y) * 1.2; }
@@ -5147,6 +5290,43 @@ function updateGadgets() {
     }
 }
 
+function arrowBoom(x, y) {
+    for (const e of targetableEnemies()) if (Math.hypot(e.x - x, e.y - y) < 70) damageEnemy(e, POWER.NONE, false, 2 + state.weaponLevel - 1);
+    for (let k = 0; k < 3; k++) spawnParticles(x, y, ['#FFEE66', '#FF8800', '#555555'][k], 12);
+    triggerShake(12); sfx('boom');
+}
+
+// One of the new gadget shots hit a monster
+function gadgetHit(o, e) {
+    const boss = BOSS_TYPES.includes(e.type), bonus = state.weaponLevel - 1;
+    if (o.kind === 'arrow') {
+        if (o.arrow.kind === 'bomb') arrowBoom(o.x, o.y);
+        else damageEnemy(e, o.arrow.power, false, 1 + bonus);
+    } else if (o.kind === 'squirt') {   // hardly hurts, but pushes them WAY back
+        if (Math.random() < 0.25) damageEnemy(e, POWER.WATER, false, -1 + bonus);
+        if (!boss) { e.x = Math.max(30, Math.min(770, e.x + o.vx * 3.5)); e.y = Math.max(70, Math.min(580, e.y + o.vy * 3.5)); e.stun = Math.max(e.stun || 0, 6); }
+        spawnParticles(o.x, o.y, '#66CCFF', 4);
+    } else if (o.kind === 'snowball') {
+        damageEnemy(e, POWER.NONE, false, bonus);
+        if (e.alive && !e.frog) { e.frozen = Math.max(e.frozen || 0, boss ? 30 : 80); sfx('freeze'); }
+        spawnParticles(o.x, o.y, '#FFFFFF', 10);
+    } else if (o.kind === 'paint') {
+        e.painted = boss ? PAINT_FRAMES / 3 : PAINT_FRAMES; e.paintHue = o.hue;
+        spawnParticles(o.x, o.y, `hsl(${o.hue},90%,55%)`, 14);
+        spawnFloatText(e.x, e.y - e.r - 14, "SPLAT! I can't see!", `hsl(${o.hue},90%,65%)`, 60); sfx('pop');
+    }
+}
+
+// Painted monsters can't see — they stumble about and can't find you
+function moveConfused(e) {
+    if (--e.hopTimer <= 0 || e.hopTimer === undefined) {
+        e.hopTimer = 30 + Math.random() * 30;
+        const a = Math.random() * Math.PI * 2;
+        e.dx = Math.cos(a) * 1.4; e.dy = Math.sin(a) * 1.4;
+    }
+    e.x = Math.max(40, Math.min(760, e.x + e.dx)); e.y = Math.max(70, Math.min(560, e.y + e.dy));
+}
+
 function drawGadgets() {
     const t = Date.now() / 1000;
     for (const o of gadgetObjs) {
@@ -5161,6 +5341,28 @@ function drawGadgets() {
             ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(o.x - 3, o.y - 3, 3, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = Math.random() < 0.5 ? '#FFEE66' : '#FF6600';   // fizzing fuse
             ctx.beginPath(); ctx.arc(o.x + 6, o.y - 9, 3, 0, Math.PI * 2); ctx.fill();
+        } else if (o.kind === 'arrow') {
+            ctx.translate(o.x, o.y); ctx.rotate(Math.atan2(o.vy, o.vx));
+            ctx.strokeStyle = '#8A5A2A'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-14, 0); ctx.lineTo(6, 0); ctx.stroke();
+            ctx.fillStyle = o.arrow.color; ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(4, -4); ctx.lineTo(4, 4); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#EEE'; ctx.fillRect(-15, -3, 4, 2); ctx.fillRect(-15, 1, 4, 2);   // feathers
+            if (o.arrow.kind === 'fire') { ctx.fillStyle = Math.random() < 0.5 ? '#FFAA00' : '#FF4400'; ctx.beginPath(); ctx.arc(10, 0, 4, 0, Math.PI * 2); ctx.fill(); }
+        } else if (o.kind === 'squirt') {
+            ctx.fillStyle = 'rgba(120,200,255,0.85)'; ctx.beginPath(); ctx.arc(o.x, o.y, 4, 0, Math.PI * 2); ctx.fill();
+        } else if (o.kind === 'snowball') {
+            drawGroundShadow(o.x, o.y + 14, 6, 2);
+            ctx.fillStyle = '#FFFFFF'; ctx.strokeStyle = '#BBD4E8'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(o.x, o.y, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        } else if (o.kind === 'paint') {
+            ctx.fillStyle = `hsl(${o.hue},90%,55%)`; ctx.beginPath(); ctx.arc(o.x, o.y, 6, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(o.x - 2, o.y - 2, 2, 0, Math.PI * 2); ctx.fill();
+        } else if (o.kind === 'peel') {
+            ctx.translate(o.x, o.y); ctx.rotate(o.spin);
+            ctx.fillStyle = '#FFE135'; ctx.strokeStyle = '#8A7A20'; ctx.lineWidth = 1;
+            for (let k = 0; k < 3; k++) {   // three floppy bits of peel
+                ctx.save(); ctx.rotate(k * 2.1); ctx.beginPath(); ctx.ellipse(0, -7, 3.5, 8, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
+            }
+            ctx.fillStyle = '#6A5A10'; ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI * 2); ctx.fill();
         } else if (o.kind === 'tornado') {
             ctx.globalAlpha = Math.min(1, (o.dur - o.t) / 30);
             for (let k = 0; k < 9; k++) {
@@ -5430,15 +5632,42 @@ function forgeItems() {
     items.push({ icon: '💨', name: 'Super Dash', desc: 'Zoom super fast (Shift / LT)', cost: DASH_COST,
                  status: state.hasDash ? 'OWNED' : null,
                  action: () => { if (!state.hasDash && spend(DASH_COST)) { state.hasDash = true; showToast('💨 You can DASH now!'); } } });
-    for (const g of GADGETS) {
+    items.push({ icon: '🗡', name: 'Fighting Weapons →', desc: 'Sword, hammer, nunchucks, spear, whip', cost: 0,
+                 status: state.melee ? MELEE_WEAPONS.find(m => m.id === state.melee).name.toUpperCase() : 'LOOK →',
+                 action: () => openMenu("🗡 THE BLACKSMITH'S WEAPONS", meleeItems) });
+    items.push({ icon: '🏹', name: 'Gadgets & Toys →', desc: 'Bombs, bows, water guns, banana peels…', cost: 0,
+                 status: state.gadget ? GADGETS.find(g => g.id === state.gadget).name.toUpperCase() : 'LOOK →',
+                 action: () => openMenu('🏹 GADGETS & TOYS', gadgetItems) });
+    return items;
+}
+
+function gadgetItems() {
+    const items = GADGETS.map(g => {
         const owned = state.ownedGadgets[g.id];
-        items.push({ icon: g.icon, name: g.name, desc: g.desc, cost: g.cost,
-                     status: state.gadget === g.id ? 'HOLDING' : owned ? 'OWNED — pick' : null,
+        return { icon: g.icon, name: g.name, desc: g.desc, cost: g.cost,
+                 status: state.gadget === g.id ? 'HOLDING' : owned ? 'OWNED — pick' : null,
+                 action: () => {
+                     if (owned) { state.gadget = g.id; return; }
+                     if (spend(g.cost)) { state.ownedGadgets[g.id] = true; state.gadget = g.id; showToast(`${g.icon} ${g.name}! Use it with Q / B / ⚙`); }
+                 } };
+    });
+    items.push({ icon: '⬅', name: 'Back', desc: 'Back to the Forge', cost: 0, status: 'BACK', action: () => openMenu("🔨 THE BLACKSMITH'S FORGE", forgeItems) });
+    return items;
+}
+
+function meleeItems() {
+    const items = [{ icon: '👊', name: 'Just Fists', desc: 'Punch, punch, KICK!', cost: 0, status: state.melee ? 'PICK' : 'HOLDING',
+                     action: () => { state.melee = null; } }];
+    for (const m of MELEE_WEAPONS) {
+        const owned = state.ownedMelee[m.id];
+        items.push({ icon: m.icon, name: m.name, desc: m.desc, cost: m.cost,
+                     status: state.melee === m.id ? 'HOLDING' : owned ? 'OWNED — pick' : null,
                      action: () => {
-                         if (owned) { state.gadget = g.id; return; }
-                         if (spend(g.cost)) { state.ownedGadgets[g.id] = true; state.gadget = g.id; showToast(`${g.icon} ${g.name}! Use it with Q / B / ⚙`); }
+                         if (owned) { state.melee = m.id; return; }
+                         if (spend(m.cost)) { state.ownedMelee[m.id] = true; state.melee = m.id; showToast(`${m.icon} ${m.name.toUpperCase()}! Swing it with J / RB / 👊`); giveAward('weaponMaster'); }
                      } });
     }
+    items.push({ icon: '⬅', name: 'Back', desc: 'Back to the Forge', cost: 0, status: 'BACK', action: () => openMenu("🔨 THE BLACKSMITH'S FORGE", forgeItems) });
     return items;
 }
 
@@ -6445,7 +6674,15 @@ function drawEnemyAir(e, t) {
         ctx.save(); ctx.translate(0, -Math.sin((e.air / 45) * Math.PI) * 40); drawEnemyInner(e, t); ctx.restore();
         return;
     }
-    drawEnemyInner(e, t);
+    if (e.slip > 0) {   // 🍌 whoops — spinning round and falling over
+        ctx.save(); ctx.translate(e.x, e.y); ctx.rotate((30 - e.slip) / 30 * Math.PI * 2); ctx.translate(-e.x, -e.y); drawEnemyInner(e, t); ctx.restore();
+    } else drawEnemyInner(e, t);
+    if (e.painted > 0 && e.alive) {   // 🎨 paint splats over their eyes
+        ctx.save(); ctx.fillStyle = `hsla(${e.paintHue},90%,55%,0.85)`;
+        for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.arc(e.x + Math.cos(k * 1.7) * e.r * 0.5, e.y - e.r * 0.2 + Math.sin(k * 2.3) * e.r * 0.35, e.r * 0.3, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center'; ctx.fillText('?', e.x, e.y - e.r - 6);
+        ctx.restore();
+    }
     if (e.stun > 0 && e.stun < 900 && e.alive) {   // dizzy stars
         for (let k = 0; k < 3; k++) { const a = Date.now() / 150 + k * 2.1; drawStar(e.x + Math.cos(a) * 12, e.y - e.r - 10 + Math.sin(a) * 4, 3, '#FFE066'); }
     }
@@ -8624,22 +8861,25 @@ function drawAwards() {
     ctx.fillText(`🏅 AWARDS  ${got}/${AWARDS.length}`, 400, Y + 30);
     ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px Arial';
     ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
+    // Squeeze the boxes smaller as more awards are added, so they always fit
+    const cols = AWARDS.length > 64 ? 5 : 4, colW = (W - 20) / cols;
+    const rowH = Math.min(36, (H - 62) / Math.ceil(AWARDS.length / cols)), boxH = rowH - 3;
     AWARDS.forEach((a, i) => {
-        const col = i % 4, row = Math.floor(i / 4);
-        const x = X + 10 + col * 152, y = Y + 54 + row * 36;
+        const col = i % cols, row = Math.floor(i / cols);
+        const x = X + 10 + col * colW, y = Y + 56 + row * rowH;
         const has = awards.got[a.id];
         ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
-        ctx.fillRect(x, y, 146, 33);
-        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, 146, 33);
+        ctx.fillRect(x, y, colW - 6, boxH);
+        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, colW - 6, boxH);
         ctx.globalAlpha = has ? 1 : 0.35;
-        ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(a.icon, x + 17, y + 23);
+        ctx.font = `${Math.round(boxH * 0.6)}px Arial`; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
+        ctx.fillText(a.icon, x + 17, y + boxH * 0.7);
         ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
         ctx.fillStyle = has ? '#FFE680' : '#888'; ctx.font = 'bold 10px Arial';
-        ctx.fillText(a.name, x + 32, y + 14);
+        ctx.fillText(a.name, x + 32, y + boxH * 0.42);
         ctx.fillStyle = has ? 'rgba(255,255,255,0.75)' : '#666'; ctx.font = '8px Arial';
-        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 32, y + 26);
+        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 32, y + boxH * 0.8, colW - 42);
     });
     ctx.restore();
 }
