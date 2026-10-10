@@ -125,7 +125,8 @@ const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // wher
 // Dig all the way to the bottom of a dig spot → a tunnel to the Underground Caves.
 const SECRET_PORTAL_CHANCE = 0.06;   // super rare — and almost invisible until you're close
 const SECRET_REVEAL_DIST   = 110;    // how close you must be to see the golden portal clearly
-const RAINBOW_CHANCE       = 0.3;    // chance the bottom of a dig spot (or the Secret Room) has Rainbow Power
+const RAINBOW_CHANCE       = 0.03;   // chance the bottom of a dig spot (or the Secret Room) has Rainbow Power — very rare!
+const RAINBOW_WISH_CHANCE  = 0.1;    // even a Heaven wish only works 1 time in 10
 const GOLDEN_PORTAL_SPOTS  = { void: { x: 400, y: 205 }, hell: { x: 250, y: 450 }, paradise: { x: 250, y: 275 }, heaven: { x: 620, y: 470 } };
 const GEM_HITS             = 3;    // presses to mine a gem in the Underground Caves
 const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', LIGHTNING: 'Lightning', WATER: 'Water', RAINBOW: 'Rainbow' };
@@ -1275,21 +1276,25 @@ canvas.addEventListener('contextmenu', e => {
 });
 
 // ── FRIENDS: Players 2, 3 and 4 on the same screen ──────────
-// P2: press P (arrow keys + Enter) or Start on the 2nd controller · P3 / P4: Start on the 3rd / 4th controller
-const FRIENDS = [2, 3, 4].map((n, i) => ({ n, pad: i + 1, color: ['#FF8844', '#44CC66', '#AA66FF'][i],
+// P2 can press P (arrow keys + Enter). Anyone can plug in a new controller and HOLD ANY BUTTON to join;
+// they get the next free player number. Holding Start for 2 s leaves again.
+const FRIENDS = [2, 3, 4].map((n, i) => ({ n, pad: -1, color: ['#FF8844', '#44CC66', '#AA66FF'][i],
                                            active: false, x: 0, y: 0, hp: 3, inv: 0, down: 0, cooldown: 0, walk: 0, faceX: 1, faceY: 0 }));
 const p2 = FRIENDS[0];
 const P2_DOWN_FRAMES = 600;   // if a friend runs out of hearts they rest for 10 s, then pop back up
 function activeFriends() { return FRIENDS.filter(f => f.active); }
+const JOIN_HOLD_FRAMES  = 60;    // hold any button for 1 s to join (so a bump doesn't add a player)
+const LEAVE_HOLD_FRAMES = 120;   // hold Start for 2 s to leave
+const joinHold = {};             // gamepad.index → frames a not-yet-playing controller has been held
 
 function toggleFriend(f) {
     if (state.gamePhase !== 'playing') return;
     f.active = !f.active;
     if (f.active) {
         Object.assign(f, { x: player.x + 30 * (f.n - 1), y: player.y, hp: 3, inv: 60, down: 0 });
-        showToast(f.n === 2 ? '👫 PLAYER 2 JOINED! Arrow keys to move, ENTER to shoot' : `🎮 PLAYER ${f.n} JOINED!`, f.color, 240);
+        showToast(f.n === 2 && f.pad < 0 ? '👫 PLAYER 2 JOINED! Arrow keys to move, ENTER to shoot' : `🎮 PLAYER ${f.n} JOINED!`, f.color, 240);
         if (activeFriends().length === 3) giveAward('party4');
-    } else showToast(`Player ${f.n} left the game. Bye!`, f.color, 120);
+    } else { f.pad = -1; showToast(`Player ${f.n} left the game. Bye!`, f.color, 120); }
 }
 function toggleP2() { toggleFriend(p2); }
 
@@ -1332,7 +1337,7 @@ function updateFriend(f, pads) {
         if (keys['ArrowDown'])  dy += 1;
         if (keys['Enter'] || keys['NumpadEnter'] || keys['Numpad0']) friendShoot(f);
     }
-    const gp = pads[f.pad];   // their own game controller
+    const gp = pads.find(p => p.index === f.pad);   // their own game controller
     if (gp) {
         if (Math.abs(gp.axes[0] || 0) > PAD_DEADZONE) dx += gp.axes[0];
         if (Math.abs(gp.axes[1] || 0) > PAD_DEADZONE) dy += gp.axes[1];
@@ -1378,6 +1383,22 @@ function drawP2() {
     }
 }
 
+// A filling bar while a new controller holds a button to join
+function drawJoinProgress() {
+    const slot = FRIENDS.find(f => !f.active);
+    if (!slot) return;
+    const most = Math.max(0, ...Object.values(joinHold));
+    if (most <= 0) return;
+    const t = Math.min(1, most / JOIN_HOLD_FRAMES);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(280, 90, 240, 46);
+    ctx.fillStyle = slot.color; ctx.fillRect(290, 118, 220 * t, 10);
+    ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2; ctx.strokeRect(290, 118, 220, 10);
+    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`🎮 Keep holding to join as P${slot.n}!`, 400, 110);
+    ctx.restore();
+}
+
 // ── GAME CONTROLLER (Xbox, PlayStation, Switch Pro… anything the browser maps as "standard") ──
 const PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START: 9, L3: 10, R3: 11, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
 const PAD_DEADZONE    = 0.3;   // ignore tiny stick wobbles
@@ -1392,12 +1413,31 @@ function pollGamepad() {
     padMove.x = padMove.y = 0;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const connected = Array.from(pads).filter(p => p && p.connected);
-    const gp = connected[0];
-    for (const f of FRIENDS) {   // Start on controller 2, 3 or 4 adds that player
-        const pd = connected[f.pad];
-        const start = !!(pd && pd.buttons[PAD.START] && pd.buttons[PAD.START].pressed);
-        if (start && !f.startHeld && state.gamePhase === 'playing') toggleFriend(f);
-        f.startHeld = start;
+    for (const f of FRIENDS) {   // a friend's controller was unplugged: they leave
+        if (f.pad >= 0 && !connected.some(p => p.index === f.pad)) { f.leaveHold = 0; if (f.active) toggleFriend(f); else f.pad = -1; }
+    }
+    const friendPad = pd => FRIENDS.find(f => f.active && f.pad === pd.index);
+    const free = connected.filter(pd => !friendPad(pd));
+    const gp = free[0];   // Player 1 uses the first controller that isn't a friend's
+    for (const pd of connected) {
+        const anyHeld = pd.buttons.some(b => b && b.pressed);
+        const f = friendPad(pd);
+        if (f) {   // hold Start to leave
+            const start = !!(pd.buttons[PAD.START] && pd.buttons[PAD.START].pressed);
+            f.leaveHold = start ? (f.leaveHold || 0) + 1 : 0;
+            if (f.leaveHold === LEAVE_HOLD_FRAMES) { joinHold[pd.index] = -1; toggleFriend(f); }   // -1: let go before joining again
+            continue;
+        }
+        if (pd === gp || !anyHeld || state.gamePhase !== 'playing') { joinHold[pd.index] = 0; continue; }
+        const slot = FRIENDS.find(fr => !fr.active);
+        if (!slot || joinHold[pd.index] < 0) continue;
+        joinHold[pd.index] = (joinHold[pd.index] || 0) + 1;
+        if (joinHold[pd.index] >= JOIN_HOLD_FRAMES) {
+            joinHold[pd.index] = 0;
+            slot.pad = pd.index; slot.leaveHold = 0;
+            toggleFriend(slot);
+            sfx('coin');
+        }
     }
     if (!gp) { padPrev = []; return; }
     const held = gp.buttons.map(b => b.pressed);
@@ -1460,7 +1500,8 @@ function pollGamepad() {
 
 window.addEventListener('gamepadconnected', () => {
     lastInput = 'pad';
-    spawnFloatText(400, 300, '🎮 Controller connected!', '#FFFFFF', 150);
+    const many = navigator.getGamepads && Array.from(navigator.getGamepads()).filter(p => p && p.connected).length > 1;
+    spawnFloatText(400, 300, many ? '🎮 New controller! Hold any button to join' : '🎮 Controller connected!', '#FFFFFF', 180);
 });
 
 // ── VIRTUAL TOUCH CONTROLS ────────────────────────────────────
@@ -2664,7 +2705,10 @@ function wishItems() {
     const weapon = (pw) => () => { state.power = pw; state.powerTier = 2; showToast(`✨ SUPER ${WEAPON_INFO[pw].label}!`); };
     return [
         wish('❤', 'Full hearts + Bubble', 'All your hearts and a Shield Bubble', () => { state.playerHp = fullHearts(); state.bubble = true; showToast('❤ All better — and a Shield Bubble!'); }),
-        wish('🌈', 'Rainbow Power', 'The rarest weapon of all', () => { state.power = POWER.RAINBOW; state.powerTier = 3; giveAward('rainbow'); showToast('🌈 RAINBOW POWER!'); }),
+        wish('🌈', 'Rainbow Power', 'Super rare — might not work!', () => {
+            if (Math.random() >= RAINBOW_WISH_CHANCE) { showToast('🌈 The rainbow faded away… try again!', '#AACCFF', 160); return; }
+            state.power = POWER.RAINBOW; state.powerTier = 3; giveAward('rainbow'); showToast('🌈 RAINBOW POWER!');
+        }),
         wish('❄', 'Super Ice', 'Beats Fire Monsters, freezes things', weapon(POWER.ICE)),
         wish('🔥', 'Super Fire', 'Beats Ghosts, Spiders & Zombies', weapon(POWER.BRIMSTONE)),
         wish('⚡', 'Super Lightning', 'Beats Bats and jumps between monsters', weapon(POWER.LIGHTNING)),
@@ -9167,6 +9211,7 @@ function draw() {
     else if (state.room === ROOM.HELL && isPlayerPhysicallyInCave() && !state.won && !state.levelComplete) drawInsideCave();
     else if (!state.won && !state.levelComplete) drawVignette();
     drawFloatTexts();
+    drawJoinProgress();
     drawHUD();
     drawControls();
     drawVirtualControls();
