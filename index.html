@@ -121,7 +121,7 @@ const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secre
                 GREECE: 'greece', MAZE: 'maze', GORGON: 'gorgon', UNDERWORLD: 'underworld', VIKING: 'viking',
                 CANDYVOLCANO: 'candyvolcano', SEACITY: 'seacity', MOONBASE: 'moonbase', CLOUDCASTLE: 'cloudcastle', ICECAVE: 'icecave',
                 TREEHOUSE: 'treehouse', FACTORY: 'factory', TOYSHOP: 'toyshop', MUSEUM: 'museum', UNDERBED: 'underbed',
-                BACKYARD: 'backyard', SECRETROOM: 'secretroom', STADIUM: 'stadium', SNOWFORT: 'snowfort' };
+                BACKYARD: 'backyard', SECRETROOM: 'secretroom', STADIUM: 'stadium', SNOWFORT: 'snowfort', MEDIEVAL: 'medieval', MICROWORLD: 'microworld' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -218,6 +218,9 @@ const ENEMY_TYPES = {
     bedmonster:{ name: 'Monster Under the Bed', hp: 24, weakTo: POWER.LIGHTNING, color: '#6A3A8A', emoji: '👹' },
     bonesaur:  { name: 'Skeleton Raptor', hp: 4, weakTo: POWER.BRIMSTONE, color: '#EEEEDD', emoji: '🦖', filter: 'grayscale(1) brightness(1.5)' },   // Museum at night
     bonerex:   { name: 'Skeleton T-Rex', hp: 30, weakTo: POWER.BRIMSTONE, color: '#EEEEDD', emoji: '🦖', filter: 'grayscale(1) brightness(1.6)' },
+    knight:    { name: 'Knight',       hp: 4,  weakTo: POWER.LIGHTNING, color: '#AAAAAA', emoji: '🤺' },   // Time Machine: Knights & Castles
+    dragonking:{ name: 'Dragon King',  hp: 32, weakTo: POWER.ICE,       color: '#AA2222', emoji: '🐉', crown: true },
+    ant:       { name: 'Giant Ant',    hp: 2,  weakTo: POWER.WATER,     color: '#442222', emoji: '🐜' },   // Micro World
     snowkid:   { name: 'Snowball Kid', hp: 3,  weakTo: POWER.BRIMSTONE, color: '#AADDFF', emoji: '🧒' },   // Snowball Fight
     penguinpal:{ name: 'Ice Penguin',  hp: 3,  weakTo: POWER.BRIMSTONE, color: '#222233', emoji: '🐧', filter: 'hue-rotate(180deg)' },   // grumpy penguins
 };
@@ -1044,6 +1047,7 @@ const GADGETS = [
     { id: 'hook',      name: 'Grappling Hook',    icon: '🪝', cost: 35, cooldown: 45,  desc: 'Zip across the room or pull monsters in' },
     { id: 'firebow',   name: 'Fire Bow',          icon: '🏹', cost: 50, cooldown: 30,  desc: 'Three flaming arrows!' },
     { id: 'bubblegun', name: 'Bubble Gun',        icon: '🫧', cost: 30, cooldown: 40,  desc: 'Traps monsters in floating bubbles' },
+    { id: 'shrinkray', name: 'Shrink Ray',        icon: '🔬', cost: 40, cooldown: 120, desc: 'Shrink yourself into the Micro World!' },
     { id: 'whoopee',   name: 'Whoopee Cushion',   icon: '🎈', cost: 12, cooldown: 40,  desc: 'Monsters sit on it… PFFFT! 😂' },
 ];
 const ARROWS = [
@@ -1101,6 +1105,8 @@ const MODS = [
     { id: 'cheese',       icon: '🧀', name: 'Cheese World',     desc: 'Every monster and coin is CHEESE' },
     { id: 'monsterHats',  icon: '🎩', name: 'Monster Hats',     desc: 'Monsters wear funny hats' },
     { id: 'pirateTalk',   icon: '🏴‍☠️', name: 'Pirate Town',      desc: 'Everyone in town talks like a pirate, arr!' },
+    { id: 'halloween',    icon: '🎃', name: 'Halloween',        desc: 'Pumpkins and spooky fun (on by itself in October)' },
+    { id: 'christmas',    icon: '🎄', name: 'Christmas',        desc: 'Snow, a tree and presents (on by itself in December)' },
 ];
 
 function modItems(page = 0) {
@@ -1288,6 +1294,7 @@ let state = {
     magicGarden:        [0, 0, 0],       // when each magic plant was planted (Date.now()), 0 = empty
     farmAt:             0,               // when you last collected from the farm
     mirrorShield:       false,           // 🪞 blocking bounces bullets back
+    heroSuit:           null,            // 🦸 null = not bought, 'on' / 'off'
     saberColor:         0,
     petCostumes:        {},
     questsDone:         0,
@@ -1430,6 +1437,8 @@ function pressAction() {
     }
     if (race) { raceTap(); return; }
     if (petBattle) { cheerPetBattle(); return; }
+    if (tvShow) { nextTvChannel(); return; }
+    if (credits) return;
     if (nearRaceMaster() && state.gamePhase === 'playing') { openMenu('🏁 PICK A RACE!', raceItems); return; }
     if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
         const { cx, cy } = buildTargetCell();
@@ -1460,6 +1469,7 @@ function handleTap(x, y) {
     }
     if (race) { raceTap(); return true; }
     if (petBattle) { cheerPetBattle(); return true; }
+    if (tvShow) { nextTvChannel(); return true; }
     if (danceBattle) { danceTap(x, y); return true; }
     if (lastInput !== 'touch' && state.gamePhase === 'playing' && !menu && !state.shopOpen && inRect(x, y, BUILD_BTN)) { toggleBuild(); return true; }
     if (state.awardsOpen) { state.awardsOpen = false; return true; }
@@ -2251,7 +2261,9 @@ function moveNewBoss(e, chase) {
     const minion = (type, n) => { for (let k = 0; k < n; k++) spawnList().push(e0(type, e.x + (k ? 40 : -40), e.y + 30, { emerge: 20, r: 13 })); };
     if (e.type === 'minizombie') { chase(0.8); return true; }
     if (['chocoblob', 'snake', 'dustbunny', 'penguinpal'].includes(e.type)) { chase(1.2); return true; }
-    if (e.type === 'minibot' || e.type === 'bonesaur') { chase(1.1); return true; }
+    if (e.type === 'minibot' || e.type === 'bonesaur' || e.type === 'knight') { chase(1.1); return true; }
+    if (e.type === 'ant') { chase(1.5); e.x += Math.sin(Date.now() / 90 + e.home.x) * 0.8; return true; }
+    if (e.type === 'dragonking') { chase(0.6); if (Math.random() < 0.012) { enemyShoot(e, 4.5, '#FF5522', [-0.3, 0, 0.3]); sfx('dragonRoar'); } return true; }
     if (e.type === 'snowkid') {   // pops up behind its snow fort and throws snowballs
         e.x = e.home.x + Math.sin(Date.now() / 700 + e.home.y) * 60;
         if (Math.random() < 0.012) { enemyShoot(e, 4.5, '#FFFFFF'); spawnFloatText(e.x, e.y - 24, 'Take that!', '#FFFFFF', 40); }
@@ -2410,6 +2422,12 @@ function useFightGadget(id, a) {
         for (const off of [-0.15, 0, 0.15]) projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a + off) * 9, dy: Math.sin(a + off) * 9, color: '#FF5522', power: POWER.BRIMSTONE, life: 80, r: 6 });
         sfx('shoot'); return true;
     }
+    if (id === 'shrinkray') {
+        if (state.room === ROOM.MICROWORLD) { showToast('🔬 You\'re already tiny! Walk out the door to grow big.', '#AAFFAA', 160); return true; }
+        spawnParticles(player.x, player.y, '#AAFFAA', 30); sfx('magic');
+        changeRoom(ROOM.MICROWORLD); showToast('🔬 ZAP! You shrank into the MICRO WORLD! Find 5 🍪 crumbs!', '#AAFFAA', 240);
+        return true;
+    }
     if (id === 'whoopee') {
         cushions.push({ x: player.x - state.faceX * 20, y: player.y + 12 }); if (cushions.length > 3) cushions.shift();
         spawnFloatText(player.x, player.y - 30, '🎈 cushion down!', '#FF88CC', 40); sfx('pop'); return true;
@@ -2479,6 +2497,174 @@ function drawFightExtras() {
     }
 }
 
+// ── SPECIAL STUFF: storms, seasons, party, fireworks, time machine, TV, the secret ending ──
+let stormFlash = 0;
+function updateStorm() {
+    if (state.room !== ROOM.PARADISE || paradise.weather !== 'storm' || paradise.phase !== 'day') return;
+    if (stormFlash > 0) stormFlash--;
+    if (Math.random() < 0.006) {   // ⚡ KRAKA-BOOM — lightning sometimes zaps a monster for you
+        stormFlash = 12; triggerShake(6); tone(60, 0.6, 'sawtooth', 0.2, 30);
+        const foes = targetableEnemies();
+        if (foes.length) { const e = foes[Math.floor(Math.random() * foes.length)]; bolts.push({ x1: e.x, y1: 40, x2: e.x, y2: e.y, life: 14 }); damageEnemy(e, POWER.LIGHTNING); }
+    }
+}
+
+// 🎃🎄 Seasons: Halloween in October, Christmas in December (or switch them on in Mods)
+function season() {
+    const m = new Date().getMonth();
+    return mod('christmas') || m === 11 ? 'christmas' : mod('halloween') || m === 9 ? 'halloween' : null;
+}
+let seasonItems = null, seasonRoom = null;
+function updateSeason() {
+    const sz = season();
+    if (!sz || state.room !== ROOM.PARADISE || !playing()) { seasonItems = null; return; }
+    if (!seasonItems || seasonRoom !== state.room) {
+        seasonRoom = state.room;
+        seasonItems = [[150, 360], [650, 250], [300, 520], [560, 520], [700, 420]].map(([x, y]) => ({ x, y, got: false }));
+    }
+    for (const it of seasonItems) {
+        if (it.got || Math.hypot(it.x - player.x, it.y - player.y) > 26) continue;
+        it.got = true; state.coins += 5; giveAward('season'); sfx('found'); spawnParticles(it.x, it.y, sz === 'christmas' ? '#FF4444' : '#FF9922', 14);
+        spawnFloatText(it.x, it.y - 20, sz === 'christmas' ? '🎁 A present! +🪙5' : '🎃 Trick or treat! 🍬 +🪙5', '#FFE066', 70);
+    }
+}
+function drawSeason() {
+    const sz = season();
+    if (!sz || state.room !== ROOM.PARADISE || state.gamePhase !== 'playing') return;
+    const emoji = (e, x, y, size) => { ctx.save(); ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); ctx.restore(); };
+    if (sz === 'christmas') {
+        emoji('🎄', 470, 300, 54);
+        ctx.fillStyle = 'rgba(255,255,255,0.85)'; const t = Date.now() / 1000;
+        for (let i = 0; i < 60; i++) { ctx.beginPath(); ctx.arc((i * 71.3 + Math.sin(t + i) * 20) % 800, (i * 53.1 + t * 30) % 600, 1.6, 0, Math.PI * 2); ctx.fill(); }
+    } else for (const [x, y] of [[360, 290], [440, 290]]) emoji('🎃', x, y, 22);   // pumpkins by the fountain
+    for (const it of seasonItems || []) if (!it.got) emoji(sz === 'christmas' ? '🎁' : '🎃', it.x, it.y, 24);
+}
+
+// 🎂 Birthday party (anywhere!)
+let party = null;
+function startParty() {
+    party = { t: 1800, gifts: [0, 1, 2].map(k => ({ x: player.x - 80 + k * 80, y: player.y + 70, got: false })) };
+    state.hats.party = true; state.hat = 'party';
+    [523, 523, 587, 523, 698, 659].forEach((f, i) => tone(f, 0.25, 'triangle', 0.15, null, i * 0.3));   // happy birthday!
+    showToast('🎂 IT\'S A PARTY! 🎈 Open the presents! 🎁', '#FF88CC', 220);
+}
+function updateParty() {
+    if (!party) return;
+    if (--party.t <= 0) { party = null; return; }
+    if (party.t % 25 === 0) spawnParticles(Math.random() * 800, 60 + Math.random() * 200, `hsl(${Math.random() * 360}, 90%, 60%)`, 8);
+    for (const g of party.gifts) if (!g.got && Math.hypot(g.x - player.x, g.y - player.y) < 26) {
+        g.got = true; const n = 10 + Math.floor(Math.random() * 20); state.coins += n; sfx('found');
+        spawnFloatText(g.x, g.y - 20, `🎁 +🪙${n}!`, '#FFE066', 70);
+    }
+}
+function drawParty() {
+    if (!party) return;
+    const t = Date.now() / 1000;
+    const emoji = (e, x, y, size) => { ctx.save(); ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); ctx.restore(); };
+    for (let k = 0; k < 8; k++) emoji('🎈', 60 + k * 100 + Math.sin(t + k) * 10, 560 - ((t * 40 + k * 70) % 520), 26);
+    emoji('🎂', player.x + 40, player.y - 10, 28);
+    for (const g of party.gifts) if (!g.got) emoji('🎁', g.x, g.y, 24);
+}
+
+// 🎆 Fireworks
+let fireworks = 0;
+function updateFireworks() {
+    if (fireworks <= 0) return;
+    fireworks--;
+    if (fireworks % 20 === 0) {
+        const x = 80 + Math.random() * 640, y = 80 + Math.random() * 200, col = `hsl(${Math.random() * 360}, 100%, 65%)`;
+        for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2, sp = 2 + Math.random() * 2; particles.push({ x, y, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, life: 50, maxLife: 50, color: col, r: 3 }); }
+        tone(90 + Math.random() * 60, 0.3, 'sawtooth', 0.12, 40);
+    }
+}
+function drawFireworksSky() { if (fireworks > 0) { ctx.fillStyle = 'rgba(0,0,30,0.35)'; ctx.fillRect(0, 0, 800, 600); } }
+
+// ⏰ The Time Machine (in your secret room)
+const TIME_MACHINE = { x: 650, y: 400 };
+function timeMachineItems() {
+    const go = (icon, name, desc, room, msg) => ({ icon, name, desc, cost: 0, status: 'GO!', action: () => { menu = null; giveAward('timeTravel'); sfx('portal'); changeRoom(room); showToast(msg, '#CCAAFF', 240); } });
+    return [
+        go('🏰', 'Knights & Castles', 'Long, long ago… a Dragon King!',  ROOM.MEDIEVAL,   '⏰ WHOOSH! Back to the days of knights and castles!'),
+        go('🦖', 'Dinosaur Times',    'When dinosaurs ruled the Earth',  ROOM.DINO,       '⏰ WHOOSH! 65 million years ago!'),
+        go('🏛', 'Ancient Greece',    'Heroes, monsters and gods',       ROOM.GREECE,     '⏰ WHOOSH! Ancient Greece!'),
+        go('🚀', 'The Future',        'A base on the Moon!',             ROOM.MOONBASE,   '⏰ WHOOSH! The far, far future!'),
+    ];
+}
+
+// 📺 Your own TV channel (walk up to your TV at home)
+let tvShow = null;
+const TV_CHANNELS = ['📰 NEWS', '🎨 CARTOONS', '🎵 MUSIC'];
+function nextTvChannel() { tvShow.ch++; tvShow.t = 0; if (tvShow.ch >= TV_CHANNELS.length) tvShow = null; else sfx('pop'); }
+function drawTvShow() {
+    if (!tvShow) return;
+    const t = Date.now() / 1000;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, 800, 600);
+    ctx.fillStyle = '#222'; ctx.fillRect(170, 130, 460, 320); ctx.fillStyle = '#4A8AC0'; ctx.fillRect(190, 150, 420, 260);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center'; ctx.fillText(`📺 YOUR TV CHANNEL — ${TV_CHANNELS[tvShow.ch]}`, 400, 122);
+    ctx.fillStyle = '#FFF'; ctx.font = 'bold 15px Arial';
+    if (tvShow.ch === 0) {
+        ctx.fillText('📰 TODAY\'S NEWS', 400, 185); ctx.font = '13px Arial';
+        [`A brave hero has ${state.coins} coins!`, `${awards.kills || 0} monsters beaten so far!`, `${Object.keys(awards.got).length} awards won!`,
+         godParent() ? `They say the hero is the child of ${godParent().name}!` : 'Is the hero secretly a demigod? Nobody knows!',
+         state.hogwarts ? 'And they go to Hogwarts!' : 'Weather: sunny with a chance of monsters.'].forEach((line, i) => ctx.fillText(line, 400, 220 + i * 30));
+    } else if (tvShow.ch === 1) {
+        const x = 220 + ((t * 80) % 360);
+        ctx.font = '40px Arial'; ctx.fillText('👾', x, 300 + Math.sin(t * 8) * 10); ctx.fillText('🐶', x - 70, 300 + Math.abs(Math.sin(t * 8)) * -14);
+        ctx.font = 'bold 15px Arial'; ctx.fillText('The Adventures of Gloop and Puppy!', 400, 185);
+    } else {
+        ctx.fillText('🎵 DANCE PARTY! 🎵', 400, 185); ctx.font = '36px Arial';
+        for (let k = 0; k < 6; k++) ctx.fillText(['🎵', '🎶', '💃', '🕺', '🎸', '🥁'][k], 230 + k * 68, 300 + Math.sin(t * 6 + k) * 20);
+        if (tvShow.t % 20 === 0) tone([523, 659, 784, 659][Math.floor(tvShow.t / 20) % 4], 0.15, 'triangle', 0.1);
+    }
+    ctx.fillStyle = '#AAA'; ctx.font = '11px Arial'; ctx.fillText(`${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: change channel`, 400, 470);
+    ctx.restore();
+}
+
+// 🌟 THE SECRET ENDING: a golden door in Heaven that only opens for the very best players
+const ENDING_DOOR = { x: 250, y: 160 }, ENDING_AWARDS = 60;
+function endingUnlocked() { return Object.keys(awards.got).length >= ENDING_AWARDS && awards.got.bossRush; }
+function drawEndingDoor() {
+    const { x, y } = ENDING_DOOR, open = endingUnlocked(), t = Date.now() / 1000;
+    ctx.save(); ctx.shadowColor = '#FFD700'; ctx.shadowBlur = open ? 20 + Math.sin(t * 3) * 8 : 6;
+    ctx.fillStyle = open ? '#FFD700' : '#C8B060'; ctx.fillRect(x - 18, y - 30, 36, 50); ctx.beginPath(); ctx.arc(x, y - 30, 18, Math.PI, 0); ctx.fill();
+    ctx.shadowBlur = 0; ctx.fillStyle = open ? '#FFF8D0' : '#8A7030'; ctx.fillRect(x - 12, y - 24, 24, 44);
+    ctx.fillStyle = '#665'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(open ? '🌟 THE SECRET ENDING' : '🔒 ???', x, y + 34);
+    ctx.restore();
+}
+let credits = null;
+const CREDIT_LINES = ['🌟 YOU FOUND THE SECRET ENDING! 🌟', '', 'THE LIGHT OF PARADISE', '', 'You beat the Devil, the bosses and the Mega Boss.',
+    'You found secret rooms and hidden treasure.', 'You made friends with pets, monsters and gods.', '', 'You are a TRUE HERO.', '',
+    'Game ideas by: the best game designer ever', 'Starring: YOU!', '', 'Thank you for playing! ❤', '', '+🪙500'];
+function startCredits() {
+    credits = { y: 640 }; giveAward('secretEnding'); state.coins += 500; addScore(1000);
+    for (let k = 0; k < 4; k++) spawnConfettiAt(200 + k * 130, 200);
+    [523, 659, 784, 1046, 784, 1046].forEach((f, i) => tone(f, 0.4, 'triangle', 0.15, null, i * 0.35));
+}
+function updateCredits() {
+    credits.y -= 0.8;
+    if (Math.random() < 0.05) spawnParticles(Math.random() * 800, Math.random() * 600, '#FFE066', 4);
+    if (credits.y < -CREDIT_LINES.length * 34 - 40) credits = null;
+}
+function drawCredits() {
+    if (!credits) return;
+    ctx.save(); ctx.fillStyle = 'rgba(10,5,30,0.92)'; ctx.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 60; i++) drawStar((i * 137) % 800, (i * 89 + Date.now() / 50) % 600, 2 + (i % 3), '#FFE066');
+    ctx.textAlign = 'center';
+    CREDIT_LINES.forEach((line, i) => { ctx.fillStyle = i === 0 ? '#FFD700' : '#FFFFFF'; ctx.font = i === 0 || i === 2 ? 'bold 26px Arial' : '18px Arial'; ctx.fillText(line, 400, credits.y + i * 34); });
+    ctx.restore();
+}
+function drawTimeMachineAndHints() {
+    if (state.room !== ROOM.SECRETROOM) return;
+    const { x, y } = TIME_MACHINE, t = Date.now() / 1000;
+    ctx.save(); ctx.fillStyle = '#5A5A7A'; ctx.fillRect(x - 30, y - 40, 60, 70); ctx.fillStyle = `hsl(${(t * 100) % 360}, 80%, 60%)`; ctx.beginPath(); ctx.arc(x, y - 6, 18, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '22px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('⏰', x, y - 6);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textBaseline = 'alphabetic'; ctx.fillText('THE TIME MACHINE', x, y + 46);
+    ctx.fillStyle = '#CCAAFF'; ctx.fillText(`🌟 Psst… the secret ending is behind a golden door in Heaven. It needs ${ENDING_AWARDS} awards and the Boss Rush crown!`, 400, 560);
+    ctx.restore();
+    if (Math.hypot(player.x - x, player.y - y) < 44 && !menu) drawSpeech({ x, y: y - 30 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Travel in time!`);
+}
+
 // ── MINI-GAMES (at the Race Master): hide & seek, fishing, treasure, football, snowballs, dancing, cooking, maze race, tag, quiz ──
 let miniGame = null;   // the in-world mini-game that's running: { kind, timer, ... }
 function winMiniGame(text, coins) { state.coins += coins; addScore(coins * 2); giveAward('miniGame'); sfx('win'); spawnConfettiAt(player.x, player.y); showToast(`🏆 ${text} +🪙${coins}`, '#FFD700', 240); }
@@ -2495,6 +2681,8 @@ function miniGameItems() {
         go('🌀', 'Maze Race',        'Get through the maze in 60 seconds',   () => { delete worldBlocks.maze; changeRoom(ROOM.MAZE); place().enemies = []; place().raceTimer = 3600; showToast('🌀 MAZE RACE! Reach the 💰 in 60 seconds!', '#FFE066', 200); }),
         go('🏃', 'Tag',              activeFriends().length ? 'Don\'t be IT when time runs out!' : 'Catch 4 kids before time runs out', startTag),
         go('❓', 'Quiz Show',        '5 questions — how many can you get?',  startQuiz),
+        go('🎂', 'Birthday Party',   'Cake, balloons, presents and hats!',   startParty),
+        go('🎆', 'Fireworks Show',   'Ooooh! Aaaah!',                         () => { fireworks = 1200; showToast('🎆 FIREWORKS SHOW! Ooooh! Aaaah!', '#FFE066', 200); }),
     ];
 }
 
@@ -3035,7 +3223,7 @@ function drawSubplaces() {
     const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
     const t = Date.now() / 1000;
     for (const [id, sp] of Object.entries(SUBPLACES)) {   // doors in the places you know
-        if (state.room !== sp.parent) continue;
+        if (state.room !== sp.parent || sp.door.x < 0) continue;   // some places have no door (time machine, shrink ray)
         const { x, y } = sp.door;
         if (id === 'secretroom') { if (Math.sin(t * 3) > 0.6) drawStar(x, y, 4, '#FFE066'); continue; }   // 🕵 shhh — just a little twinkle
         ctx.save(); ctx.fillStyle = 'rgba(40,20,10,0.85)'; ctx.fillRect(x - 16, y - 22, 32, 40);
@@ -3216,8 +3404,15 @@ function updatePotions() {
     }
 }
 
-function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); updateRides(); updateYard(); updateMiniGame(); updateMazeRace(); updateFightExtras(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); drawRides(); drawYard(); drawSecretRoom2(); drawMiniGame(); drawMazeRace(); drawFightExtras(); }
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); updateRides(); updateYard(); updateMiniGame(); updateMazeRace(); updateFightExtras(); updateStorm(); updateSeason(); updateParty(); updateFireworks(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); drawRides(); drawYard(); drawSecretRoom2(); drawMiniGame(); drawMazeRace(); drawFightExtras(); drawFireworksSky(); drawSeason(); drawParty(); drawTimeMachineAndHints(); drawHeroCape(); }
+function drawHeroCape() {   // 🦸 a red cape flapping behind you
+    if (state.heroSuit !== 'on' || state.gamePhase !== 'playing') return;
+    const f = state.faceX < 0 ? 1 : -1, flap = Math.sin(Date.now() / 100) * 4;
+    ctx.save(); ctx.globalAlpha = 0.85; ctx.fillStyle = '#E02020';
+    ctx.beginPath(); ctx.moveTo(player.x - 8, player.y - 8); ctx.lineTo(player.x + 8, player.y - 8); ctx.lineTo(player.x + f * 22 + 6, player.y + 18 + flap); ctx.lineTo(player.x + f * 22 - 10, player.y + 14 - flap); ctx.closePath(); ctx.fill();
+    ctx.restore();
+}
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -3631,6 +3826,7 @@ function nearPot() { return state.room === ROOM.HOUSE ? GARDEN_POTS.findIndex(p 
 // Things you can do at home with the main button
 function tryHomeAction() {
     if (state.room !== ROOM.HOUSE) return false;
+    if (state.furniture.tv && nearHome({ x: 400, y: 150 }, 44)) { tvShow = { ch: 0, t: 0 }; return true; }
     if (nearHome(CATALOGUE)) { openMenu('📖 FURNITURE CATALOGUE', furnitureItems); return true; }
     if (nearHome(HOUSE_BED, 40)) {
         state.playerHp = fullHearts();
@@ -3801,7 +3997,7 @@ const ARENA_GATE  = { x: 270, y: 545 };
 const ARENA_EXIT  = { x: 400, y: 578 };
 const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon',
                      'wizard', 'mummyking', 'candymonster', 'bigdevil', 'queen', 'hydra', 'medusa', 'minotaur', 'cerberus',
-                     'megarobot', 'kraken', 'yeti', 'zombieking', 'alienqueen', 'lasershark', 'spiderqueen', 'megaboss', 'bedmonster', 'bonerex'];
+                     'megarobot', 'kraken', 'yeti', 'zombieking', 'alienqueen', 'lasershark', 'spiderqueen', 'megaboss', 'bedmonster', 'bonerex', 'dragonking'];
 const BOSS_RUSH   = [
     () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
     () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
@@ -4039,6 +4235,15 @@ const SUBPLACES = {
         enemies: () => [e0('dustbunny', 250, 250), e0('dustbunny', 550, 250), e0('dustbunny', 400, 450), e0('bedmonster', 600, 400, { r: 30, coinDrop: 30 })],
         paint: (g, R) => { fill(g, '#2A2438'); speckle(g, R, 500, r => `rgba(${120 + r * 60},${110 + r * 60},${130 + r * 60},0.35)`, 6, 6);
                            g.fillStyle = '#4A3A2A'; g.fillRect(0, 46, 800, 40); for (const x of [20, 760]) g.fillRect(x, 46, 20, 554); } },
+    medieval:     { parent: 'secretroom', door: { x: -999, y: -999 }, back: { x: 650, y: 330 }, name: '🏰 KNIGHTS & CASTLES (long ago!)', doorLabel: '', song: 'mall', item: '🛡', count: 3,
+        enemies: () => [e0('knight', 250, 250), e0('knight', 550, 250), e0('knight', 400, 380), e0('dragonking', 600, 160, { r: 34, coinDrop: 30 })],
+        paint: (g, R) => { fill(g, '#8AA85A'); speckle(g, R, 700, r => `hsla(${80 + r * 30}, 40%, ${35 + r * 12}%, 0.6)`, 4, 3);
+                           g.fillStyle = '#A8A098'; g.fillRect(250, 50, 300, 90); for (let k = 0; k < 7; k++) g.fillRect(250 + k * 46, 36, 24, 16);
+                           g.fillStyle = '#5A3A1A'; g.fillRect(380, 90, 40, 50); g.fillStyle = '#E04040'; g.fillRect(398, 10, 4, 30); g.beginPath(); g.moveTo(402, 12); g.lineTo(426, 20); g.lineTo(402, 28); g.fill(); } },
+    microworld:   { parent: 'paradise', door: { x: -999, y: -999 }, back: { x: 400, y: 290 }, name: '🐜 THE MICRO WORLD (you are TINY!)', doorLabel: '', song: 'jungle', item: '🍪', count: 5,
+        enemies: () => [e0('ant', 200, 200), e0('ant', 600, 200), e0('ant', 300, 450), e0('ant', 550, 420), e0('ant', 400, 300)],
+        paint: (g, R) => { fill(g, '#6A9A4A'); for (let i = 0; i < 80; i++) { g.strokeStyle = `hsla(${90 + R() * 30}, 50%, ${30 + R() * 20}%, 0.9)`; g.lineWidth = 6; const x = R() * 800; g.beginPath(); g.moveTo(x, 600); g.lineTo(x + (R() - 0.5) * 60, 46 + R() * 300); g.stroke(); }   // grass taller than you!
+                           g.fillStyle = '#4A8A2A'; g.beginPath(); g.ellipse(600, 470, 120, 50, 0.3, 0, Math.PI * 2); g.fill(); } },
     backyard:     { parent: 'house', door: { x: 40, y: 320 }, name: '🏡 YOUR BACKYARD', doorLabel: '🚪 Backyard', song: 'house', item: '', count: 0,
         enemies: () => [],
         paint: (g, R) => { fill(g, '#7AC05A'); speckle(g, R, 900, r => `hsla(${95 + r * 25}, 50%, ${38 + r * 14}%, 0.6)`, 3, 3);
@@ -4088,6 +4293,7 @@ function tryPlaceAction() {
     if (tryHeroAction(nearIt)) return true;
     if (state.room === ROOM.PARADISE && nearIt(GLOOP, 40)) { befriendGloop(); return true; }
     if (state.room === ROOM.BACKYARD && tryYardAction(nearIt)) return true;
+    if (state.room === ROOM.SECRETROOM && nearIt(TIME_MACHINE, 44)) { openMenu('⏰ THE TIME MACHINE — when to?', timeMachineItems); return true; }
     if (state.room === ROOM.SECRETROOM && !place().chest && nearIt(SECRET_CHEST, 40)) {
         place().chest = true; const n = 20 + Math.floor(Math.random() * 30); state.coins += n; sfx('found'); spawnParticles(SECRET_CHEST.x, SECRET_CHEST.y, '#FFD700', 24);
         showToast(`🕵 Your secret treasure chest: +🪙${n}!`, '#FFD700', 200); giveAward('secretRoom');
@@ -4410,7 +4616,7 @@ function updatePlaceExits() {
     if ((state.room === ROOM.STADIUM || state.room === ROOM.SNOWFORT) && near(SUBPLACE_EXIT, 26)) { miniGame = null; changeRoom(ROOM.VOID); player.x = RACE_MASTER.x - 60; player.y = RACE_MASTER.y; return true; }
     for (const [id, sp] of Object.entries(SUBPLACES)) {
         if (state.room === sp.parent && near(sp.door, 26)) { changeRoom(id); showToast(`${sp.name} — find all ${sp.count} ${sp.item}!`, '#FFE066', 220); return true; }
-        if (state.room === id && near(SUBPLACE_EXIT, 26)) { changeRoom(sp.parent); player.x = sp.door.x; player.y = sp.door.y - 50; return true; }
+        if (state.room === id && near(SUBPLACE_EXIT, 26)) { const b = sp.back || { x: sp.door.x, y: sp.door.y - 50 }; changeRoom(sp.parent); player.x = b.x; player.y = b.y; return true; }
     }
     if (state.room === ROOM.VOID && near(ROCKET, 28))        { showToast('🚀 3… 2… 1… BLAST OFF!', '#FFE066'); sfx('boom'); changeRoom(ROOM.SPACE); return true; }
     if (state.room === ROOM.SPACE && near(ROCKET, 28))       { showToast('🚀 Back home to the Void!', '#FFE066'); changeRoom(ROOM.VOID); player.x = ROCKET.x + 60; return true; }
@@ -4426,6 +4632,11 @@ function updatePlaceExits() {
     if ((state.room === ROOM.CHESS || state.room === ROOM.LIBRARY) && near(SCHOOL_EXIT, 26)) { changeRoom(ROOM.PARADISE); player.x = 254; player.y = 290; return true; }
     if (state.room === ROOM.CAMP && near(CAMP_EXIT, 26))      { changeRoom(ROOM.MALL); player.x = 620; player.y = 300; return true; }
     if (state.room === ROOM.CAMP && near(OLYMPUS_STAIRS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
+    if (state.room === ROOM.HEAVEN && near(ENDING_DOOR, 26)) {
+        if (endingUnlocked()) { startCredits(); player.y += 50; }
+        else { showToast(`🔒 The SECRET ENDING needs ${ENDING_AWARDS} awards (you have ${Object.keys(awards.got).length}) and the Boss Rush crown!`, '#FFE8A0', 240); player.y += 50; }
+        return true;
+    }
     if (state.room === ROOM.HEAVEN && near(HEAVEN_OLYMPUS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
     if (state.room === ROOM.OLYMPUS && near(OLYMPUS_EXIT, 30)) { changeRoom(ROOM.HEAVEN); player.x = HEAVEN_OLYMPUS.x - 50; player.y = HEAVEN_OLYMPUS.y - 30; return true; }
     if (state.room === ROOM.VOID && near(ARENA_GATE, 26))    { changeRoom(ROOM.ARENA); showToast(`⚔ BOSS RUSH! Beat all ${BOSS_RUSH.length} bosses in a row!`, '#FF8866', 200); return true; }
@@ -4911,6 +5122,8 @@ const PORTALS = {
     secretroom: [],
     stadium: [],
     snowfort: [],
+    medieval: [],
+    microworld: [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
     toy:     [{ x: 740, y: 120, shape: 'star'    }],
     pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
@@ -5265,6 +5478,10 @@ const AWARDS = [
     { id: 'goal',        icon: '⚽', name: 'GOOOAL!',           desc: 'Score a goal' },
     { id: 'burp',        icon: '🫢', name: 'Excuse Me!',        desc: 'Do a big burp (U)' },
     { id: 'sneeze',      icon: '🤧', name: 'Bless You!',        desc: 'Sneeze everyone away (I)' },
+    { id: 'superhero',   icon: '🦸', name: 'Super Hero',        desc: 'Wear the Super Hero Suit' },
+    { id: 'timeTravel',  icon: '⏰', name: 'Time Traveller',    desc: 'Use the Time Machine' },
+    { id: 'season',      icon: '🎃', name: 'Happy Holidays',    desc: 'Find a Halloween pumpkin or Christmas present' },
+    { id: 'secretEnding', icon: '🌟', name: 'THE SECRET ENDING', desc: 'Only the very best players find it…' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -5330,7 +5547,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt', 'mirrorShield', 'saberColor'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt', 'mirrorShield', 'saberColor', 'heroSuit'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -6177,7 +6394,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0, petCostume: null, petCostumes: {}, yard: {}, magicGarden: [0, 0, 0], farmAt: 0, mirrorShield: false, saberColor: 0,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0, petCostume: null, petCostumes: {}, yard: {}, magicGarden: [0, 0, 0], farmAt: 0, mirrorShield: false, saberColor: 0, heroSuit: null,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -6329,7 +6546,7 @@ function updatePlayer() {
     if (updateYardRide()) return;   // 🎢 on a ride in the backyard
 
     const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1) * mountSpeed() * playerSpeedFactor()
-              * (godPassive('fast') ? 1.3 : 1) * (godSpeedTimer > 0 ? 1.7 : 1) * (state.house === 'slytherin' ? 1.15 : 1)
+              * (godPassive('fast') ? 1.3 : 1) * (godSpeedTimer > 0 ? 1.7 : 1) * (state.house === 'slytherin' ? 1.15 : 1) * (state.heroSuit === 'on' ? 1.25 : 1)
               * (state.tiny > 0 ? 1.4 : state.giant > 0 ? 0.9 : 1);
     let dx = 0, dy = 0;
     if (!state.shopOpen && !state.awardsOpen && !menu) {
@@ -6369,7 +6586,7 @@ function updatePlayer() {
     // Move, but blocks are solid (try each direction separately so you slide along walls)
     const nx = Math.max(18, Math.min(GAME_W - 18, player.x + dx));
     const ny = Math.max(52, Math.min(GAME_H - 18, player.y + dy));
-    const flying = ['dragon', 'broom', 'car', 'pegasus', 'jetpack'].includes(state.mount) || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
+    const flying = ['dragon', 'broom', 'car', 'pegasus', 'jetpack'].includes(state.mount) || state.heroSuit === 'on' || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
     if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
     if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
     if (state.mount === 'duck' && (dx || dy) && Math.random() < 0.01) { tone(700, 0.12, 'square', 0.12, 500); spawnFloatText(player.x, player.y - 30, 'QUACK!', '#FFE066', 40); }
@@ -7943,8 +8160,9 @@ function updateWeather() {
     if (--P.weatherTimer <= 0) {
         P.weatherTimer = WEATHER_FRAMES;
         const was = P.weather, r = Math.random();
-        P.weather = r < 0.5 ? 'sun' : r < 0.8 ? 'rain' : 'snow';
-        if (was === 'rain' && P.weather !== 'rain') P.rainbowTimer = RAINBOW_FRAMES;   // 🌈 after the rain!
+        P.weather = r < 0.45 ? 'sun' : r < 0.7 ? 'rain' : r < 0.85 ? 'snow' : 'storm';
+        if (P.weather === 'storm' && state.room === ROOM.PARADISE) showToast('⛈ A THUNDERSTORM is coming!', '#AABBFF', 160);
+        if ((was === 'rain' || was === 'storm') && P.weather !== 'rain' && P.weather !== 'storm') P.rainbowTimer = RAINBOW_FRAMES;   // 🌈 after the rain!
     }
     // Rain waters the thirsty crops for you
     if (P.weather === 'rain' && P.weatherTimer % 150 === 0) {
@@ -7961,7 +8179,8 @@ function updateWeather() {
 function drawWeather() {
     const P = paradise, t = Date.now() / 1000;
     if (P.phase !== 'day') return;
-    if (P.weather === 'rain') {
+    if (P.weather === 'storm' && stormFlash > 0) { ctx.fillStyle = `rgba(255,255,255,${stormFlash / 12})`; ctx.fillRect(0, 0, 800, 600); }
+    if (P.weather === 'rain' || P.weather === 'storm') {
         ctx.fillStyle = 'rgba(40,50,80,0.18)'; ctx.fillRect(0, 0, 800, 600);
         ctx.strokeStyle = 'rgba(180,210,255,0.55)'; ctx.lineWidth = 1.2;
         ctx.beginPath();
@@ -8112,6 +8331,12 @@ function hatItems() {
             },
         })),
         { icon: '🐾', name: 'Pet Costumes', desc: 'Dress up your pet!', cost: 0, status: 'LOOK →', action: () => openMenu('🐾 PET COSTUMES', petCostumeItems) },
+        { icon: '🦸', name: 'Super Hero Suit', desc: 'A cape! Fly over walls and run faster', cost: 100,
+          status: state.heroSuit === 'on' ? 'WEARING' : state.heroSuit ? 'OWNED — wear' : null,
+          action: () => {
+              if (state.heroSuit) { state.heroSuit = state.heroSuit === 'on' ? 'off' : 'on'; return; }
+              if (spend(100)) { state.heroSuit = 'on'; giveAward('superhero'); showToast('🦸 SUPER HERO! You can fly over walls now!', '#FF4444', 200); }
+          } },
     ];
 }
 const PET_COSTUMES = [
@@ -11715,6 +11940,8 @@ function update() {
     if (state.gamePhase === 'intro') return;
     if (race) { updateRace(); updateParticles(); return; }   // everything waits while you race
     if (petBattle) { updatePetBattle(); updateParticles(); return; }
+    if (tvShow) { if (++tvShow.t > 900) tvShow = null; return; }
+    if (credits) { updateCredits(); updateParticles(); return; }
     if (danceBattle) { updateDanceBattle(); updateParticles(); return; }
 
     if (settings.creative) {   // Creative Mode: coins never run out (your real coins are kept safe)
@@ -11791,7 +12018,7 @@ function draw() {
     if (state.room === ROOM.PARADISE) drawParadise();
     if (state.room === ROOM.SECRET)   drawSecretRoom();
     if (state.room === ROOM.UNDERGROUND) drawUnderground();
-    if (state.room === ROOM.HEAVEN)   { drawHeaven(); drawOlympusStairs(HEAVEN_OLYMPUS, '🏛 Stairs to Mount Olympus'); }
+    if (state.room === ROOM.HEAVEN)   { drawHeaven(); drawOlympusStairs(HEAVEN_OLYMPUS, '🏛 Stairs to Mount Olympus'); drawEndingDoor(); }
     if (state.room === ROOM.HOUSE)    drawHouse();
     if (PLACES[state.room])           drawPlace();
     drawPlayer();
@@ -11824,6 +12051,8 @@ function draw() {
     drawRace();
     drawPetBattle();
     drawDanceBattle();
+    drawTvShow();
+    drawCredits();
     if (state.levelComplete) drawLevelComplete();
     if (state.won)           drawWin();
 
