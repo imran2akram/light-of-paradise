@@ -381,6 +381,7 @@ const MELEE_WEAPONS = [
     { id: 'lightsaber', name: 'Lightsaber', icon: '🔦', cost: 90, desc: 'VWOOM! Fast, glowing and super strong' },
     { id: 'gianthammer', name: 'Giant Hammer', icon: '🔨', cost: 70, desc: 'HUGE smash that shakes the whole room' },
     { id: 'superfist', name: 'Super Fist', icon: '👊', cost: 40, desc: 'Punches send monsters FLYING' },
+    { id: 'rubberchicken', name: 'Rubber Chicken', icon: '🐔', cost: 15, desc: 'SQUAWK! Silly but it works' },
 ];
 const SABER_COLORS = ['#44AAFF', '#44FF66', '#FF4444', '#CC66FF'];
 
@@ -446,6 +447,10 @@ function weaponSwing() {
         meleeHit(big ? 50 : 42, big ? 6 : 3, big ? 220 : 120, big ? 60 : 20);
         if (big) spawnFloatText(player.x, player.y - 40, 'SUPER PUNCH!', '#FF6644', 50);
         triggerShake(big ? 12 : 4); sfx(big ? 'superHit' : 'hit'); fight.cooldown = big ? 18 : 12;
+    } else if (w === 'rubberchicken') {   // SQUAWK!
+        meleeFx('sword', 50);
+        if (meleeHit(50, 2, 80, 40)) spawnFloatText(player.x, player.y - 40, ['SQUAWK!', 'BAWK BAWK!', 'SQUEAK!', 'BONK!'][fight.combo % 4], '#FFE066', 45);
+        tone(1400, 0.1, 'square', 0.12, 700); fight.cooldown = 12;
     } else if (w === 'whip') {
         meleeFx('whip', 140);
         if (lineHit(140, 8, 2, -45, 25)) spawnFloatText(player.x, player.y - 40, 'CRACK!', '#FFAA66', 40);
@@ -1039,6 +1044,7 @@ const GADGETS = [
     { id: 'hook',      name: 'Grappling Hook',    icon: '🪝', cost: 35, cooldown: 45,  desc: 'Zip across the room or pull monsters in' },
     { id: 'firebow',   name: 'Fire Bow',          icon: '🏹', cost: 50, cooldown: 30,  desc: 'Three flaming arrows!' },
     { id: 'bubblegun', name: 'Bubble Gun',        icon: '🫧', cost: 30, cooldown: 40,  desc: 'Traps monsters in floating bubbles' },
+    { id: 'whoopee',   name: 'Whoopee Cushion',   icon: '🎈', cost: 12, cooldown: 40,  desc: 'Monsters sit on it… PFFFT! 😂' },
 ];
 const ARROWS = [
     { kind: 'fire', power: POWER.BRIMSTONE, color: '#FF5522', label: '🔥 Fire arrow' },
@@ -1092,11 +1098,16 @@ const MODS = [
     { id: 'lowGravity',   icon: '🎈', name: 'Low Gravity',      desc: 'Floaty, slidey moving everywhere' },
     { id: 'mirror',       icon: '🪞', name: 'Mirror World',     desc: 'Left and right swap sides' },
     { id: 'upsideDown',   icon: '🙃', name: 'Upside Down',      desc: 'The whole game flips over' },
+    { id: 'cheese',       icon: '🧀', name: 'Cheese World',     desc: 'Every monster and coin is CHEESE' },
+    { id: 'monsterHats',  icon: '🎩', name: 'Monster Hats',     desc: 'Monsters wear funny hats' },
+    { id: 'pirateTalk',   icon: '🏴‍☠️', name: 'Pirate Town',      desc: 'Everyone in town talks like a pirate, arr!' },
 ];
 
-function modItems() {
-    return MODS.map(m => ({ icon: m.icon, name: m.name, desc: m.desc, cost: 0, status: mod(m.id) ? 'ON ✓' : 'OFF',
+function modItems(page = 0) {
+    const items = MODS.slice(page * 10, page * 10 + 10).map(m => ({ icon: m.icon, name: m.name, desc: m.desc, cost: 0, status: mod(m.id) ? 'ON ✓' : 'OFF',
         action: () => { settings.mods[m.id] = !mod(m.id); applyUpsideDown(); saveSettings(); if (mod(m.id)) giveAward('modder'); } }));
+    if (MODS.length > page * 10 + 10) items.push({ icon: '➡', name: 'More mods', desc: 'Even sillier!', cost: 0, status: 'NEXT', action: () => openMenu('🧩 MORE MODS', () => modItems(page + 1)) });
+    return items;
 }
 
 // Speeds and times picked in Settings
@@ -1471,6 +1482,7 @@ function handleTap(x, y) {
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
         if (Math.hypot(x - VDANCE.x, y - VDANCE.y) < VDANCE.r * 1.3) { dance(); return true; }
         if (Math.hypot(x - VFART.x,  y - VFART.y)  < VFART.r * 1.3)  { fart();  return true; }
+        if (Math.hypot(x - VSILLY.x, y - VSILLY.y) < VSILLY.r * 1.3) { (sillyTurn++ % 2 ? sneeze : burp)(); return true; }
     }
     if ((state.won || state.levelComplete) && inRect(x, y, END_BTN)) { pressStart(); return true; }
     if (state.shopOpen) {
@@ -1530,6 +1542,8 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyT') useGodPower();
     if (e.code === 'KeyK') toggleControlsPanel();
     if (e.code === 'KeyF') fart();
+    if (e.code === 'KeyU') burp();
+    if (e.code === 'KeyI') sneeze();
     // Number keys in the shop: 1-8 skins, 9 Shield Bubble
     const digit = /^Digit([1-9])$/.exec(e.code);
     if (digit && state.shopOpen) shopSelect(Number(digit[1]) - 1);
@@ -1702,6 +1716,8 @@ const PAD_COMBOS = [
     { btn: PAD.X,  label: 'Dance',     run: () => dance() },
     { btn: PAD.B,  label: 'Fart',      run: () => fart() },
     { btn: PAD.Y,  label: 'Awards',    run: () => { if (canOpenShop()) state.awardsOpen = !state.awardsOpen; } },
+    { btn: PAD.RB, label: 'Burp',      run: () => burp() },
+    { btn: PAD.LT, label: 'Sneeze',    run: () => sneeze() },
     { btn: PAD.LB, label: 'Hide help', run: () => toggleControlsPanel() },
 ];
 
@@ -2346,7 +2362,23 @@ function drawGloop() {
 }
 
 // ── FIGHTING EXTRAS: ninja stars, laser gun, mega boomerang, grappling hook, fire bow, bubble gun ──
-let ninjaStars = [], bubbles = [], hook = null;
+let ninjaStars = [], bubbles = [], hook = null, cushions = [];
+// 🫢 Burp: a sound wave in front of you · 🤧 Sneeze: ah… ah… ACHOO blows everyone away
+const VSILLY = { x: 510, y: 445, r: 18 };
+let sillyTurn = 0, sneezeTimer = 0, burpCooldown = 0;
+function burp() {
+    if (!playing() || burpCooldown > Date.now()) return;
+    burpCooldown = Date.now() + 1200;
+    lineHit(150, 40, 1, 90, 40);
+    for (let k = 0; k < 3; k++) fight.fx.push({ kind: 'whip', x: player.x, y: player.y, a: Math.atan2(state.faceY, state.faceX), r: 60 + k * 40, life: 12 + k * 4 });
+    tone(110, 0.45, 'sawtooth', 0.25, 70); spawnFloatText(player.x, player.y - 40, 'BUUUUURP!', '#9ACD32', 60); giveAward('burp');
+    const n = nearbyTownsfolk(120)[0]; if (n) say(n, 'Say excuse me!');
+}
+function sneeze() {
+    if (!playing() || sneezeTimer > 0) return;
+    sneezeTimer = 60; spawnFloatText(player.x, player.y - 40, 'Ah… ah…', '#AADDFF', 55);
+}
+
 function useFightGadget(id, a) {
     if (id === 'shuriken') {
         for (const off of [-0.2, 0, 0.2]) ninjaStars.push({ x: player.x, y: player.y, vx: Math.cos(a + off) * 10, vy: Math.sin(a + off) * 10, life: 60, spin: 0 });
@@ -2378,6 +2410,10 @@ function useFightGadget(id, a) {
         for (const off of [-0.15, 0, 0.15]) projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a + off) * 9, dy: Math.sin(a + off) * 9, color: '#FF5522', power: POWER.BRIMSTONE, life: 80, r: 6 });
         sfx('shoot'); return true;
     }
+    if (id === 'whoopee') {
+        cushions.push({ x: player.x - state.faceX * 20, y: player.y + 12 }); if (cushions.length > 3) cushions.shift();
+        spawnFloatText(player.x, player.y - 30, '🎈 cushion down!', '#FF88CC', 40); sfx('pop'); return true;
+    }
     if (id === 'bubblegun') {
         bubbles.push({ x: player.x, y: player.y, vx: Math.cos(a) * 5, vy: Math.sin(a) * 5, life: 90 });
         sfx('pop'); return true;
@@ -2401,6 +2437,19 @@ function updateFightExtras() {
         }
     }
     bubbles = bubbles.filter(b => b.life > 0);
+    for (let i = cushions.length - 1; i >= 0; i--) {   // 🎈 PFFFT!
+        const c = cushions[i], e = targetableEnemies().find(e => Math.hypot(e.x - c.x, e.y - c.y) < e.r + 12);
+        if (!e) continue;
+        cushions.splice(i, 1); e.stun = Math.max(e.stun || 0, 150); damageEnemy(e, POWER.NONE);
+        sfx('fart'); spawnFloatText(e.x, e.y - 30, 'PFFFFT! 😳', '#FF88CC', 70);
+        for (const o of targetableEnemies()) if (o !== e && Math.hypot(o.x - e.x, o.y - e.y) < 160) { o.stun = Math.max(o.stun || 0, 90); spawnFloatText(o.x, o.y - 24, 'HA HA!', '#FFE066', 40); }
+    }
+    for (const e of roomEnemies()) if (e.dancing > 0) e.dancing--;
+    if (sneezeTimer > 0 && --sneezeTimer === 0) {   // ACHOOOO!
+        pushAll(320, 400); hitAll(1, POWER.NONE, 400);
+        for (let k = 0; k < 40; k++) { const a = Math.random() * Math.PI * 2; particles.push({ x: player.x, y: player.y - 10, dx: Math.cos(a) * 5, dy: Math.sin(a) * 5, life: 40, maxLife: 40, color: 'rgba(220,240,255,0.8)', r: 4 }); }
+        triggerShake(20); tone(300, 0.35, 'sawtooth', 0.2, 900); spawnFloatText(player.x, player.y - 44, 'ACHOOOO!!!', '#AADDFF', 70); giveAward('sneeze');
+    }
     for (const e of roomEnemies()) if (e.bubbled > 0) { e.bubbled--; if (!BOSS_TYPES.includes(e.type)) e.y = Math.max(70, e.y - 0.3); if (e.bubbled === 0) spawnParticles(e.x, e.y, '#AADDFF', 6); }
     if (hook) {
         hook.life--;
@@ -2422,6 +2471,7 @@ function drawFightExtras() {
         ctx.save(); ctx.strokeStyle = 'rgba(200,240,255,0.9)'; ctx.fillStyle = 'rgba(200,240,255,0.2)'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
     }
+    for (const c of cushions) { ctx.save(); ctx.font = '18px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🎈', c.x, c.y); ctx.restore(); }
     if (hook) {
         const tx = hook.kind === 'pull' ? hook.e.x : hook.tx, ty = hook.kind === 'pull' ? hook.e.y : hook.ty;
         ctx.save(); ctx.strokeStyle = '#8A6A3A'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(tx, ty); ctx.stroke();
@@ -3185,7 +3235,7 @@ function controlsList() {
     ] : [
         ['Move', 'WASD'], ['Shoot / dig', 'Space'], ['Hit', 'J'], ['Block', 'X'], ['Jump', 'C'], ['Dash', 'Shift'],
         ['Spell', 'R'], ['Gadget', 'Q'], ['Build', 'B'], ['Ride', 'V'], ['Shop', 'E'], ['Awards', 'H'],
-        ['Dance', 'G'], ['Fart', 'F'], ['Sound', 'M'], ['Settings', 'O'], ['Player 2', 'P'], ['Hide help', 'K'],
+        ['Dance', 'G'], ['Fart', 'F'], ['Burp', 'U'], ['Sneeze', 'I'], ['Sound', 'M'], ['Settings', 'O'], ['Player 2', 'P'], ['Hide help', 'K'],
     ];
     if (!pad && god) rows.splice(7, 0, ['God power', 'T']);
     return rows;
@@ -5213,6 +5263,8 @@ const AWARDS = [
     { id: 'miniGame',    icon: '🎪', name: 'Game Champ',        desc: 'Win a mini-game' },
     { id: 'mazeRace',    icon: '🌀', name: 'Maze Racer',        desc: 'Finish a Maze Race in time' },
     { id: 'goal',        icon: '⚽', name: 'GOOOAL!',           desc: 'Score a goal' },
+    { id: 'burp',        icon: '🫢', name: 'Excuse Me!',        desc: 'Do a big burp (U)' },
+    { id: 'sneeze',      icon: '🤧', name: 'Bless You!',        desc: 'Sneeze everyone away (I)' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -7444,6 +7496,12 @@ function dance() {
     [523, 659, 784, 659, 880, 784].forEach((f, i) => tone(f, 0.14, 'triangle', 0.12, null, i * 0.12));
     const fan = nearbyTownsfolk(110)[0];
     if (fan) say(fan, ['Nice moves!', 'Wow, you can dance!', 'Woohoo! 🎉'][Math.floor(Math.random() * 3)]);
+    let dancers = 0;
+    for (const e of targetableEnemies()) {   // 🕺 monsters nearby can't help dancing too!
+        if (BOSS_TYPES.includes(e.type) || Math.hypot(e.x - player.x, e.y - player.y) > 220) continue;
+        e.dancing = 150; e.frozen = Math.max(e.frozen || 0, 150); dancers++;
+    }
+    if (dancers) spawnFloatText(player.x, player.y - 44, `${dancers} monster${dancers > 1 ? 's' : ''} dancing! 🕺`, '#FF88FF', 70);
 }
 
 // A stinky cloud that hurts monsters right next to you 😂
@@ -8291,7 +8349,12 @@ function talkLabel(n) {
     return 'Chat';
 }
 
+function pirateSpeak(text) {   // 🏴‍☠️ Pirate Town mod
+    return 'Arr! ' + text.replace(/\byou\b/gi, 'ye').replace(/\byour\b/gi, 'yer').replace(/\bmy\b/gi, 'me').replace(/\bhello\b|\bhi\b/gi, 'Ahoy')
+                             .replace(/\bis\b/gi, 'be').replace(/\bcoins\b/gi, 'doubloons').replace(/!$/, ', matey!');
+}
 function say(n, text) {
+    if (mod('pirateTalk')) text = pirateSpeak(text);
     paradise.speech = { npc: n, text, timer: 170 };
 }
 
@@ -8672,6 +8735,7 @@ function drawCoins(coinList) {
     const t = Date.now() / 300;
     for (const c of coinList) {
         if (c.picked) continue;
+        if (mod('cheese')) { ctx.save(); ctx.font = '14px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🧀', c.x, c.y + Math.sin(t + c.x * 0.1) * 3); ctx.restore(); continue; }
         ctx.save();
         ctx.fillStyle   = '#FFD700';
         ctx.shadowColor = '#FFAA00';
@@ -9162,6 +9226,20 @@ function drawFrog(e) {
 }
 
 function drawEnemy(e, t) {
+    if (e.dancing > 0) {   // 🕺 monsters dancing along with you
+        ctx.save(); ctx.translate(e.x, e.y + e.r); ctx.rotate(Math.sin(Date.now() / 90) * 0.35); ctx.translate(-e.x, -e.y - e.r - Math.abs(Math.sin(Date.now() / 120)) * 6);
+        drawEnemyMods(e, t); ctx.restore();
+    } else drawEnemyMods(e, t);
+    if (mod('monsterHats') && e.alive && !e.hidden) {
+        const hat = ['🎩', '🎉', '👒', '🧢', '🎓', '👑', '🪖'][Math.abs(Math.floor((e.home ? e.home.x * 7 + e.home.y : e.x)) ) % 7];
+        ctx.save(); ctx.font = `${Math.max(14, e.r * 0.9)}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(hat, e.x, e.y - e.r * 0.95); ctx.restore();
+    }
+}
+function drawEnemyMods(e, t) {
+    if (mod('cheese') && !e.hidden) {   // 🧀 Cheese World mod
+        ctx.save(); ctx.font = `${Math.max(20, e.r * 2)}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🧀', e.x, e.y); ctx.restore();
+        return;
+    }
     if (mod('chickens') && !e.hidden) {   // 🐔 Chicken Monsters mod
         const k = Math.max(0.8, e.r / 14) * (mod('tinyMonsters') ? 0.5 : 1);
         ctx.save(); ctx.translate(e.x, e.y); ctx.scale(k, k); drawChicken(0, 0); ctx.restore();
@@ -11611,7 +11689,7 @@ function drawVirtualControls() {
     ctx.font        = 'bold 13px Arial';
     ctx.textAlign   = 'center';
     ctx.textBaseline = 'middle';
-    const touchBtns = [[VDANCE, '💃'], [VFART, '💨'], [VMELEE, '👊'], [VBLOCK, '🛡'], [VJUMP, '🦘']];
+    const touchBtns = [[VDANCE, '💃'], [VFART, '💨'], [VSILLY, sillyTurn % 2 ? '🤧' : '🫢'], [VMELEE, '👊'], [VBLOCK, '🛡'], [VJUMP, '🦘']];
     touchBtns.push([VBUILD, state.buildMode ? '⚔' : '🧱']);
     if (state.spell) touchBtns.push([VSPELL, SPELLS.find(x => x.id === state.spell).icon]);
     if (godParent()) touchBtns.push([VGOD, nextGodPower().icon]);
