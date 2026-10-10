@@ -118,7 +118,9 @@ const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secre
                 SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space', ARENA: 'arena', MALL: 'mall',
                 UNDERWATER: 'underwater', DINO: 'dino', VOLCANO: 'volcano', JUNGLE: 'jungle',
                 TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity', CAMP: 'camp', OLYMPUS: 'olympus', PIRATECOVE: 'piratecove', CHESS: 'chess', LIBRARY: 'library',
-                GREECE: 'greece', MAZE: 'maze', GORGON: 'gorgon', UNDERWORLD: 'underworld', VIKING: 'viking' };
+                GREECE: 'greece', MAZE: 'maze', GORGON: 'gorgon', UNDERWORLD: 'underworld', VIKING: 'viking',
+                CANDYVOLCANO: 'candyvolcano', SEACITY: 'seacity', MOONBASE: 'moonbase', CLOUDCASTLE: 'cloudcastle', ICECAVE: 'icecave',
+                TREEHOUSE: 'treehouse', FACTORY: 'factory', TOYSHOP: 'toyshop', MUSEUM: 'museum', UNDERBED: 'underbed' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -207,6 +209,15 @@ const ENEMY_TYPES = {
     minizombie:{ name: 'Zombie',       hp: 3,  weakTo: POWER.BRIMSTONE, color: '#6A9A5A', emoji: '🧟' },
     babyalien: { name: 'Baby Alien',   hp: 2,  weakTo: POWER.ICE,       color: '#66FF66', emoji: '👾' },
     babyspider:{ name: 'Baby Spider',  hp: 1,  weakTo: POWER.BRIMSTONE, color: '#442244', emoji: '🕷' },
+    chocoblob: { name: 'Choco Blob',   hp: 3,  weakTo: POWER.ICE,       color: '#6A3A1A', emoji: '🍫' },   // Candy Volcano
+    giant:     { name: 'Cloud Giant',  hp: 14, weakTo: POWER.LIGHTNING, color: '#C8A080', emoji: '🧔' },   // Cloud Castle
+    minibot:   { name: 'Mini Bot',     hp: 3,  weakTo: POWER.WATER,     color: '#8899AA', emoji: '🤖' },   // Robot Factory
+    snake:     { name: 'Snake',        hp: 2,  weakTo: POWER.ICE,       color: '#4A8A3A', emoji: '🐍' },   // Treehouse Village
+    dustbunny: { name: 'Dust Bunny',   hp: 2,  weakTo: POWER.WATER,     color: '#AAAAAA', emoji: '🐰', filter: 'grayscale(1) brightness(0.8)' },   // under your bed
+    bedmonster:{ name: 'Monster Under the Bed', hp: 24, weakTo: POWER.LIGHTNING, color: '#6A3A8A', emoji: '👹' },
+    bonesaur:  { name: 'Skeleton Raptor', hp: 4, weakTo: POWER.BRIMSTONE, color: '#EEEEDD', emoji: '🦖', filter: 'grayscale(1) brightness(1.5)' },   // Museum at night
+    bonerex:   { name: 'Skeleton T-Rex', hp: 30, weakTo: POWER.BRIMSTONE, color: '#EEEEDD', emoji: '🦖', filter: 'grayscale(1) brightness(1.6)' },
+    penguinpal:{ name: 'Ice Penguin',  hp: 3,  weakTo: POWER.BRIMSTONE, color: '#222233', emoji: '🐧', filter: 'hue-rotate(180deg)' },   // grumpy penguins
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
@@ -2162,6 +2173,11 @@ function drawHeroAura() {
 function moveNewBoss(e, chase) {
     const minion = (type, n) => { for (let k = 0; k < n; k++) spawnList().push(e0(type, e.x + (k ? 40 : -40), e.y + 30, { emerge: 20, r: 13 })); };
     if (e.type === 'minizombie') { chase(0.8); return true; }
+    if (['chocoblob', 'snake', 'dustbunny', 'penguinpal'].includes(e.type)) { chase(1.2); return true; }
+    if (e.type === 'minibot' || e.type === 'bonesaur') { chase(1.1); return true; }
+    if (e.type === 'giant')   { chase(0.6); if (Math.random() < 0.006) { triggerShake(8); spawnFloatText(e.x, e.y - e.r - 10, 'FEE FI FO FUM!', '#FFCC88', 60); } return true; }
+    if (e.type === 'bonerex') { chase(0.9); if (Math.random() < 0.008) { spawnFloatText(e.x, e.y - e.r - 10, 'ROOOAR!', '#FFFFFF', 50); sfx('dragonRoar'); triggerShake(6); } return true; }
+    if (e.type === 'bedmonster') { chase(0.7); if (Math.random() < 0.01) enemyShoot(e, 4, '#AA66FF', [-0.3, 0, 0.3]); return true; }
     if (e.type === 'babyalien')  { chase(1.5); return true; }
     if (e.type === 'babyspider') { chase(1.9); return true; }
     if (e.type === 'megarobot') {
@@ -2260,6 +2276,65 @@ function drawGloop() {
     if (Math.hypot(player.x - GLOOP.x, player.y - GLOOP.y) < 40 && !menu) {
         const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
         drawSpeech({ x: GLOOP.x, y: GLOOP.y - 14 }, `${verb}: Give a cookie (🪙${GLOOP_COOKIE}) ${state.gloop || 0}/3`);
+    }
+}
+
+// ── MORE PLACES: doors, things to collect, belts and the museum at night ──
+const SUBPLACE_EXIT = { x: 400, y: 578 };
+function updateSubplace() {
+    const sp = SUBPLACES[state.room];
+    if (!sp || !playing()) return;
+    const P = place();
+    for (const it of P.items) {
+        if (it.got || Math.hypot(it.x - player.x, it.y - player.y) > 24) continue;
+        it.got = true; sfx('coin'); spawnParticles(it.x, it.y, '#FFE066', 10);
+        const left = P.items.filter(i => !i.got).length;
+        spawnFloatText(it.x, it.y - 20, left ? `${left} to go!` : 'GOT THEM ALL!', '#FFE066', 60);
+    }
+    if (!P.prize && P.items.every(i => i.got)) {
+        P.prize = true; state.coins += 60; addScore(150); giveAward('collector'); sfx('win'); spawnConfettiAt(player.x, player.y);
+        showToast(`🏆 You found all ${sp.count} ${sp.item}! +🪙60`, '#FFD700', 220);
+    }
+    if (state.room === ROOM.FACTORY) {   // conveyor belts!
+        FACTORY_BELTS.forEach((y, i) => { if (Math.abs(player.y - y) < 18) player.x = Math.max(18, Math.min(782, player.x + (i % 2 ? -1.6 : 1.6))); });
+    }
+    if (state.room === ROOM.CANDYVOLCANO && Math.random() < 0.01) {   // 🌋 the volcano ERUPTS sweets (and coins!)
+        for (let k = 0; k < 4; k++) P.coins.push({ x: 300 + Math.random() * 200, y: 120 + Math.random() * 300, picked: false });
+        spawnParticles(400, 70, '#FF66AA', 20); triggerShake(4);
+    }
+    if (state.room === ROOM.MUSEUM && P.night > 0 && --P.night === 0) {   // 🌙 the museum comes alive!
+        P.enemies.push(e0('bonesaur', 180, 160), e0('bonesaur', 620, 160), e0('bonesaur', 180, 440), e0('bonerex', 620, 440, { r: 36, coinDrop: 30 }));
+        showToast('🌙 NIGHT AT THE MUSEUM! The dinosaurs came ALIVE!', '#CCCCFF', 240); sfx('dragonRoar'); triggerShake(14);
+    }
+}
+function drawSubplaces() {
+    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const t = Date.now() / 1000;
+    for (const [id, sp] of Object.entries(SUBPLACES)) {   // doors in the places you know
+        if (state.room !== sp.parent) continue;
+        const { x, y } = sp.door;
+        ctx.save(); ctx.fillStyle = 'rgba(40,20,10,0.85)'; ctx.fillRect(x - 16, y - 22, 32, 40);
+        ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(x + 9, y, 2.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+        ctx.fillText(sp.doorLabel, Math.max(60, Math.min(740, x)), y - 28); ctx.restore();
+    }
+    const sp = SUBPLACES[state.room];
+    if (!sp) return;
+    const P = place();
+    for (const it of P.items) {
+        if (it.got) continue;
+        ctx.save(); ctx.font = '22px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.shadowColor = '#FFE066'; ctx.shadowBlur = 10;
+        ctx.fillText(it.icon, it.x, it.y + Math.sin(t * 3 + it.x) * 3); ctx.restore();
+    }
+    ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
+    ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Go back', SUBPLACE_EXIT.x, 556);
+    const left = P.items.filter(i => !i.got).length;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(320, 76, 160, 20);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 11px Arial'; ctx.fillText(left ? `Find ${left} more ${sp.item}` : `✅ All ${sp.item} found!`, 400, 90);
+    if (state.room === ROOM.MUSEUM && P.night > 0) { ctx.fillStyle = '#665'; ctx.fillText(`The museum closes in ${Math.ceil(P.night / 60)}s… 🌙`, 400, 112); }
+    if (state.room === ROOM.MUSEUM && P.night === 0) { ctx.fillStyle = 'rgba(10,10,40,0.35)'; ctx.fillRect(0, 46, 800, 554); }
+    if (state.room === ROOM.MUSEUM && P.night > 0) for (const [x, y] of [[180, 160], [620, 160], [180, 440], [620, 440]]) {
+        ctx.save(); ctx.filter = 'grayscale(1) brightness(1.5)'; ctx.font = '50px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🦖', x, y); ctx.restore();
     }
 }
 
@@ -2415,8 +2490,8 @@ function updatePotions() {
     }
 }
 
-function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); }
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -2999,7 +3074,7 @@ const ARENA_GATE  = { x: 270, y: 545 };
 const ARENA_EXIT  = { x: 400, y: 578 };
 const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon',
                      'wizard', 'mummyking', 'candymonster', 'bigdevil', 'queen', 'hydra', 'medusa', 'minotaur', 'cerberus',
-                     'megarobot', 'kraken', 'yeti', 'zombieking', 'alienqueen', 'lasershark', 'spiderqueen', 'megaboss'];
+                     'megarobot', 'kraken', 'yeti', 'zombieking', 'alienqueen', 'lasershark', 'spiderqueen', 'megaboss', 'bedmonster', 'bonerex'];
 const BOSS_RUSH   = [
     () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
     () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
@@ -3183,6 +3258,60 @@ addToPlace('haunted',    1,   () => e0('zombieking',  560, 420, { r: 30, coinDro
 addToPlace('space',      1,   () => e0('alienqueen',  620, 250, { r: 32, coinDrop: 30, summonTimer: 240 }));
 addToPlace('underwater', 1,   () => e0('lasershark',  250, 150, { r: 28, coinDrop: 25, laserTimer: 100 }));
 addToPlace('jungle',     1,   () => e0('spiderqueen', 680, 450, { r: 30, coinDrop: 30, summonTimer: 200 }));
+
+// 🌍 Ten more places, each behind a door in a place you know. Collect all the things for a prize!
+const fill = (g, col) => { g.fillStyle = col; g.fillRect(0, 0, 800, 600); };
+const speckle = (g, R, n, colFn, w = 4, h = 3) => { for (let i = 0; i < n; i++) { g.fillStyle = colFn(R()); g.fillRect(R() * 800, 46 + R() * 554, w, h); } };
+const SUBPLACES = {
+    candyvolcano: { parent: 'candy', door: { x: 400, y: 545 }, name: '🌋 THE CANDY VOLCANO', doorLabel: '🌋 Candy Volcano', song: 'candy', item: '🍬', count: 5,
+        enemies: () => [e0('chocoblob', 250, 250), e0('chocoblob', 550, 250), e0('chocoblob', 400, 400), e0('jellybean', 200, 450), e0('jellybean', 600, 450)],
+        paint: (g, R) => { fill(g, '#F8C8E0'); speckle(g, R, 600, r => `hsl(${r * 360}, 80%, 70%)`, 5, 3); g.fillStyle = '#8A4A2A'; g.beginPath(); g.moveTo(250, 200); g.lineTo(360, 60); g.lineTo(440, 60); g.lineTo(550, 200); g.fill(); g.fillStyle = '#FF66AA'; g.fillRect(360, 56, 80, 12); } },
+    seacity:      { parent: 'underwater', door: { x: 400, y: 545 }, name: '🧜 THE UNDERWATER CITY', doorLabel: '🏰 Underwater City', song: 'underwater', item: '🐚', count: 4,
+        enemies: () => [e0('shark', 300, 250, { dx: 2 }), e0('shark', 550, 420, { dx: -2 }), e0('jellyfish', 200, 400), e0('jellyfish', 600, 200)],
+        paint: (g, R) => { const sea = g.createLinearGradient(0, 0, 0, 600); sea.addColorStop(0, '#2A8AC0'); sea.addColorStop(1, '#0A3A6A'); g.fillStyle = sea; g.fillRect(0, 0, 800, 600);
+                           for (let k = 0; k < 6; k++) { const x = 80 + k * 130; g.fillStyle = `hsl(${170 + k * 15}, 50%, 60%)`; g.fillRect(x - 25, 120, 50, 120); g.beginPath(); g.arc(x, 120, 25, Math.PI, 0); g.fill(); } } },
+    moonbase:     { parent: 'space', door: { x: 400, y: 545 }, name: '🌙 THE MOON BASE', doorLabel: '🌙 Land on the Moon', song: 'space', item: '🌑', count: 4,
+        enemies: () => [e0('alien', 250, 250), e0('alien', 550, 300), e0('babyalien', 400, 200), e0('babyalien', 600, 450)],
+        paint: (g, R) => { fill(g, '#C8C8CC'); for (let i = 0; i < 40; i++) { g.fillStyle = 'rgba(120,120,130,0.5)'; g.beginPath(); g.arc(R() * 800, 46 + R() * 554, 6 + R() * 22, 0, Math.PI * 2); g.fill(); }
+                           g.fillStyle = '#E8E8F0'; g.beginPath(); g.arc(400, 130, 60, Math.PI, 0); g.fill(); g.fillStyle = '#88AACC'; g.fillRect(380, 100, 40, 30); } },
+    cloudcastle:  { parent: 'cloudcity', door: { x: 560, y: 545 }, name: '🏰 THE GIANTS\' CLOUD CASTLE', doorLabel: '🌱 Beanstalk to the Castle', song: 'heaven', item: '🥚', count: 3,
+        enemies: () => [e0('giant', 250, 250, { r: 30 }), e0('giant', 560, 300, { r: 30 })],
+        paint: (g, R) => { fill(g, '#EEF4FF'); for (let i = 0; i < 30; i++) { g.fillStyle = 'rgba(255,255,255,0.9)'; g.beginPath(); g.ellipse(R() * 800, 46 + R() * 554, 50, 20, 0, 0, Math.PI * 2); g.fill(); }
+                           g.fillStyle = '#B8B0C8'; g.fillRect(250, 50, 300, 90); for (let k = 0; k < 7; k++) g.fillRect(250 + k * 46, 36, 24, 16); } },
+    icecave:      { parent: 'ice', door: { x: 400, y: 545 }, name: '🐧 THE PENGUIN ICE CAVE', doorLabel: '🧊 Ice Cave', song: 'ice', item: '🐟', count: 5,
+        enemies: () => [e0('penguinpal', 250, 250), e0('penguinpal', 550, 250), e0('snowman', 400, 420)],
+        paint: (g, R) => { fill(g, '#BFE4F8'); speckle(g, R, 500, r => `rgba(255,255,255,${0.3 + r * 0.5})`, 6, 3);
+                           for (let x = 0; x < 800; x += 40) { g.fillStyle = '#E8F6FF'; g.beginPath(); g.moveTo(x, 46); g.lineTo(x + 20, 46); g.lineTo(x + 10, 90 + (x % 80)); g.fill(); } } },
+    treehouse:    { parent: 'jungle', door: { x: 220, y: 120 }, name: '🌴 THE TREEHOUSE VILLAGE', doorLabel: '🪜 Treehouse Village', song: 'jungle', item: '🍌', count: 5,
+        enemies: () => [e0('snake', 250, 350), e0('snake', 550, 300), e0('monkey', 400, 450)],
+        paint: (g, R) => { fill(g, '#5A8A3A'); speckle(g, R, 700, r => `hsla(${100 + r * 40}, 50%, ${25 + r * 15}%, 0.7)`, 8, 5);
+                           for (const x of [120, 400, 680]) { g.fillStyle = '#7A4A2A'; g.fillRect(x - 10, 80, 20, 120); g.fillStyle = '#A0703A'; g.fillRect(x - 50, 60, 100, 40); g.fillStyle = '#5A3A1A'; g.beginPath(); g.moveTo(x - 58, 62); g.lineTo(x, 30); g.lineTo(x + 58, 62); g.fill(); }
+                           g.strokeStyle = '#8A6A3A'; g.lineWidth = 3; g.beginPath(); g.moveTo(170, 80); g.lineTo(350, 80); g.moveTo(450, 80); g.lineTo(630, 80); g.stroke(); } },
+    factory:      { parent: 'toy', door: { x: 650, y: 545 }, name: '🏭 THE ROBOT FACTORY', doorLabel: '🏭 Robot Factory', song: 'space', item: '⚙', count: 4,
+        enemies: () => [e0('minibot', 250, 200), e0('minibot', 550, 200), e0('minibot', 300, 450), e0('minibot', 600, 450), e0('robot', 400, 300)],
+        paint: (g, R) => { fill(g, '#6A7078'); speckle(g, R, 300, r => `rgba(${90 + r * 40},${95 + r * 40},${100 + r * 40},0.6)`, 10, 2);
+                           for (const y of FACTORY_BELTS) { g.fillStyle = '#2A2A30'; g.fillRect(0, y - 16, 800, 32); g.fillStyle = '#4A4A50'; for (let x = 0; x < 800; x += 20) g.fillRect(x, y - 2, 10, 4); } } },
+    toyshop:      { parent: 'mall', door: { x: 780, y: 300 }, name: '🧸 THE GIANT TOY SHOP', doorLabel: '🧸 Giant Toy Shop', song: 'toy', item: '🔮', count: 5,
+        enemies: () => [e0('windup', 200, 200, { dx: 3, dy: 0, windTimer: 90 }), e0('windup', 600, 400, { dx: -3, dy: 0, windTimer: 40 }), e0('toysoldier', 300, 450), e0('toysoldier', 550, 200)],
+        paint: (g, R) => { fill(g, '#F4E0C0'); for (let y = 46; y < 600; y += 60) for (let x = 0; x < 800; x += 60) { g.fillStyle = (x + y) % 120 ? '#EED8B4' : '#E4CCA4'; g.fillRect(x, y, 60, 60); }
+                           for (const [x, y, c] of [[100, 120, '#E04040'], [700, 120, '#4060E0'], [100, 480, '#40B040'], [700, 480, '#E0C040']]) { g.fillStyle = c; g.fillRect(x - 40, y - 40, 80, 80); g.fillStyle = 'rgba(255,255,255,0.4)'; g.fillRect(x - 40, y - 40, 80, 12); } } },
+    museum:       { parent: 'dino', door: { x: 400, y: 545 }, name: '🦴 THE DINOSAUR MUSEUM', doorLabel: '🏛 Dino Museum', song: 'house', item: '🦴', count: 3,
+        enemies: () => [],
+        paint: (g, R) => { fill(g, '#E8DCC8'); for (let x = 0; x < 800; x += 50) { g.fillStyle = 'rgba(160,140,110,0.2)'; g.fillRect(x, 46, 2, 554); }
+                           for (const [x, y] of [[180, 160], [620, 160], [180, 440], [620, 440]]) { g.fillStyle = '#B8A888'; g.fillRect(x - 60, y + 30, 120, 16); } } },
+    underbed:     { parent: 'house', door: { x: 130, y: 275 }, name: '🛏 THE WORLD UNDER YOUR BED', doorLabel: '🛏 Under the bed…', song: 'underground', item: '🧸', count: 5,
+        enemies: () => [e0('dustbunny', 250, 250), e0('dustbunny', 550, 250), e0('dustbunny', 400, 450), e0('bedmonster', 600, 400, { r: 30, coinDrop: 30 })],
+        paint: (g, R) => { fill(g, '#2A2438'); speckle(g, R, 500, r => `rgba(${120 + r * 60},${110 + r * 60},${130 + r * 60},0.35)`, 6, 6);
+                           g.fillStyle = '#4A3A2A'; g.fillRect(0, 46, 800, 40); for (const x of [20, 760]) g.fillRect(x, 46, 20, 554); } },
+};
+const FACTORY_BELTS = [160, 330, 500];   // conveyor belts push you sideways
+const LOST_TOYS = ['🧸', '🚗', '🧦', '🎲', '🪀'];
+for (const [id, sp] of Object.entries(SUBPLACES)) {
+    PLACES[id] = { name: sp.name, spawn: [400, 520],
+        make: () => ({ coins: [], prize: false, night: id === 'museum' ? 1200 : 0, enemies: sp.enemies(),
+                       items: Array.from({ length: sp.count }, (_, k) => ({ x: 80 + Math.random() * 640, y: 110 + Math.random() * 380, got: false,
+                                                                           icon: id === 'underbed' ? LOST_TOYS[k] : sp.item })) }) };
+}
 
 function inRectXY(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
 function spikesUp() { return place().spikeTimer % 120 < 50; }
@@ -3523,6 +3652,10 @@ function place(room = state.room) { return placeState[room]; }
 // Walking into the special exits
 function updatePlaceExits() {
     const near = (o, r = 30) => Math.hypot(player.x - o.x, player.y - o.y) < r;
+    for (const [id, sp] of Object.entries(SUBPLACES)) {
+        if (state.room === sp.parent && near(sp.door, 26)) { changeRoom(id); showToast(`${sp.name} — find all ${sp.count} ${sp.item}!`, '#FFE066', 220); return true; }
+        if (state.room === id && near(SUBPLACE_EXIT, 26)) { changeRoom(sp.parent); player.x = sp.door.x; player.y = sp.door.y - 50; return true; }
+    }
     if (state.room === ROOM.VOID && near(ROCKET, 28))        { showToast('🚀 3… 2… 1… BLAST OFF!', '#FFE066'); sfx('boom'); changeRoom(ROOM.SPACE); return true; }
     if (state.room === ROOM.SPACE && near(ROCKET, 28))       { showToast('🚀 Back home to the Void!', '#FFE066'); changeRoom(ROOM.VOID); player.x = ROCKET.x + 60; return true; }
     if (state.room === ROOM.HEAVEN && near(SKY_STAIRS, 30))  { changeRoom(ROOM.SKY); return true; }
@@ -4008,6 +4141,16 @@ const PORTALS = {
     gorgon:  [],
     underworld: [],
     viking:  [],
+    candyvolcano: [],
+    seacity: [],
+    moonbase: [],
+    cloudcastle: [],
+    icecave: [],
+    treehouse: [],
+    factory: [],
+    toyshop: [],
+    museum: [],
+    underbed: [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
     toy:     [{ x: 740, y: 120, shape: 'star'    }],
     pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
@@ -4217,7 +4360,8 @@ function musicTick() {
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
     const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell'
                   : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship', chess: 'mall', library: 'underground',
-                       greece: 'heaven', maze: 'underground', gorgon: 'underground', underworld: 'hell', viking: 'ship' })[state.room] || state.room;
+                       greece: 'heaven', maze: 'underground', gorgon: 'underground', underworld: 'hell', viking: 'ship',
+                       ...Object.fromEntries(Object.entries(SUBPLACES).map(([id, sp]) => [id, sp.song])) })[state.room] || state.room;
     const song = playing ? SONGS[songKey] : null;
     if (!song) { musicRoom = null; return; }
     const now = audioCtx.currentTime;
@@ -4349,6 +4493,7 @@ const AWARDS = [
     { id: 'viking',      icon: '🛶', name: 'Viking Gold',       desc: 'Open the Viking treasure chest' },
     { id: 'fullGod',     icon: '🌟', name: 'YOU ARE A GOD!',    desc: 'Finish all the Hero Trials' },
     { id: 'gloop',       icon: '👾', name: 'Monster Friend',    desc: 'Make friends with Gloop' },
+    { id: 'collector',   icon: '🧺', name: 'Collector',         desc: 'Find all the things in a secret place' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -5436,7 +5581,7 @@ function updatePlayer() {
     if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; state.walkPhase += 0.32; }   // remember which way you're going
     dx *= spd; dy *= spd;
     if (fight.blocking) { dx *= 0.4; dy *= 0.4; }   // slow while holding your shield up
-    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.mount === 'kart' || mod('lowGravity')) {
+    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.room === ROOM.MOONBASE || state.room === ROOM.ICECAVE || state.mount === 'kart' || mod('lowGravity')) {
         // Slippery ice / floaty space: you speed up and slow down gently
         const grip = state.mount === 'kart' ? 0.12 : state.room === ROOM.ICE ? 0.05 : 0.035;
         state.vx = (state.vx || 0) + (dx - (state.vx || 0)) * grip;
@@ -8316,6 +8461,7 @@ function drawEmojiEnemy(e, t) {
         ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(e.x, e.y + bob, e.r * 1.05, 0, Math.PI * 2); ctx.fill();
     }
     ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = e.hitFlash > 0 ? '#FF3333' : '#222';
+    if (info.filter) ctx.filter = info.filter;
     ctx.translate(e.x, e.y + bob);
     if (e.type === 'book') ctx.scale(1, 0.7 + Math.abs(Math.sin(t * 10)) * 0.3);   // flap flap
     if (e.type === 'yeti') {   // big white furry yeti
@@ -9414,7 +9560,8 @@ function roomBackground(room) {
                            ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace, arena: paintArena, mall: paintMall,
                            underwater: paintUnderwater, dino: paintDino, volcano: paintVolcano, jungle: paintJungle,
                            toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity, camp: paintCamp, olympus: paintOlympus, piratecove: paintPirateCove, chess: paintChess, library: paintLibrary,
-                           greece: paintGreece, maze: paintMaze, gorgon: paintGorgon, underworld: paintUnderworld, viking: paintViking };
+                           greece: paintGreece, maze: paintMaze, gorgon: paintGorgon, underworld: paintUnderworld, viking: paintViking,
+                           ...Object.fromEntries(Object.entries(SUBPLACES).map(([id, sp]) => [id, sp.paint])) };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
