@@ -196,6 +196,17 @@ const ENEMY_TYPES = {
     minotaur:  { name: 'The Minotaur', hp: 30, weakTo: POWER.ICE,       color: '#8A5A3A', emoji: '🐂' },   // lives in the maze
     cerberus:  { name: 'Cerberus',     hp: 32, weakTo: POWER.WATER,     color: '#442222', emoji: '🐕' },   // three-headed guard dog of the Underworld
     troll:     { name: 'Troll',        hp: 6,  weakTo: POWER.BRIMSTONE, color: '#6A7A5A', emoji: '🧌' },   // Viking Island
+    megarobot: { name: 'Giant Robot',  hp: 35, weakTo: POWER.WATER,     color: '#8899AA', emoji: '🤖' },   // Toy Land boss
+    kraken:    { name: 'The Kraken',   hp: 35, weakTo: POWER.LIGHTNING, color: '#AA3366', emoji: '🦑' },   // attacks the ship sometimes!
+    yeti:      { name: 'The Yeti',     hp: 30, weakTo: POWER.BRIMSTONE, color: '#FFFFFF', emoji: '❄' },    // Ice Kingdom (drawn by hand)
+    zombieking:{ name: 'Zombie King',  hp: 30, weakTo: POWER.BRIMSTONE, color: '#6A9A5A', emoji: '🧟', crown: true },   // Haunted House
+    alienqueen:{ name: 'Alien Queen',  hp: 32, weakTo: POWER.ICE,       color: '#66FF66', emoji: '👽', crown: true },   // Space
+    lasershark:{ name: 'Laser Shark',  hp: 20, weakTo: POWER.LIGHTNING, color: '#7A8A9A', emoji: '🦈' },   // Underwater: LASER EYES
+    spiderqueen:{ name: 'Spider Queen', hp: 30, weakTo: POWER.BRIMSTONE, color: '#442244', emoji: '🕷', crown: true },  // Jungle Temple
+    megaboss:  { name: 'Mega Boss',     hp: 80, weakTo: POWER.RAINBOW,  color: '#AA00AA', emoji: '👹' },   // every boss glued together!
+    minizombie:{ name: 'Zombie',       hp: 3,  weakTo: POWER.BRIMSTONE, color: '#6A9A5A', emoji: '🧟' },
+    babyalien: { name: 'Baby Alien',   hp: 2,  weakTo: POWER.ICE,       color: '#66FF66', emoji: '👾' },
+    babyspider:{ name: 'Baby Spider',  hp: 1,  weakTo: POWER.BRIMSTONE, color: '#442244', emoji: '🕷' },
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
@@ -1203,6 +1214,7 @@ let state = {
     fleece:             false,           // 🐑 the Golden Fleece
     fullGod:            false,           // finished every hero trial!
     stoned:             0,               // 🗿 frames left as a statue
+    gloop:              0,               // 👾 cookies given to Gloop (3 = best friends)
     questsDone:         0,
     invisible:          0,               // 🧪 potion timers
     giant:              0,
@@ -2146,6 +2158,111 @@ function drawHeroAura() {
     }
 }
 
+// ── MONSTERS & BOSSES: new bosses, mini-bosses, the Mega Boss and Gloop the friendly monster ──
+function moveNewBoss(e, chase) {
+    const minion = (type, n) => { for (let k = 0; k < n; k++) spawnList().push(e0(type, e.x + (k ? 40 : -40), e.y + 30, { emerge: 20, r: 13 })); };
+    if (e.type === 'minizombie') { chase(0.8); return true; }
+    if (e.type === 'babyalien')  { chase(1.5); return true; }
+    if (e.type === 'babyspider') { chase(1.9); return true; }
+    if (e.type === 'megarobot') {
+        chase(0.6);
+        if (--e.laserTimer <= 0) { e.laserTimer = 140; enemyShoot(e, 6, '#FF2222', [-0.4, -0.2, 0, 0.2, 0.4]); triggerShake(4); sfx('zap'); }
+        return true;
+    }
+    if (e.type === 'kraken') {   // stays put, sprays ink and pulls you in with its tentacles
+        e.x = e.home.x + Math.sin(Date.now() / 600) * 40;
+        const d = Math.hypot(player.x - e.x, player.y - e.y) || 1;
+        if (d < 300) { player.x -= (player.x - e.x) / d * 0.6; player.y -= (player.y - e.y) / d * 0.6; }
+        if (--e.inkTimer <= 0) { e.inkTimer = 120; enemyShoot(e, 3.5, '#331133', [-1.2, -0.6, 0, 0.6, 1.2]); sfx('splash'); }
+        return true;
+    }
+    if (e.type === 'yeti') {
+        chase(1.1);
+        if (--e.throwTimer <= 0) { e.throwTimer = 150; enemyShoot(e, 5, '#FFFFFF', [-0.15, 0.15]); spawnFloatText(e.x, e.y - e.r - 10, 'RAAAWR!', '#AADDFF', 50); sfx('dragonRoar'); }
+        return true;
+    }
+    if (e.type === 'zombieking')  { chase(0.6); if (--e.summonTimer <= 0) { e.summonTimer = 300; minion('minizombie', 2); spawnFloatText(e.x, e.y - e.r - 10, 'RISE, MY ZOMBIES!', '#88CC88', 70); sfx('groan'); } return true; }
+    if (e.type === 'alienqueen')  { chase(0.7); if (--e.summonTimer <= 0) { e.summonTimer = 260; minion('babyalien', 2); spawnFloatText(e.x, e.y - e.r - 10, 'BLEEP BLOOP!', '#88FF88', 60); } return true; }
+    if (e.type === 'spiderqueen') { chase(0.6); if (--e.summonTimer <= 0) { e.summonTimer = 220; minion('babyspider', 2); sfx('hiss'); } return true; }
+    if (e.type === 'lasershark') {
+        chase(1.2);
+        if (--e.laserTimer <= 0) { e.laserTimer = 100; enemyShoot(e, 8, '#FF0000'); spawnFloatText(e.x, e.y - e.r - 10, 'PEW PEW!', '#FF6666', 40); sfx('zap'); }
+        return true;
+    }
+    if (e.type === 'megaboss') {   // takes turns doing every boss's best move
+        if (--e.moveTimer <= 0) {
+            e.moveTimer = 120; e.move = (e.move + 1) % 4;
+            const name = ['🔥 FIRE BREATH!', '🐍 HEADS!', '🐂 CHARGE!', '👁 DON\'T LOOK!'][e.move];
+            spawnFloatText(e.x, e.y - e.r - 14, name, '#FF88FF', 70);
+            if (e.move === 0) enemyShoot(e, 4.5, '#FF5522', [-0.6, -0.3, 0, 0.3, 0.6]);
+            if (e.move === 1) minion('hydrahead', 2);
+            if (e.move === 2) { const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 6; e.dy = Math.sin(a) * 6; e.charge = 30; }
+            if (e.move === 3) e.gazeTimer = 80;
+        }
+        if (e.charge > 0) { e.charge--; e.x += e.dx; e.y += e.dy; e.x = Math.max(50, Math.min(750, e.x)); e.y = Math.max(90, Math.min(560, e.y)); }
+        else chase(0.5);
+        if (--e.gazeTimer === 0) {
+            const dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy) || 1;
+            if ((state.faceX * dx + state.faceY * dy) / d > 0.3 && !state.invisible) { state.stoned = 90; showToast('🗿 You looked! STONE!', '#AAAAAA', 120); }
+        }
+        return true;
+    }
+    return false;
+}
+
+// ⚠ Mini-bosses: sometimes one of the monsters in a room is BIG and tough
+const MINI_BOSS_CHANCE = 0.35;
+function maybeMiniBoss() {
+    if (Math.random() >= MINI_BOSS_CHANCE || [ROOM.ARENA, ROOM.CHESS, ROOM.MAZE].includes(state.room)) return;
+    const list = spawnList();
+    const normal = list.filter(e => e.alive && !BOSS_TYPES.includes(e.type) && !e.mini && e.type !== 'worm' && e.type !== 'shadow');
+    if (!normal.length) return;
+    const base = normal[Math.floor(Math.random() * normal.length)];
+    const spot = randomSpawnSpot(220), hp = ENEMY_TYPES[base.type].hp * 4;
+    list.push({ ...base, x: spot.x, y: spot.y, home: { ...(base.home || {}), x: spot.x, y: spot.y }, r: base.r * 1.7, hp, maxHp: hp, coinDrop: 15, mini: true, emerge: 40 });
+    showToast(`⚠ A MINI-BOSS ${ENEMY_TYPES[base.type].name.toUpperCase()} is here!`, '#FFAA44', 180);
+}
+function drawMiniBossLabels() {
+    for (const e of roomEnemies()) if (e.mini && e.alive && !e.hidden) {
+        ctx.fillStyle = '#FFAA44'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚠ MINI-BOSS', e.x, e.y - e.r - 16);
+    }
+}
+
+// 👾 Gloop: a lonely monster in Paradise. Give it 3 cookies and it becomes your friend!
+const GLOOP = { x: 640, y: 400 };
+const GLOOP_COOKIE = 5;
+let gloopTimer = 0;
+function befriendGloop() {
+    if (state.gloop >= 3) { spawnFloatText(GLOOP.x, GLOOP.y - 30, '👾 Gloop loves you!', '#AAFFAA', 60); return; }
+    if (!spend(GLOOP_COOKIE)) return;
+    state.gloop = (state.gloop || 0) + 1;
+    spawnFloatText(GLOOP.x, GLOOP.y - 30, `🍪 Nom nom! ${'💚'.repeat(state.gloop)}`, '#AAFFAA', 80);
+    if (state.gloop >= 3) { giveAward('gloop'); sfx('win'); showToast('👾 Gloop is your FRIEND now! It will follow you and help fight!', '#AAFFAA', 240); }
+}
+function updateGloop() {
+    if (state.gloop < 3 || !playing() || ++gloopTimer < 100) return;
+    gloopTimer = 0;
+    const gx = player.x + 34, gy = player.y - 26, e = nearestTarget(320);
+    if (!e) return;
+    const a = Math.atan2(e.y - gy, e.x - gx);
+    projectiles.push({ x: gx, y: gy, dx: Math.cos(a) * 7, dy: Math.sin(a) * 7, color: '#66FF66', power: POWER.WATER, life: 60, r: 6, fromPet: true });
+}
+function drawGloop() {
+    const t = Date.now() / 1000;
+    const draw = (x, y, sad) => {
+        ctx.save(); ctx.font = '26px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('👾', x, y + Math.sin(t * 4) * 2); if (sad) { ctx.font = '12px Arial'; ctx.fillText('💧', x + 12, y - 8); } ctx.restore();
+    };
+    if (state.gloop >= 3) { if (state.gamePhase === 'playing') draw(player.x + 34, player.y - 26, false); return; }
+    if (state.room !== ROOM.PARADISE) return;
+    draw(GLOOP.x, GLOOP.y, true);
+    ctx.fillStyle = '#FFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center'; ctx.fillText('Gloop (lonely)', GLOOP.x, GLOOP.y + 24);
+    if (Math.hypot(player.x - GLOOP.x, player.y - GLOOP.y) < 40 && !menu) {
+        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        drawSpeech({ x: GLOOP.x, y: GLOOP.y - 14 }, `${verb}: Give a cookie (🪙${GLOOP_COOKIE}) ${state.gloop || 0}/3`);
+    }
+}
+
 // 🤝 Team-up: two players shoot at nearly the same time, close together → MEGA BLAST
 const TEAMUP_WINDOW = 300, TEAMUP_RANGE = 140, TEAMUP_COOLDOWN = 5000;
 let lastP1Shot = 0, lastTeamUp = 0;
@@ -2298,8 +2415,8 @@ function updatePotions() {
     }
 }
 
-function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); }
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -2881,7 +2998,8 @@ const PLACES = {
 const ARENA_GATE  = { x: 270, y: 545 };
 const ARENA_EXIT  = { x: 400, y: 578 };
 const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon',
-                     'wizard', 'mummyking', 'candymonster', 'bigdevil', 'queen', 'hydra', 'medusa', 'minotaur', 'cerberus'];
+                     'wizard', 'mummyking', 'candymonster', 'bigdevil', 'queen', 'hydra', 'medusa', 'minotaur', 'cerberus',
+                     'megarobot', 'kraken', 'yeti', 'zombieking', 'alienqueen', 'lasershark', 'spiderqueen', 'megaboss'];
 const BOSS_RUSH   = [
     () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
     () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
@@ -2890,6 +3008,7 @@ const BOSS_RUSH   = [
     () => e0('dragon',      600, 300, { r: 40, coinDrop: 5, breath: 150, dy: 0.6 }),
     () => e0('mothership',  400, 130, { r: 44, coinDrop: 5, beamTimer: 140, dropTimer: 300 }),
 ];
+BOSS_RUSH.push(() => e0('megaboss', 400, 220, { r: 46, coinDrop: 50, moveTimer: 120, move: 0, gazeTimer: 9999 }));   // 👹 the final boss
 PLACES.arena = { name: '⚔ BOSS RUSH ARENA', spawn: [400, 470],
                  make: () => ({ enemies: [], coins: [], wave: 0, rest: 150, done: false }) };
 
@@ -3052,6 +3171,19 @@ PLACES.cloudcity = { name: '☁ CLOUD CITY', spawn: [270, 470],
                    birds: [0, 1, 2, 3, 4].map(i => ({ x: 150 + i * 130, y: 200 + (i % 2) * 180, t: i })) }) };
 const BIRD_CHAT = ['Tweet tweet! Welcome to Cloud City!', 'Have you seen Mama Bird\'s eggs?', 'I love flying! 🐦', 'The clouds are so soft today!', 'Chirp! You can\'t fly? Poor thing!'];
 
+// 👹 New bosses move into old places
+function addToPlace(room, chance, makeFoe) {
+    const old = PLACES[room].make;
+    PLACES[room].make = () => { const P = old(); if (Math.random() < chance) P.enemies.push(makeFoe()); return P; };
+}
+addToPlace('toy',        1,   () => e0('megarobot',   600, 200, { r: 36, coinDrop: 30, laserTimer: 140 }));
+addToPlace('ship',       0.4, () => e0('kraken',      400, 150, { r: 40, coinDrop: 35, inkTimer: 120, emerge: 0 }));
+addToPlace('ice',        1,   () => e0('yeti',        250, 420, { r: 32, coinDrop: 30, throwTimer: 150 }));
+addToPlace('haunted',    1,   () => e0('zombieking',  560, 420, { r: 30, coinDrop: 30, summonTimer: 240 }));
+addToPlace('space',      1,   () => e0('alienqueen',  620, 250, { r: 32, coinDrop: 30, summonTimer: 240 }));
+addToPlace('underwater', 1,   () => e0('lasershark',  250, 150, { r: 28, coinDrop: 25, laserTimer: 100 }));
+addToPlace('jungle',     1,   () => e0('spiderqueen', 680, 450, { r: 30, coinDrop: 30, summonTimer: 200 }));
+
 function inRectXY(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
 function spikesUp() { return place().spikeTimer % 120 < 50; }
 
@@ -3076,6 +3208,7 @@ function tryPlaceAction() {
     }
     if (state.room === ROOM.CAMP && nearIt(QUEST_BOARD)) { openMenu('📜 QUEST BOARD', questItems); return true; }
     if (tryHeroAction(nearIt)) return true;
+    if (state.room === ROOM.PARADISE && nearIt(GLOOP, 40)) { befriendGloop(); return true; }
     if (state.room === ROOM.LIBRARY && !place().bookTaken && nearIt(GOLDEN_BOOK, 36)) {
         place().bookTaken = true; giveAward('spellbook'); sfx('found'); spawnParticles(GOLDEN_BOOK.x, GOLDEN_BOOK.y, '#FFD700', 30);
         const unknown = SPELLS.filter(sp => sp.school && !state.spells[sp.id]);
@@ -3406,7 +3539,7 @@ function updatePlaceExits() {
     if (state.room === ROOM.CAMP && near(OLYMPUS_STAIRS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
     if (state.room === ROOM.HEAVEN && near(HEAVEN_OLYMPUS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
     if (state.room === ROOM.OLYMPUS && near(OLYMPUS_EXIT, 30)) { changeRoom(ROOM.HEAVEN); player.x = HEAVEN_OLYMPUS.x - 50; player.y = HEAVEN_OLYMPUS.y - 30; return true; }
-    if (state.room === ROOM.VOID && near(ARENA_GATE, 26))    { changeRoom(ROOM.ARENA); showToast('⚔ BOSS RUSH! Beat all 6 bosses in a row!', '#FF8866', 200); return true; }
+    if (state.room === ROOM.VOID && near(ARENA_GATE, 26))    { changeRoom(ROOM.ARENA); showToast(`⚔ BOSS RUSH! Beat all ${BOSS_RUSH.length} bosses in a row!`, '#FF8866', 200); return true; }
     if (state.room === ROOM.ARENA && near(ARENA_EXIT, 26))   { changeRoom(ROOM.VOID); player.x = ARENA_GATE.x + 50; player.y = ARENA_GATE.y - 30; return true; }
     if (state.room === ROOM.SKY && near({ x: 400, y: 575 }, 30)) { changeRoom(ROOM.HEAVEN); player.x = SKY_STAIRS.x - 50; player.y = SKY_STAIRS.y + 40; return true; }
     if (PLACES[state.room] && PLACES[state.room].island && near(DOCK, 32)) {
@@ -4215,6 +4348,7 @@ const AWARDS = [
     { id: 'riddle',      icon: '🦁', name: 'Riddle Solver',     desc: 'Answer the Sphinx\'s riddle' },
     { id: 'viking',      icon: '🛶', name: 'Viking Gold',       desc: 'Open the Viking treasure chest' },
     { id: 'fullGod',     icon: '🌟', name: 'YOU ARE A GOD!',    desc: 'Finish all the Hero Trials' },
+    { id: 'gloop',       icon: '👾', name: 'Monster Friend',    desc: 'Make friends with Gloop' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -4226,7 +4360,7 @@ const AWARDS = [
     { id: 'thunderbird', icon: '⚡', name: 'Storm Chaser',     desc: 'Beat the Thunder Bird' },
     { id: 'mothership',  icon: '🛸', name: 'Space Hero',       desc: 'Beat the Alien Mothership' },
     { id: 'miner',       icon: '⛏', name: 'Miner',            desc: 'Dig up the ground' },
-    { id: 'bossRush',    icon: '⚔', name: 'Boss Rush Champ',  desc: 'Beat all 6 bosses in a row' },
+    { id: 'bossRush',    icon: '⚔', name: 'Boss Rush Champ',  desc: 'Beat every boss in a row (and the MEGA BOSS!)' },
     { id: 'treasure',    icon: '💰', name: 'Treasure Hunter',  desc: 'Follow a treasure map to the end' },
     { id: 'wizard',      icon: '🪄', name: 'Little Wizard',    desc: 'Buy a magic power' },
     { id: 'rider',       icon: '🐴', name: 'Giddy Up!',        desc: 'Buy a ride' },
@@ -4280,7 +4414,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -5127,7 +5261,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -5270,6 +5404,7 @@ function changeRoom(dest) {
         ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
     placePetBesidePlayer();
     for (const f of activeFriends()) { f.x = player.x + 30 * (f.n - 1); f.y = player.y; }   // friends come along through portals
+    if (state.gamePhase === 'playing') maybeMiniBoss();
 }
 
 // ── UPDATE: PLAYER ────────────────────────────────────────────
@@ -5657,6 +5792,7 @@ function moveEnemy(e) {
         }
         return;
     }
+    if (moveNewBoss(e, chase)) return;
     if (e.type === 'cerberus') { chase(0.8); if (--e.fireTimer <= 0) { e.fireTimer = 150; enemyShoot(e, 4, '#FF5522', [-0.3, 0, 0.3]); sfx('bark'); } return; }
     if (e.type === 'pirate')   { chase(1.3); return; }
     if (e.type === 'windup') {   // zooms in a straight line, then stops to wind up again
@@ -8176,14 +8312,25 @@ function drawEmojiEnemy(e, t) {
     drawGroundShadow(e.x + 2, e.y + e.r + (e.type === 'book' ? 12 : 2), e.r * 0.8, e.r * 0.3, 0.25);
     ctx.save();
     if (e.emerge > 0) ctx.globalAlpha = Math.max(0.1, 1 - e.emerge / 60);
-    if (info.emoji.length === 1) {   // chess pieces are plain text: give them a white glow so they show up
+    if (info.emoji.length === 1 && e.type !== 'yeti') {   // chess pieces are plain text: give them a white glow so they show up
         ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(e.x, e.y + bob, e.r * 1.05, 0, Math.PI * 2); ctx.fill();
     }
     ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = e.hitFlash > 0 ? '#FF3333' : '#222';
     ctx.translate(e.x, e.y + bob);
     if (e.type === 'book') ctx.scale(1, 0.7 + Math.abs(Math.sin(t * 10)) * 0.3);   // flap flap
-    if (e.type === 'cerberus') { ctx.font = `${size * 0.7}px Arial`; ctx.fillText('🐕', -e.r * 0.7, 4); ctx.fillText('🐕', e.r * 0.7, 4); ctx.fillText('🐕', 0, -e.r * 0.5); }   // three heads!
+    if (e.type === 'yeti') {   // big white furry yeti
+        ctx.fillStyle = e.hitFlash > 0 ? '#FFAAAA' : '#F4F8FF';
+        ctx.beginPath(); ctx.ellipse(0, 4, e.r * 0.9, e.r, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(-e.r * 0.9, 0, e.r * 0.35, 0, Math.PI * 2); ctx.arc(e.r * 0.9, 0, e.r * 0.35, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#7AA8D8'; ctx.beginPath(); ctx.ellipse(0, -e.r * 0.25, e.r * 0.45, e.r * 0.35, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(-6, -e.r * 0.3, 3, 0, Math.PI * 2); ctx.arc(6, -e.r * 0.3, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFF'; ctx.fillRect(-6, -e.r * 0.12, 4, 5); ctx.fillRect(2, -e.r * 0.12, 4, 5);
+    } else if (e.type === 'megaboss') {   // all the bosses stuck together!
+        ctx.font = `${e.r * 1.1}px Arial`;
+        [['🐲', -0.55, -0.45], ['👸', 0.55, -0.45], ['🐂', -0.6, 0.45], ['🤖', 0.6, 0.45], ['👹', 0, 0]].forEach(([em, ox, oy]) => ctx.fillText(em, ox * e.r, oy * e.r + Math.sin(t * 4 + ox * 3) * 2));
+    } else if (e.type === 'cerberus') { ctx.font = `${size * 0.7}px Arial`; ctx.fillText('🐕', -e.r * 0.7, 4); ctx.fillText('🐕', e.r * 0.7, 4); ctx.fillText('🐕', 0, -e.r * 0.5); }   // three heads!
     else ctx.fillText(info.emoji, 0, 0);
+    if (info.crown) { ctx.font = `${e.r * 0.8}px Arial`; ctx.fillText('👑', 0, -e.r * 1.05); }
     if (e.type === 'medusa') { ctx.font = `${e.r * 0.7}px Arial`; for (let k = 0; k < 5; k++) ctx.fillText('🐍', Math.cos(k * 0.8 - 1.6 - 0.4) * e.r * 0.9, -e.r * 0.6 + Math.sin(k * 0.8 - 2) * e.r * 0.5 + Math.sin(t * 6 + k) * 2); }
     ctx.restore();
 }
