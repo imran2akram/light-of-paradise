@@ -283,7 +283,10 @@ const PETS = [
     { id: 'penguin', name: 'Penguin',     cost: 30, power: 'Snowballs',    range: 240, speed: 2.8, cooldown: 70  },
     { id: 'unicorn', name: 'Unicorn',     cost: 40, power: 'Big heals',    range: 260, speed: 3.8, cooldown: 140 },
     { id: 'trex',    name: 'T-Rex',       cost: 45, power: 'STOMP!',       range: 180, speed: 3.2, cooldown: 100 },
+    { id: 'robodog', name: 'Robot Dog',   cost: 50, power: 'Laser bark',   range: 280, speed: 3.6, cooldown: 60  },
+    { id: 'goose',   name: 'Golden Goose',cost: 60, power: 'Lays golden eggs', range: 220, speed: 2.8, cooldown: 90 },
 ];
+const PET_EMOJI = { robodog: ['🐕', 'grayscale(1) brightness(1.35)'], goose: ['🪿', 'sepia(1) saturate(5) brightness(1.1)'] };
 const PET_XP_LEVELS  = [0, 20, 60, 120, 200];   // XP needed for levels 1-5
 const UNICORN_HEAL_FRAMES = 720;                // the Unicorn heals 1 heart every 12 s
 const OWL_HEAL_FRAMES = 1200;   // the Owl heals 1 heart every 20 s
@@ -897,6 +900,11 @@ const MOUNTS = [
     { id: 'kart',   icon: '🏎', name: 'Go-Kart',           cost: 35, speed: 2.2, desc: 'Zoom zoom! (a bit slidey)' },
     { id: 'duck',   icon: '🦆', name: 'Giant Rubber Duck', cost: 15, speed: 0.9, desc: 'Silly and squeaky. Quack!' },
     { id: 'car',    icon: '🚗', name: 'Flying Car',        cost: 80, speed: 2.0, desc: 'Fly over walls, water and lava!' },
+    { id: 'unicorn', icon: '🦄', name: 'Unicorn',          cost: 70, speed: 1.8, desc: 'Leaves a rainbow behind you!' },
+    { id: 'snail',  icon: '🐌', name: 'Giant Snail',       cost: 5,  speed: 0.5, desc: 'Super slow. Super funny.' },
+    { id: 'jetpack', icon: '🎒', name: 'Jetpack',          cost: 120, speed: 2.2, desc: 'WHOOSH! Fly over everything!' },
+    { id: 'skates', icon: '🛼', name: 'Rocket Skates',     cost: 50, speed: 2.4, desc: 'Super fast and slidey!' },
+    { id: 'hamster', icon: '🐹', name: 'Giant Hamster Ball', cost: 45, speed: 1.8, desc: 'Roll over monsters!' },
     { id: 'dino',   icon: '🦕', name: 'Triceratops',       cost: 0,  speed: 1.6, desc: 'Tame one on Dinosaur Island!', hidden: true },
     { id: 'broom',  icon: '🧹', name: 'Broomstick',        cost: 0,  speed: 1.9, desc: 'Wizards only — fly over everything!', hidden: true },
     { id: 'surf',   icon: '🏄', name: 'Lava Surfboard',    cost: 0,  speed: 1.5, desc: 'Find it at the Volcano — surf the lava!', hidden: true },
@@ -904,8 +912,8 @@ const MOUNTS = [
     { id: 'pegasus', icon: '🪽', name: 'Pegasus',          cost: 0,  speed: 2.0, desc: 'The flying horse of the Greek Island!', hidden: true },
 ];
 
-function mountItems() {
-    const items = MOUNTS.filter(m => !m.hidden || state.mounts[m.id]).map(m => ({
+function mountItems(special = false) {
+    const items = MOUNTS.filter(m => special ? m.hidden && state.mounts[m.id] : !m.hidden).map(m => ({
         icon: m.icon, name: m.name, desc: m.desc, cost: m.cost,
         status: state.mount === m.id ? 'RIDING' : state.mounts[m.id] ? 'OWNED — ride' : null,
         action: () => {
@@ -913,6 +921,8 @@ function mountItems() {
             if (spend(m.cost)) { state.mounts[m.id] = true; state.mount = m.id; state.lastMount = m.id; showToast(`${m.icon} Hop on your ${m.name}! (V to get off)`); giveAward('rider'); }
         },
     }));
+    if (!special && MOUNTS.some(m => m.hidden && state.mounts[m.id]))   // rides you found on adventures
+        items.push({ icon: '⭐', name: 'My special rides', desc: 'Rides you found on adventures', cost: 0, status: 'LOOK →', action: () => openMenu('⭐ MY SPECIAL RIDES', () => mountItems(true)) });
     if (state.mount) items.push({ icon: '🚶', name: 'Get off', desc: 'Walk on your own feet', cost: 0, status: 'OK', action: () => { state.mount = null; } });
     return items;
 }
@@ -929,7 +939,8 @@ function mountSpeed() { const m = MOUNTS.find(m => m.id === state.mount); return
 // Drawn under the player
 function drawMount() {
     if (!state.mount) return;
-    const emojiMount = { broom: '🧹', surf: '🏄', trex: '🦖', car: '🚗', pegasus: '🐎' }[state.mount];
+    if (state.mount === 'hamster') return;   // the ball is drawn over you (drawRides)
+    const emojiMount = { broom: '🧹', surf: '🏄', trex: '🦖', car: '🚗', pegasus: '🐎', unicorn: '🦄', snail: '🐌', jetpack: '🔥', skates: '🛼' }[state.mount];
     if (emojiMount) {   // newer rides are drawn with a big emoji under you
         ctx.save(); ctx.font = state.mount === 'trex' ? '52px Arial' : '34px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.translate(player.x, player.y + (state.mount === 'trex' ? 4 : 14)); if (state.faceX > 0) ctx.scale(-1, 1);
@@ -1226,6 +1237,8 @@ let state = {
     fullGod:            false,           // finished every hero trial!
     stoned:             0,               // 🗿 frames left as a statue
     gloop:              0,               // 👾 cookies given to Gloop (3 = best friends)
+    petCostume:         null,            // 🐾 what your pet is wearing
+    petCostumes:        {},
     questsDone:         0,
     invisible:          0,               // 🧪 potion timers
     giant:              0,
@@ -1365,6 +1378,7 @@ function pressAction() {
         return;
     }
     if (race) { raceTap(); return; }
+    if (petBattle) { cheerPetBattle(); return; }
     if (nearRaceMaster() && state.gamePhase === 'playing') { openMenu('🏁 PICK A RACE!', raceItems); return; }
     if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
         const { cx, cy } = buildTargetCell();
@@ -1394,6 +1408,7 @@ function handleTap(x, y) {
         return true;
     }
     if (race) { raceTap(); return true; }
+    if (petBattle) { cheerPetBattle(); return true; }
     if (lastInput !== 'touch' && state.gamePhase === 'playing' && !menu && !state.shopOpen && inRect(x, y, BUILD_BTN)) { toggleBuild(); return true; }
     if (state.awardsOpen) { state.awardsOpen = false; return true; }
     if (menu) {
@@ -2279,6 +2294,83 @@ function drawGloop() {
     }
 }
 
+// ── PETS & RIDES: pet battles, golden eggs, ride trails, the hamster ball ──
+const WILD_PET_NAMES = ['Sir Fluffington', 'Mr Snuggles', 'Captain Whiskers', 'Princess Pickle', 'Big Bob', 'Tiny Tim'];
+let petBattle = null;   // { foe, you, them, turn, timer, cheer, result }
+function startPetBattle() {
+    if (state.activePet < 0) { showToast('🐾 You need a pet to battle! Buy one in the Shop.', '#FFCC88', 150); return; }
+    const others = PETS.map((p, i) => i).filter(i => i !== state.activePet);
+    const lv = petLevel();
+    petBattle = { foe: others[Math.floor(Math.random() * others.length)], foeName: WILD_PET_NAMES[Math.floor(Math.random() * WILD_PET_NAMES.length)],
+                  foeLv: Math.max(1, lv + Math.floor(Math.random() * 3) - 1), you: 10 + lv * 2, them: 10 + lv * 2, max: 10 + lv * 2,
+                  turn: 0, timer: 90, cheer: 0, result: 0, msg: 'FIGHT!' };
+    sfx('bite');
+}
+function cheerPetBattle() {
+    if (!petBattle || petBattle.result) return;
+    petBattle.cheer = Math.min(3, petBattle.cheer + 0.5);
+    spawnParticles(250, 330, '#FFE066', 3);
+}
+function updatePetBattle() {
+    const B = petBattle;
+    if (B.result) { if (--B.result === 0) petBattle = null; return; }
+    if (--B.timer > 0) return;
+    B.timer = 50;
+    if (B.turn++ % 2 === 0) {   // your pet's turn (cheering helps!)
+        const dmg = 1 + Math.floor(Math.random() * 3) + Math.floor(B.cheer) + (petLevel() > 2 ? 1 : 0);
+        B.them -= dmg; B.cheer = 0; B.msg = `Your ${PETS[state.activePet].name} hits for ${dmg}!`; sfx('hit');
+    } else {
+        const dmg = 1 + Math.floor(Math.random() * 3) + (B.foeLv > 2 ? 1 : 0);
+        B.you -= dmg; B.msg = `${B.foeName} hits back for ${dmg}!`; sfx('hurt');
+    }
+    if (B.them <= 0 || B.you <= 0) {
+        B.result = 180;
+        if (B.them <= 0) { petGainXp(40); state.coins += 30; giveAward('petBattle'); sfx('win'); B.msg = '🏆 YOUR PET WON! +🪙30'; }
+        else { petGainXp(10); B.msg = `${B.foeName} won… train and try again!`; }
+    }
+}
+function drawPetBattle() {
+    const B = petBattle;
+    if (!B) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, 800, 600);
+    ctx.fillStyle = '#5A8A3A'; ctx.fillRect(150, 200, 500, 220); ctx.strokeStyle = '#FFE066'; ctx.lineWidth = 4; ctx.strokeRect(150, 200, 500, 220);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center'; ctx.fillText('🐾 PET BATTLE! 🐾', 400, 190);
+    const shake = k => (B.timer > 40 && (B.turn % 2) === k) ? Math.sin(Date.now() / 20) * 4 : 0;
+    drawPetShape(PETS[state.activePet].id, 260 + shake(0), 320, 2.4, -1);
+    drawPetShape(PETS[B.foe].id, 540 + shake(1), 320, 2.4, 1);
+    const bar = (x, hp, name) => {
+        ctx.fillStyle = '#222'; ctx.fillRect(x - 70, 230, 140, 12);
+        ctx.fillStyle = hp / B.max > 0.3 ? '#44DD44' : '#FF4444'; ctx.fillRect(x - 70, 230, 140 * Math.max(0, hp) / B.max, 12);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 11px Arial'; ctx.fillText(name, x, 224);
+    };
+    bar(260, B.you, `Your ${PETS[state.activePet].name}`); bar(540, B.them, `${B.foeName} the ${PETS[B.foe].name}`);
+    ctx.fillStyle = '#FFF'; ctx.font = 'bold 14px Arial'; ctx.fillText(B.msg, 400, 400);
+    ctx.fillStyle = '#FFE066'; ctx.font = '11px Arial';
+    ctx.fillText(`${lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap' : 'Press SPACE'} to CHEER! (cheering makes your pet hit harder)`, 400, 445);
+    ctx.restore();
+}
+
+let goldenEggTimer = 0;
+function updateRides() {
+    if (!playing()) return;
+    if (state.activePet >= 0 && PETS[state.activePet].id === 'goose' && ++goldenEggTimer % 2700 === 0) {   // 🥚 every 45 seconds
+        state.coins += 10; spawnFloatText(pet.x, pet.y - 20, '🥚 GOLDEN EGG! +🪙10', '#FFD700', 90); sfx('found');
+    }
+    const moving = Math.hypot(state.vx || 0, state.vy || 0) > 0.5 || keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'] || padMove.x || padMove.y || vTouch.joyId !== null;
+    if (!moving || Math.random() > 0.6) return;
+    const trail = { unicorn: `hsl(${(Date.now() / 5) % 360}, 100%, 65%)`, snail: 'rgba(160,220,120,0.7)', jetpack: Math.random() < 0.5 ? '#FF8822' : '#FFDD44' }[state.mount];
+    if (trail) particles.push({ x: player.x + (Math.random() - 0.5) * 10, y: player.y + 18, dx: (Math.random() - 0.5) * 0.6, dy: state.mount === 'jetpack' ? 2 : 0.2,
+                                life: state.mount === 'snail' ? 120 : 40, maxLife: state.mount === 'snail' ? 120 : 40, color: trail, r: state.mount === 'snail' ? 6 : 4 });
+}
+function drawRides() {
+    if (state.mount !== 'hamster' || state.gamePhase !== 'playing') return;
+    ctx.save(); ctx.fillStyle = 'rgba(200,230,255,0.25)'; ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(player.x, player.y + 2, 30, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(player.x, player.y + 2, 30, state.walkPhase, state.walkPhase + 1.2); ctx.stroke();
+    ctx.restore();
+}
+
 // ── MORE PLACES: doors, things to collect, belts and the museum at night ──
 const SUBPLACE_EXIT = { x: 400, y: 578 };
 function updateSubplace() {
@@ -2490,8 +2582,8 @@ function updatePotions() {
     }
 }
 
-function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); }
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); updateRides(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); drawRides(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -3017,6 +3109,7 @@ function drawHouse() {
     PETS.forEach((pInfo, j) => {
         if (!state.ownedPets[j] || j === state.activePet) return;
         const b = PET_BEDS[bed++];
+        if (!b) return;   // only 4 beds
         ctx.fillStyle = '#A06AC8'; ctx.beginPath(); ctx.ellipse(b.x, b.y + 8, 20, 9, 0, 0, Math.PI * 2); ctx.fill();
         drawPetShape(pInfo.id, b.x, b.y, 1, 1);
         ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
@@ -3126,7 +3219,16 @@ const MALL_SHOPS = [
     { id: 'stable', name: '🐴 STABLE',     keeper: 'Rita',   x: 300, awning: '#8A5A2A', coat: '#6A8A3A', hat: 'cowboy', items: () => mountItems(), title: "🐴 RITA'S STABLE — pick a ride!" },
     { id: 'toys',   name: '🧸 TOY SHOP',   keeper: 'Tilly',  x: 460, awning: '#E04A8A', coat: '#FF88CC', hat: 'party',  title: '🧸 TILLY\'S TOY SHOP',
       items: () => [{ icon: '🚪', name: 'Step into TOY LAND', desc: 'Toys come alive… and an Evil Wizard!', cost: 0, status: 'GO!',
-                      action: () => { menu = null; changeRoom(ROOM.TOY); showToast('🧸 Whoa! You shrank down into TOY LAND!', '#FFE066', 200); } }] },
+                      action: () => { menu = null; changeRoom(ROOM.TOY); showToast('🧸 Whoa! You shrank down into TOY LAND!', '#FFE066', 200); } },
+                    ...['robodog', 'goose'].map(id => {   // pets that don't fit in the Void shop
+                        const j = PETS.findIndex(pt => pt.id === id), pt = PETS[j];
+                        return { icon: PET_EMOJI[id][0], name: pt.name, desc: pt.power, cost: pt.cost,
+                                 status: state.activePet === j ? 'WITH YOU' : state.ownedPets[j] ? 'OWNED — pick' : null,
+                                 action: () => {
+                                     if (state.ownedPets[j]) { state.activePet = j; placePetBesidePlayer(); return; }
+                                     if (spend(pt.cost)) { state.ownedPets[j] = true; state.activePet = j; placePetBesidePlayer(); giveAward('pet'); showToast(`🐾 Your new ${pt.name}!`, '#FFE066', 160); }
+                                 } };
+                    })] },
     { id: 'camp',   name: '⛺ DEMIGOD CAMP', keeper: 'Coach', x: 620, awning: '#E0A030', coat: '#C06020', hat: 'cowboy', title: '⛺ DEMIGOD CAMP',
       items: () => [{ icon: '⛺', name: 'Go to Demigod Camp', desc: godParent() ? 'Quests, training and the stairs to Olympus!' : 'Only demigods can go in…', cost: 0,
                       status: godParent() ? 'GO!' : 'LOCKED',
@@ -3418,7 +3520,7 @@ function updateNewPlaces() {
     }
     if (state.room === ROOM.VOLCANO) {
         // Hot lava hurts (unless you fly over it on your dragon)
-        if (!['dragon', 'broom', 'surf', 'car', 'pegasus'].includes(state.mount) && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
+        if (!['dragon', 'broom', 'surf', 'car', 'pegasus', 'jetpack'].includes(state.mount) && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
             damagePlayer();
             spawnFloatText(player.x, player.y - 30, 'HOT! 🔥', '#FF6633', 50);
         }
@@ -3455,7 +3557,7 @@ function updateNewPlaces() {
         }
     }
     // The tamed dinosaur stomps monsters it runs into
-    if ((state.mount === 'dino' || state.mount === 'trex') && (updateNewPlaces.stomp = (updateNewPlaces.stomp || 0) + 1) % 30 === 0) {
+    if (['dino', 'trex', 'hamster'].includes(state.mount) && (updateNewPlaces.stomp = (updateNewPlaces.stomp || 0) + 1) % 30 === 0) {
         const big = state.mount === 'trex';   // 🦖 bigger feet, bigger stomp
         for (const e of targetableEnemies()) if (Math.hypot(e.x - player.x, e.y - player.y) < e.r + (big ? 44 : 26)) { damageEnemy(e, POWER.NONE, false, big ? 2 : 1); triggerShake(big ? 7 : 4); }
     }
@@ -4494,6 +4596,8 @@ const AWARDS = [
     { id: 'fullGod',     icon: '🌟', name: 'YOU ARE A GOD!',    desc: 'Finish all the Hero Trials' },
     { id: 'gloop',       icon: '👾', name: 'Monster Friend',    desc: 'Make friends with Gloop' },
     { id: 'collector',   icon: '🧺', name: 'Collector',         desc: 'Find all the things in a secret place' },
+    { id: 'petCostume',  icon: '🎀', name: 'Fashion Pet',       desc: 'Dress up your pet' },
+    { id: 'petBattle',   icon: '🐾', name: 'Pet Champion',      desc: 'Win a Pet Battle' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -4559,7 +4663,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -5406,7 +5510,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0, petCostume: null, petCostumes: {},
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -5581,9 +5685,9 @@ function updatePlayer() {
     if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; state.walkPhase += 0.32; }   // remember which way you're going
     dx *= spd; dy *= spd;
     if (fight.blocking) { dx *= 0.4; dy *= 0.4; }   // slow while holding your shield up
-    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.room === ROOM.MOONBASE || state.room === ROOM.ICECAVE || state.mount === 'kart' || mod('lowGravity')) {
+    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.room === ROOM.MOONBASE || state.room === ROOM.ICECAVE || state.mount === 'kart' || state.mount === 'skates' || mod('lowGravity')) {
         // Slippery ice / floaty space: you speed up and slow down gently
-        const grip = state.mount === 'kart' ? 0.12 : state.room === ROOM.ICE ? 0.05 : 0.035;
+        const grip = state.mount === 'kart' ? 0.12 : state.mount === 'skates' ? 0.07 : state.room === ROOM.ICE ? 0.05 : 0.035;
         state.vx = (state.vx || 0) + (dx - (state.vx || 0)) * grip;
         state.vy = (state.vy || 0) + (dy - (state.vy || 0)) * grip;
         dx = state.vx; dy = state.vy;
@@ -5597,7 +5701,7 @@ function updatePlayer() {
     // Move, but blocks are solid (try each direction separately so you slide along walls)
     const nx = Math.max(18, Math.min(GAME_W - 18, player.x + dx));
     const ny = Math.max(52, Math.min(GAME_H - 18, player.y + dy));
-    const flying = ['dragon', 'broom', 'car', 'pegasus'].includes(state.mount) || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
+    const flying = ['dragon', 'broom', 'car', 'pegasus', 'jetpack'].includes(state.mount) || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
     if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
     if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
     if (state.mount === 'duck' && (dx || dy) && Math.random() < 0.01) { tone(700, 0.12, 'square', 0.12, 500); spawnFloatText(player.x, player.y - 30, 'QUACK!', '#FFE066', 40); }
@@ -6588,7 +6692,7 @@ function petGainXp(n) {
     state.petXp[state.activePet] = (state.petXp[state.activePet] || 0) + n;
     const after = petLevel();
     if (after > before) {
-        showToast(`⭐ Your ${PETS[state.activePet].name} reached LEVEL ${after}!`, '#FFE066', 180);
+        showToast(PETS[state.activePet].id === 'dragon' ? `🐉 Your dragon GREW UP! It's level ${after} and bigger now!` : `⭐ Your ${PETS[state.activePet].name} reached LEVEL ${after}!`, '#FFE066', 180);
         spawnParticles(pet.x, pet.y, '#FFE066', 16);
         sfx('found');
         if (after >= 5) giveAward('petMaster');
@@ -6681,9 +6785,10 @@ function updatePet() {
         } else {
             // Owl: lightning feathers · Dragon: fireballs · Penguin: snowballs · Unicorn: rainbows
             pet.cooldown = cooldown;
-            const power = { owl: POWER.LIGHTNING, dragon: POWER.BRIMSTONE, penguin: POWER.ICE, unicorn: POWER.RAINBOW }[info.id];
+            const power = { owl: POWER.LIGHTNING, dragon: POWER.BRIMSTONE, penguin: POWER.ICE, unicorn: POWER.RAINBOW, robodog: POWER.LIGHTNING, goose: POWER.WATER }[info.id];
             const a = Math.atan2(target.y - pet.y, target.x - pet.x);
-            const color = info.id === 'penguin' ? '#FFFFFF' : info.id === 'unicorn' ? `hsl(${Math.random() * 360}, 100%, 65%)` : WEAPON_INFO[power].color;
+            const color = info.id === 'penguin' ? '#FFFFFF' : info.id === 'unicorn' ? `hsl(${Math.random() * 360}, 100%, 65%)`
+                        : info.id === 'robodog' ? '#FF3333' : info.id === 'goose' ? '#FFD700' : WEAPON_INFO[power].color;
             projectiles.push({ x: pet.x, y: pet.y, dx: Math.cos(a) * 8, dy: Math.sin(a) * 8,
                                color, power, life: 60, r: 5, fromPet: true });
             sfx(info.id === 'owl' ? 'hoot' : info.id === 'penguin' ? 'whoosh' : info.id === 'unicorn' ? 'magic' : 'shoot');
@@ -7077,6 +7182,7 @@ function raceItems() {
     return [
         { icon: '🐾', name: 'Pet Race',  desc: 'Tap fast to make your pet run', cost: 0, status: 'GO!', action: () => { menu = null; startRace(); } },
         { icon: '⭕', name: 'Ring Race', desc: 'Grab the rings! Friends can race too', cost: 0, status: 'GO!', action: () => { menu = null; startRingRace(); } },
+        { icon: '🐾', name: 'Pet Battle', desc: 'Your pet vs a wild pet! Tap to cheer', cost: 0, status: 'GO!', action: () => { menu = null; startPetBattle(); } },
         { icon: '⚔', name: 'Friend Battle', desc: 'Bonk your friends! Last one standing wins', cost: 0, status: activeFriends().length ? 'FIGHT!' : 'NEEDS 2', action: () => { menu = null; startBattle(); } },
     ];
 }
@@ -7328,7 +7434,25 @@ function hatItems() {
                 if (spend(h.cost)) { state.hats[h.id] = true; state.hat = h.id; showToast(`${h.icon} Looking good in your ${h.name}!`); giveAward('hat'); }
             },
         })),
+        { icon: '🐾', name: 'Pet Costumes', desc: 'Dress up your pet!', cost: 0, status: 'LOOK →', action: () => openMenu('🐾 PET COSTUMES', petCostumeItems) },
     ];
+}
+const PET_COSTUMES = [
+    { id: 'tophat',  icon: '🎩', name: 'Top Hat',     cost: 10 },
+    { id: 'crown',   icon: '👑', name: 'Tiny Crown',  cost: 25 },
+    { id: 'bow',     icon: '🎀', name: 'Pink Bow',    cost: 8  },
+    { id: 'shades',  icon: '🕶', name: 'Cool Shades', cost: 12 },
+    { id: 'party',   icon: '🥳', name: 'Party Face',  cost: 10 },
+    { id: 'wizard',  icon: '🧙', name: 'Wizard Look', cost: 20 },
+];
+function petCostumeItems() {
+    return [{ icon: '❌', name: 'No costume', desc: 'Just your pet', cost: 0, status: state.petCostume ? null : 'WEARING', action: () => { state.petCostume = null; } },
+        ...PET_COSTUMES.map(c => ({ icon: c.icon, name: c.name, desc: 'Your pet will look AMAZING', cost: c.cost,
+            status: state.petCostume === c.id ? 'WEARING' : state.petCostumes[c.id] ? 'OWNED — wear' : null,
+            action: () => {
+                if (state.petCostumes[c.id]) { state.petCostume = c.id; return; }
+                if (spend(c.cost)) { state.petCostumes[c.id] = true; state.petCostume = c.id; giveAward('petCostume'); showToast(`${c.icon} Your pet looks so cute!`, '#FFE066', 150); }
+            } }))];
 }
 
 // Crafting recipes: turn what you've mined into new things
@@ -10160,6 +10284,13 @@ function drawPetShape(id, x, y, s = 1, face = 1) {
     const t = Date.now();
     ctx.save();
     ctx.translate(x, y); ctx.scale(s * face, s);
+    if (PET_EMOJI[id]) {   // newer pets are big emoji
+        const [em, filter] = PET_EMOJI[id];
+        ctx.filter = filter; ctx.font = '22px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.scale(-1, 1); ctx.fillText(em, 0, -2);
+        ctx.filter = 'none'; if (id === 'robodog') { ctx.font = '10px Arial'; ctx.fillText('📡', 4, -14); }
+        ctx.restore();
+        return;
+    }
     if (id === 'puppy') {
         ctx.strokeStyle = '#8B5A2B'; ctx.lineWidth = 3;   // wagging tail
         ctx.beginPath(); ctx.moveTo(9, -1); ctx.lineTo(15, -7 + Math.sin(t / 60) * 4); ctx.stroke();
@@ -10257,8 +10388,11 @@ function drawPet() {
     ctx.beginPath(); ctx.ellipse(pet.x, pet.y + 10, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
     const hop = state.danceTimer > 0 ? Math.abs(Math.sin(state.danceTimer / 4)) * 8 : pet.stomp > 0 ? Math.sin(pet.stomp / 15 * Math.PI) * 12 : 0;
-    drawPetShape(PETS[state.activePet].id, pet.x, pet.y - hop, 1, pet.face);
-    const lv = petLevel();
+    const lv = petLevel(), petId = PETS[state.activePet].id;
+    const grow = petId === 'dragon' ? 1 + (lv - 1) * 0.2 : 1;   // 🐉 your dragon grows up as it levels up!
+    drawPetShape(petId, pet.x, pet.y - hop, grow, pet.face);
+    const costume = PET_COSTUMES.find(c => c.id === state.petCostume);
+    if (costume) { ctx.save(); ctx.font = '13px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(costume.icon, pet.x, pet.y - hop - 13 * grow); ctx.restore(); }
     if (lv > 1) { ctx.fillStyle = '#FFE066'; ctx.font = 'bold 8px Arial'; ctx.textAlign = 'center'; ctx.fillText('★'.repeat(lv - 1), pet.x, pet.y - 22 - hop); }
 }
 
@@ -10874,6 +11008,7 @@ function drawVirtualControls() {
 function update() {
     if (state.gamePhase === 'intro') return;
     if (race) { updateRace(); updateParticles(); return; }   // everything waits while you race
+    if (petBattle) { updatePetBattle(); updateParticles(); return; }
 
     if (settings.creative) {   // Creative Mode: coins never run out (your real coins are kept safe)
         if (state.coinsBackup === undefined) state.coinsBackup = state.coins;
@@ -10980,6 +11115,7 @@ function draw() {
     drawMenu();
     drawToast();
     drawRace();
+    drawPetBattle();
     if (state.levelComplete) drawLevelComplete();
     if (state.won)           drawWin();
 
