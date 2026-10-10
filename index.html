@@ -553,11 +553,16 @@ const SPELLS = [
     { id: 'magnet', icon: '🧲', name: 'Magnet Hand',      cost: 20, cooldown: 300, desc: 'Pulls monsters and coins to you' },
     { id: 'quake',  icon: '💥', name: 'Earthquake Stomp', cost: 35, cooldown: 480, desc: 'Shakes and stuns everything' },
     { id: 'field',  icon: '🔵', name: 'Force Field',      cost: 30, cooldown: 600, desc: 'Pushes monsters and bullets away' },
+    // Only taught at Hogwarts (school: true keeps them out of Merlin's shop)
+    { id: 'expelliarmus', icon: '🪄', name: 'Expelliarmus',        cost: 25, cooldown: 150,  desc: 'Blasts a monster far away', school: true },
+    { id: 'leviosa',      icon: '🪶', name: 'Wingardium Leviosa',  cost: 30, cooldown: 600,  desc: 'Monsters float and can\'t move', school: true },
+    { id: 'lumos',        icon: '💡', name: 'Lumos',               cost: 15, cooldown: 900,  desc: 'Your wand lights up dark caves', school: true },
+    { id: 'vada',         icon: '💚', name: 'Vada Cadabra',        cost: 60, cooldown: 1500, desc: 'POOF! Every monster on screen', school: true },
 ];
-let timeFreeze = 0, magnetTimer = 0, clones = [], laserBeam = null;
+let timeFreeze = 0, magnetTimer = 0, clones = [], laserBeam = null, lumosTimer = 0, vadaFlash = 0;
 
 function spellItems() {
-    return SPELLS.map(sp => ({
+    return SPELLS.filter(sp => !sp.school).map(sp => ({
         icon: sp.icon, name: sp.name, desc: sp.desc, cost: sp.cost,
         status: state.spell === sp.id ? 'HOLDING' : state.spells[sp.id] ? 'OWNED — pick' : null,
         action: () => {
@@ -605,6 +610,31 @@ function castSpell() {
         for (const e of foes) { damageEnemy(e, POWER.NONE, false, 1 + bonus); if (e.alive) e.frozen = Math.max(e.frozen || 0, 60); }
         triggerShake(30); sfx('boom');
         for (let k = 0; k < 20; k++) spawnParticles(Math.random() * 800, 80 + Math.random() * 500, '#8A6A4A', 2);
+    } else if (sp.id === 'expelliarmus') {
+        const e = nearestTarget(450);
+        if (!e) { showToast('🪄 No monster close enough!', '#FFCCAA', 90); return; }
+        bolts.push({ x1: player.x, y1: player.y, x2: e.x, y2: e.y, life: 14, color: '#FF5533' });
+        damageEnemy(e, POWER.NONE, false, 2 + bonus);
+        const d = Math.hypot(e.x - player.x, e.y - player.y) || 1, push = BOSS_TYPES.includes(e.type) ? 40 : 140;
+        e.x = Math.max(20, Math.min(780, e.x + (e.x - player.x) / d * push));
+        e.y = Math.max(60, Math.min(580, e.y + (e.y - player.y) / d * push));
+        if (e.alive) e.frozen = Math.max(e.frozen || 0, 90);
+        spawnFloatText(e.x, e.y - 24, 'EXPELLIARMUS!', '#FF7755', 70); triggerShake(6); sfx('zap');
+    } else if (sp.id === 'leviosa') {
+        let n = 0;
+        for (const e of foes) {
+            if (Math.hypot(e.x - player.x, e.y - player.y) > 320) continue;
+            e.frozen = Math.max(e.frozen || 0, BOSS_TYPES.includes(e.type) ? 90 : 240); n++;
+            spawnParticles(e.x, e.y, '#CCEEFF', 6);
+        }
+        spawnFloatText(player.x, player.y - 34, n ? 'Wingardium Leviosa! 🪶' : 'Nothing to float…', '#CCEEFF', 80); sfx('magic');
+    } else if (sp.id === 'lumos') {
+        lumosTimer = 1200;
+        spawnFloatText(player.x, player.y - 34, 'LUMOS! 💡', '#FFFFAA', 80); sfx('magic');
+    } else if (sp.id === 'vada') {
+        vadaFlash = 30;
+        for (const e of foes) damageEnemy(e, POWER.NONE, false, BOSS_TYPES.includes(e.type) ? 6 : 99);   // bosses are too strong to poof
+        spawnFloatText(player.x, player.y - 34, 'VADA CADABRA!', '#66FF88', 90); triggerShake(20); sfx('boom');
     }
     state.spellCooldown = sp.cooldown;
 }
@@ -613,6 +643,8 @@ function updateSpells() {
     if (state.spellCooldown > 0) state.spellCooldown--;
     if (timeFreeze > 0) timeFreeze--;
     if (laserBeam && --laserBeam.life <= 0) laserBeam = null;
+    if (lumosTimer > 0) lumosTimer--;
+    if (vadaFlash > 0) vadaFlash--;
     if (magnetTimer > 0) {
         magnetTimer--;
         for (const e of targetableEnemies()) {
@@ -676,6 +708,12 @@ function drawSpells() {
     if (magnetTimer > 0) {
         ctx.strokeStyle = `rgba(255,80,80,${magnetTimer / 150})`; ctx.lineWidth = 2;
         for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(player.x, player.y, 40 + ((Date.now() / 5 + k * 40) % 120), 0, Math.PI * 2); ctx.stroke(); }
+    }
+    if (vadaFlash > 0) { ctx.fillStyle = `rgba(80,255,120,${vadaFlash / 60})`; ctx.fillRect(0, 0, 800, 600); }
+    if (lumosTimer > 0) {   // a soft glow from your wand
+        const glow = ctx.createRadialGradient(player.x, player.y - 10, 4, player.x, player.y - 10, 60);
+        glow.addColorStop(0, 'rgba(255,255,200,0.5)'); glow.addColorStop(1, 'rgba(255,255,200,0)');
+        ctx.fillStyle = glow; ctx.fillRect(player.x - 60, player.y - 70, 120, 120);
     }
     if (timeFreeze > 0) {
         ctx.fillStyle = 'rgba(140,170,255,0.18)'; ctx.fillRect(0, 0, 800, 600);
@@ -1005,6 +1043,8 @@ let state = {
     lessonHealTimer:    0,
     garden:             [0, 0, 0, 0],    // when each pot was planted (Date.now()), 0 = empty
     lessons:            {},              // School lessons you've learned
+    hogwarts:           false,           // got your Hogwarts letter 🦉
+    demigod:            undefined,       // god parent id, null = a normal kid, undefined = not rolled yet
     hats:               {},              // hats you own
     hat:                null,            // hat you're wearing
     houseFrom:          null,            // which house door you went in by
@@ -3134,6 +3174,8 @@ const AWARDS = [
     { id: 'decorator',   icon: '🛋', name: 'Decorator',        desc: 'Buy every piece of furniture' },
     { id: 'gardener',    icon: '🥕', name: 'Green Fingers',    desc: 'Pick something from your garden' },
     { id: 'student',     icon: '🎓', name: 'Top of the Class', desc: 'Learn a lesson at School' },
+    { id: 'hogwarts',    icon: '🦉', name: 'You\'re a Wizard!', desc: 'Get your Hogwarts letter' },
+    { id: 'demigod',     icon: '⚡', name: 'Half God',          desc: 'Be born a demigod' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -3199,7 +3241,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -3216,11 +3258,41 @@ function clearSave() {
 }
 
 // Leaving the title screen: carry on from the save if there is one
+// ── BORN LUCKY: a new game might make you a demigod (half god!) or a wizard. Both are very rare ──
+const DEMIGOD_CHANCE = 0.05;   // 1 in 20 new games — very lucky!
+const BORN_WIZARD_CHANCE = 0.05;   // 1 in 20 new games you're born a wizard and go straight to Hogwarts
+const GOD_PARENTS = [
+    { id: 'zeus',       icon: '⚡', who: 'Your dad is ZEUS, god of the sky!',          gift: 'Super Lightning',  give: () => { state.power = POWER.LIGHTNING; state.powerTier = 2; } },
+    { id: 'poseidon',   icon: '🌊', who: 'Your dad is POSEIDON, god of the sea!',       gift: 'Super Water',      give: () => { state.power = POWER.WATER; state.powerTier = 2; } },
+    { id: 'hephaestus', icon: '🔨', who: 'Your dad is HEPHAESTUS, god of fire!',        gift: 'Super Fire',       give: () => { state.power = POWER.BRIMSTONE; state.powerTier = 2; } },
+    { id: 'khione',     icon: '❄',  who: 'Your mum is KHIONE, goddess of snow!',        gift: 'Super Ice',        give: () => { state.power = POWER.ICE; state.powerTier = 2; } },
+    { id: 'athena',     icon: '🦉', who: 'Your mum is ATHENA, goddess of wisdom!',      gift: '100 coins',        give: () => { state.coins += 100; } },
+    { id: 'hermes',     icon: '👟', who: 'Your dad is HERMES, the speedy messenger!',   gift: 'Dash',             give: () => { state.hasDash = true; } },
+    { id: 'apollo',     icon: '☀',  who: 'Your dad is APOLLO, god of the sun!',         gift: 'Healing',          give: () => { state.lessons.healing = true; } },
+    { id: 'aphrodite',  icon: '💖', who: 'Your mum is APHRODITE, goddess of love!',     gift: 'A Shield Bubble',  give: () => { state.bubble = true; } },
+];
+function godParent() { return GOD_PARENTS.find(g => g.id === state.demigod); }
+function rollBirthLuck() {
+    state.demigod = null;
+    if (Math.random() < DEMIGOD_CHANCE) {
+        const g = GOD_PARENTS[Math.floor(Math.random() * GOD_PARENTS.length)];
+        state.demigod = g.id; g.give(); giveAward('demigod'); sfx('found');
+        showToast(`${g.icon} You are a DEMIGOD! ${g.who}`, '#FFD700', 420);
+        spawnFloatText(400, 200, `🎁 Gift: ${g.gift}`, '#FFE680', 300);
+    }
+    if (!state.hogwarts && Math.random() < BORN_WIZARD_CHANCE) {
+        state.hogwarts = true; giveAward('hogwarts'); sfx('found');
+        spawnFloatText(400, 250, '🧙 You were born a WIZARD!', '#CCAAFF', 360);
+        spawnFloatText(400, 275, 'Ask the Teacher about Hogwarts', '#CCAAFF', 360);
+    }
+}
+
 function startFromIntro(fresh = false) {
     if (fresh || !savedGame) {
         if (fresh) { clearSave(); worldBlocks = {}; saveWorld(); }
         state.gamePhase = 'playing';
         showToast('⛏ Like Minecraft: SPACE or left-click mines, B builds, right-click places blocks!', '#FFE066', 300);
+        rollBirthLuck();
         return;
     }
     const data = savedGame;
@@ -3242,6 +3314,7 @@ function startFromIntro(fresh = false) {
     paradise.chests.forEach((c, i) => { if (i < state.paradiseClearCount) { c.visible = true; c.opened = true; } });
     changeRoom(ROOM.VOID);
     showToast(`💾 Welcome back! Level ${state.level}, 🪙${state.coins}`, '#88EEFF');
+    if (state.demigod === undefined) rollBirthLuck();   // saves from before this get one roll too
 }
 
 // ── SCORE ─────────────────────────────────────────────────────
@@ -3879,6 +3952,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
+        hogwarts: false, demigod: undefined,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -5599,6 +5673,37 @@ function drawRainbowArc() {
     ctx.restore();
 }
 
+// ── SCHOOLS: the Teacher lets you pick one. Hogwarts only lets you in if you're lucky! ──
+const HOGWARTS_LETTER_COST   = 10;
+const HOGWARTS_LETTER_CHANCE = 0.1;    // only 1 in 10 tries an owl brings your letter
+function schoolItems() {
+    return [
+        { icon: '🏫', name: 'Town School', desc: 'Learn handy lessons', cost: 0, status: null,
+          action: () => openMenu('🏫 SCHOOL — learn something new!', lessonItems) },
+        { icon: '🏰', name: 'Hogwarts', desc: state.hogwarts ? 'Learn magic spells!' : 'Only if an owl brings your letter…',
+          cost: state.hogwarts ? 0 : HOGWARTS_LETTER_COST, status: state.hogwarts ? 'YOU GO HERE' : null,
+          action: () => {
+              if (state.hogwarts) { openMenu('🏰 HOGWARTS — learn a spell!', hogwartsItems); return; }
+              if (!spend(HOGWARTS_LETTER_COST)) return;
+              if (Math.random() >= HOGWARTS_LETTER_CHANCE) { showToast('🦉 No letter this time… the owl got lost! Try again!', '#CCBBFF', 180); return; }
+              state.hogwarts = true; giveAward('hogwarts'); sfx('found');
+              spawnParticles(player.x, player.y, '#FFD700', 30);
+              showToast('🦉📜 A LETTER! You got into HOGWARTS! You are a WIZARD!', '#FFD700', 260);
+              openMenu('🏰 HOGWARTS — learn a spell!', hogwartsItems);
+          } },
+    ];
+}
+function hogwartsItems() {
+    return SPELLS.filter(sp => sp.school).map(sp => ({
+        icon: sp.icon, name: sp.name, desc: sp.desc, cost: sp.cost,
+        status: state.spell === sp.id ? 'HOLDING' : state.spells[sp.id] ? 'LEARNED — pick' : null,
+        action: () => {
+            if (state.spells[sp.id]) { state.spell = sp.id; return; }
+            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} You learned ${sp.name}! Cast it with R / X / ✨`); giveAward('wizard'); }
+        },
+    }));
+}
+
 function lessonItems() {
     return LESSONS.map(l => ({
         icon: l.icon, name: l.name, desc: l.desc, cost: l.cost, status: state.lessons[l.id] ? 'LEARNED' : null,
@@ -5816,7 +5921,7 @@ function talkLabel(n) {
     if (job && job.kind === 'deliver' && job.stops[0] === n.id) return `Deliver ${job.item}`;
     if (n.door)            return state.housesOwned[n.id] ? 'Go inside 🏠' : `Buy ${n.name} (🪙${n.cost})`;
     if (n.table)           return 'Craft things ⚒';
-    if (n.id === 'teacher') return 'Go to School 🏫';
+    if (n.id === 'teacher') return 'Pick a School 🏫';
     if (n.id === 'hattie')  return 'Buy a hat 🎩';
     if (n.id === 'captain') return 'Set sail! ⛵';
     if (paradise.birthday && paradise.birthday.id === n.id && !paradise.birthday.wished) return 'Say Happy Birthday! 🎂';
@@ -5857,7 +5962,7 @@ function talkTo(n) {
     const giver = WORKERS.find(w => w.id === n.id && w.giver);
 
     if (n.table) { openMenu('⚒ CRAFTING TABLE', craftItems); return; }
-    if (n.id === 'teacher') { openMenu('🏫 SCHOOL — learn something new!', lessonItems); return; }
+    if (n.id === 'teacher') { openMenu('🏫 PICK A SCHOOL!', schoolItems); return; }
     if (n.id === 'hattie')  { openMenu("🎩 HATTIE'S HATS", hatItems); return; }
     if (n.id === 'captain') { openMenu('⚓ WHERE SHALL WE SAIL, MATEY?', sailItems); return; }
     if (paradise.birthday && paradise.birthday.id === n.id && !paradise.birthday.wished) {
@@ -8122,7 +8227,8 @@ function drawInsideCave() {
 // Dark caves: you can only see near your lantern (drawn on top of the room, under the HUD)
 function drawCaveDarkness() {
     const flicker = Math.sin(Date.now() / 90) * 4;
-    const dark = ctx.createRadialGradient(player.x, player.y, 50, player.x, player.y, 210 + flicker);
+    const lit = lumosTimer > 0 ? 200 : 0;   // 💡 Lumos makes the light much bigger
+    const dark = ctx.createRadialGradient(player.x, player.y, 50 + lit, player.x, player.y, 210 + lit * 1.5 + flicker);
     dark.addColorStop(0, 'rgba(0,0,0,0)'); dark.addColorStop(1, 'rgba(0,0,0,0.9)');
     ctx.fillStyle = dark; ctx.fillRect(0, 0, 800, 600);
     // Glowing eyes in the dark…
@@ -8583,7 +8689,7 @@ function drawBolts() {
     for (const b of bolts) {
         ctx.save();
         ctx.globalAlpha = b.life / 12;
-        ctx.strokeStyle = Math.random() < 0.5 ? '#FFFFFF' : '#FFE033';
+        ctx.strokeStyle = Math.random() < 0.5 ? '#FFFFFF' : (b.color || '#FFE033');
         ctx.shadowColor = '#FFE033'; ctx.shadowBlur = 14; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(b.x1, b.y1);
         const len = Math.hypot(b.x2 - b.x1, b.y2 - b.y1) || 1;
@@ -8658,6 +8764,8 @@ function drawHUD() {
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 17px Arial'; ctx.textAlign = 'left';
     ctx.fillText(`Crystals: ${state.lightCrystals}/3`, 14, 28);
+    const god = godParent();
+    if (god) { ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#FFE680'; ctx.fillText(`${god.icon} Child of ${god.id[0].toUpperCase() + god.id.slice(1)}`, 110, 45); }
     for (let i = 0; i < 3; i++) {
         drawStar(210 + i * 28, 23, i < state.lightCrystals ? 11 : 7,
             i < state.lightCrystals ? '#FFD700' : '#333');
