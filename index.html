@@ -558,8 +558,59 @@ const SPELLS = [
     { id: 'leviosa',      icon: '🪶', name: 'Wingardium Leviosa',  cost: 30, cooldown: 600,  desc: 'Monsters float and can\'t move', school: true },
     { id: 'lumos',        icon: '💡', name: 'Lumos',               cost: 15, cooldown: 900,  desc: 'Your wand lights up dark caves', school: true },
     { id: 'vada',         icon: '💚', name: 'Vada Cadabra',        cost: 60, cooldown: 1500, desc: 'POOF! Every monster on screen', school: true },
+    { id: 'incendio',     icon: '🔥', name: 'Incendio',            cost: 25, cooldown: 300,  desc: 'A ring of fire all around you', school: true },
+    { id: 'protego',      icon: '🛡', name: 'Protego',             cost: 25, cooldown: 600,  desc: 'A magic shield blocks bullets', school: true },
+    { id: 'patronum',     icon: '🦌', name: 'Expecto Patronum',    cost: 45, cooldown: 720,  desc: 'A glowing deer charges at monsters', school: true },
+    { id: 'riddikulus',   icon: '🐸', name: 'Riddikulus',          cost: 30, cooldown: 480,  desc: 'Turns 3 monsters into frogs!', school: true },
+    { id: 'accio',        icon: '🧲', name: 'Accio',               cost: 15, cooldown: 300,  desc: 'All the coins fly to you', school: true },
+    { id: 'petrificus',   icon: '🗿', name: 'Petrificus Totalus',  cost: 20, cooldown: 360,  desc: 'Turns a monster to stone', school: true },
+    { id: 'alohomora',    icon: '🔓', name: 'Alohomora',           cost: 20, cooldown: 1800, desc: 'Unlocks a secret coin stash', school: true },
 ];
 let timeFreeze = 0, magnetTimer = 0, clones = [], laserBeam = null, lumosTimer = 0, vadaFlash = 0;
+let patronus = null, fireRing = 0, godStorm = 0, godSpeedTimer = 0;
+
+// Turn a monster into a frog (big bosses are too big)
+function frogify(e) {
+    if (e.type === 'king' || BOSS_TYPES.includes(e.type)) { spawnFloatText(e.x, e.y - e.r - 10, 'Too big to be a frog!', '#CC99FF', 70); return; }
+    Object.assign(e, { frog: true, hp: 1, maxHp: 1, frozen: 0, hopTimer: 20, dx: 0, dy: 0, r: 12 });
+    spawnParticles(e.x, e.y, '#CC99FF', 16);
+    spawnFloatText(e.x, e.y - 24, 'RIBBIT! 🐸', '#88FF88', 70);
+}
+// Shoot magic arrows out in a circle
+function shootRing(n, color, power = POWER.NONE) {
+    for (let k = 0; k < n; k++) {
+        const a = k / n * Math.PI * 2;
+        projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a) * 9, dy: Math.sin(a) * 9, color, power, life: 70, r: 6 });
+    }
+    sfx('shoot');
+}
+// Hit every monster within range (the whole screen if no range)
+function hitAll(bonus, power = POWER.NONE, range = 9999) {
+    for (const e of targetableEnemies()) if (Math.hypot(e.x - player.x, e.y - player.y) < range) damageEnemy(e, power, false, bonus);
+}
+function freezeAll(frames, range = 9999) {
+    let n = 0;
+    for (const e of targetableEnemies()) {
+        if (Math.hypot(e.x - player.x, e.y - player.y) > range) continue;
+        e.frozen = Math.max(e.frozen || 0, BOSS_TYPES.includes(e.type) ? Math.min(frames, 90) : frames); n++;
+    }
+    return n;
+}
+function pushAll(force, range) {
+    for (const e of targetableEnemies()) {
+        const d = Math.hypot(e.x - player.x, e.y - player.y) || 1;
+        if (d > range) continue;
+        const f = BOSS_TYPES.includes(e.type) ? force / 4 : force;
+        e.x = Math.max(20, Math.min(780, e.x + (e.x - player.x) / d * f));
+        e.y = Math.max(60, Math.min(580, e.y + (e.y - player.y) / d * f));
+    }
+}
+// Little helpers that circle you and shoot (they look like you)
+function summonHelpers(frames) {
+    clones = [0, 1, 2].map(i => ({ a: i * 2.1, cd: 10 + i * 10 }));
+    state.cloneTimer = frames;
+    spawnParticles(player.x, player.y, '#FFFFFF', 16);
+}
 
 function spellItems() {
     return SPELLS.filter(sp => !sp.school).map(sp => ({
@@ -631,6 +682,37 @@ function castSpell() {
     } else if (sp.id === 'lumos') {
         lumosTimer = 1200;
         spawnFloatText(player.x, player.y - 34, 'LUMOS! 💡', '#FFFFAA', 80); sfx('magic');
+    } else if (sp.id === 'incendio') {
+        fireRing = 40;
+        hitAll(2 + bonus, POWER.BRIMSTONE, 170);
+        spawnFloatText(player.x, player.y - 34, 'INCENDIO! 🔥', '#FF8833', 80); triggerShake(8); sfx('boom');
+    } else if (sp.id === 'protego') {
+        state.fieldTimer = 300;
+        spawnFloatText(player.x, player.y - 34, 'PROTEGO! 🛡', '#88CCFF', 80); sfx('magic');
+    } else if (sp.id === 'patronum') {
+        const dir = state.faceX < 0 ? -1 : 1;
+        patronus = { x: player.x, y: player.y, dx: dir * 8, hit: new Set() };
+        spawnFloatText(player.x, player.y - 34, 'EXPECTO PATRONUM!', '#CCEEFF', 90); sfx('magic');
+    } else if (sp.id === 'riddikulus') {
+        const near = foes.filter(e => !e.frog).sort((a, b) => Math.hypot(a.x - player.x, a.y - player.y) - Math.hypot(b.x - player.x, b.y - player.y)).slice(0, 3);
+        if (!near.length) { showToast('🐸 No monsters to turn into frogs!', '#88FF88', 90); return; }
+        near.forEach(frogify);
+        spawnFloatText(player.x, player.y - 34, 'RIDDIKULUS!', '#88FF88', 80); sfx('magic');
+    } else if (sp.id === 'accio') {
+        magnetTimer = 240;
+        spawnFloatText(player.x, player.y - 34, 'ACCIO COINS! 🧲', '#FFD700', 80); sfx('magic');
+    } else if (sp.id === 'petrificus') {
+        const e = nearestTarget(450);
+        if (!e) { showToast('🗿 No monster close enough!', '#CCCCCC', 90); return; }
+        e.frozen = Math.max(e.frozen || 0, BOSS_TYPES.includes(e.type) ? 120 : 900);
+        bolts.push({ x1: player.x, y1: player.y, x2: e.x, y2: e.y, life: 14, color: '#AAAAAA' });
+        spawnParticles(e.x, e.y, '#999999', 14);
+        spawnFloatText(e.x, e.y - 24, 'STONE! 🗿', '#CCCCCC', 70); sfx('freeze');
+    } else if (sp.id === 'alohomora') {
+        const got = 15 + Math.floor(Math.random() * 26);
+        state.coins += got; addScore(got);
+        spawnParticles(player.x, player.y, '#FFD700', 24);
+        spawnFloatText(player.x, player.y - 34, `ALOHOMORA! 🔓 +🪙${got}`, '#FFD700', 90); sfx('found');
     } else if (sp.id === 'vada') {
         vadaFlash = 30;
         for (const e of foes) damageEnemy(e, POWER.NONE, false, BOSS_TYPES.includes(e.type) ? 6 : 99);   // bosses are too strong to poof
@@ -645,6 +727,27 @@ function updateSpells() {
     if (laserBeam && --laserBeam.life <= 0) laserBeam = null;
     if (lumosTimer > 0) lumosTimer--;
     if (vadaFlash > 0) vadaFlash--;
+    if (fireRing > 0) fireRing--;
+    if (godSpeedTimer > 0) godSpeedTimer--;
+    if (state.godCooldown > 0) state.godCooldown--;
+    if (patronus) {   // 🦌 runs across the screen and bumps every monster once
+        patronus.x += patronus.dx;
+        for (const e of targetableEnemies()) {
+            if (patronus.hit.has(e) || Math.hypot(e.x - patronus.x, e.y - patronus.y) > 50 + e.r) continue;
+            patronus.hit.add(e); damageEnemy(e, POWER.NONE, false, 3);
+        }
+        if (Math.random() < 0.5) particles.push({ x: patronus.x, y: patronus.y, dx: 0, dy: 0, life: 20, maxLife: 20, color: 'rgba(200,235,255,0.7)', r: 8 });
+        if (patronus.x < -60 || patronus.x > 860) patronus = null;
+    }
+    if (godStorm > 0) {   // ⛈ lightning keeps striking monsters
+        godStorm--;
+        const foes = targetableEnemies();
+        if (godStorm % 20 === 0 && foes.length) {
+            const e = foes[Math.floor(Math.random() * foes.length)];
+            bolts.push({ x1: e.x + (Math.random() - 0.5) * 60, y1: 40, x2: e.x, y2: e.y, life: 12 });
+            damageEnemy(e, POWER.LIGHTNING, false, 1); triggerShake(4); sfx('zap');
+        }
+    }
     if (magnetTimer > 0) {
         magnetTimer--;
         for (const e of targetableEnemies()) {
@@ -710,6 +813,17 @@ function drawSpells() {
         for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(player.x, player.y, 40 + ((Date.now() / 5 + k * 40) % 120), 0, Math.PI * 2); ctx.stroke(); }
     }
     if (vadaFlash > 0) { ctx.fillStyle = `rgba(80,255,120,${vadaFlash / 60})`; ctx.fillRect(0, 0, 800, 600); }
+    if (godStorm > 0) { ctx.fillStyle = 'rgba(30,30,70,0.25)'; ctx.fillRect(0, 0, 800, 600); }
+    if (fireRing > 0) {
+        ctx.save(); ctx.globalAlpha = fireRing / 40;
+        ctx.strokeStyle = '#FF7722'; ctx.lineWidth = 14; ctx.shadowColor = '#FF3300'; ctx.shadowBlur = 25;
+        ctx.beginPath(); ctx.arc(player.x, player.y, 170 - fireRing * 2, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    }
+    if (patronus) {
+        ctx.save(); ctx.shadowColor = '#AADDFF'; ctx.shadowBlur = 30; ctx.font = '44px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.translate(patronus.x, patronus.y); if (patronus.dx > 0) ctx.scale(-1, 1);   // the emoji faces left
+        ctx.globalAlpha = 0.85; ctx.fillText('🦌', 0, 0); ctx.restore();
+    }
     if (lumosTimer > 0) {   // a soft glow from your wand
         const glow = ctx.createRadialGradient(player.x, player.y - 10, 4, player.x, player.y - 10, 60);
         glow.addColorStop(0, 'rgba(255,255,200,0.5)'); glow.addColorStop(1, 'rgba(255,255,200,0)');
@@ -1045,6 +1159,8 @@ let state = {
     lessons:            {},              // School lessons you've learned
     hogwarts:           false,           // got your Hogwarts letter 🦉
     demigod:            undefined,       // god parent id, null = a normal kid, undefined = not rolled yet
+    godCooldown:        0,
+    godTurn:            0,               // which of your two god powers is next
     hats:               {},              // hats you own
     hat:                null,            // hat you're wearing
     houseFrom:          null,            // which house door you went in by
@@ -1219,6 +1335,7 @@ function handleTap(x, y) {
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
         if (Math.hypot(x - VBUILD.x, y - VBUILD.y) < VBUILD.r * 1.3) { toggleBuild(); return true; }
         if (state.spell && Math.hypot(x - VSPELL.x, y - VSPELL.y) < VSPELL.r * 1.3) { castSpell(); return true; }
+        if (godParent() && Math.hypot(x - VGOD.x, y - VGOD.y) < VGOD.r * 1.3) { useGodPower(); return true; }
         if (state.lastMount && Math.hypot(x - VMOUNT.x, y - VMOUNT.y) < VMOUNT.r * 1.3) { toggleMount(); return true; }
         if (state.buildMode && Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { nextBlock(); return true; }
         if (Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { useGadget(); return true; }
@@ -1284,6 +1401,8 @@ document.addEventListener('keydown', e => {
     if (e.code === 'Escape') state.awardsOpen = false;
     if (e.code === 'KeyN' && state.gamePhase === 'intro') startFromIntro(true);
     if (e.code === 'KeyG') dance();
+    if (e.code === 'KeyT') useGodPower();
+    if (e.code === 'KeyK') toggleControlsPanel();
     if (e.code === 'KeyF') fart();
     // Number keys in the shop: 1-8 skins, 9 Shield Bubble
     const digit = /^Digit([1-9])$/.exec(e.code);
@@ -1448,6 +1567,60 @@ let   padPrev         = [];
 let   pad2StartHeld   = false;
 let   padHold         = 0;
 const padMove         = { x: 0, y: 0 };
+let   padComboUsed    = false;
+// Not enough buttons, so: hold View (⧉) + another button
+const PAD_COMBOS = [
+    { btn: PAD.A,  label: 'God power', run: () => { if (godParent()) useGodPower(); else showToast('⚡ Only demigods have god powers!', '#FFE680', 100); } },
+    { btn: PAD.X,  label: 'Dance',     run: () => dance() },
+    { btn: PAD.B,  label: 'Fart',      run: () => fart() },
+    { btn: PAD.Y,  label: 'Awards',    run: () => { if (canOpenShop()) state.awardsOpen = !state.awardsOpen; } },
+    { btn: PAD.LB, label: 'Hide help', run: () => toggleControlsPanel() },
+];
+
+// ── CONTROLS PANEL (bottom-left: which button does what) ─────
+let showControls = true;
+try { showControls = localStorage.getItem('lop_controls') !== 'off'; } catch (e) {}
+function toggleControlsPanel() {
+    showControls = !showControls;
+    try { localStorage.setItem('lop_controls', showControls ? 'on' : 'off'); } catch (e) {}
+}
+function controlsList() {
+    const pad = lastInput === 'pad', god = !!godParent();
+    const rows = pad ? [
+        ['Move', 'Stick'], ['Shoot / dig', 'A or RT'], ['Hit', 'RB'], ['Block', 'LB'], ['Jump', 'Y'], ['Dash', 'LT'],
+        ['Spell', 'X'], ['Gadget', 'B'], ['Build', 'L3'], ['Ride', 'R3'], ['Settings', 'Start'], ['Sound', 'tap ⧉'],
+        ...PAD_COMBOS.filter(c => c.btn !== PAD.A || god).map(c => [c.label, '⧉+' + Object.keys(PAD).find(k => PAD[k] === c.btn)]),
+    ] : [
+        ['Move', 'WASD'], ['Shoot / dig', 'Space'], ['Hit', 'J'], ['Block', 'X'], ['Jump', 'C'], ['Dash', 'Shift'],
+        ['Spell', 'R'], ['Gadget', 'Q'], ['Build', 'B'], ['Ride', 'V'], ['Shop', 'E'], ['Awards', 'H'],
+        ['Dance', 'G'], ['Fart', 'F'], ['Sound', 'M'], ['Settings', 'O'], ['Player 2', 'P'], ['Hide help', 'K'],
+    ];
+    if (!pad && god) rows.splice(7, 0, ['God power', 'T']);
+    return rows;
+}
+function drawControlsPanel() {
+    if (state.gamePhase !== 'playing' || lastInput === 'touch' || menu || state.shopOpen || state.awardsOpen) return;
+    const x = 48, w = 236, rowH = 11;
+    if (!showControls) {
+        ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x, 540, 92, 16);
+        ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
+        ctx.fillText(lastInput === 'pad' ? '🎮 Help: ⧉+LB' : '⌨ Help: K', x + 6, 551); ctx.restore();
+        return;
+    }
+    const rows = controlsList(), half = Math.ceil(rows.length / 2);
+    const h = 18 + half * rowH, y = 554 - h;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
+    ctx.fillText(lastInput === 'pad' ? '🎮 CONTROLS  (⧉ = View button)' : '⌨ CONTROLS', x + 6, y + 11);
+    ctx.font = '9px Arial';
+    rows.forEach(([what, key], i) => {
+        const cx = x + 6 + Math.floor(i / half) * (w / 2), cy = y + 22 + (i % half) * rowH;
+        ctx.fillStyle = '#FFFFFF'; ctx.fillText(what, cx, cy);
+        ctx.fillStyle = '#88DDFF'; ctx.textAlign = 'right'; ctx.fillText(key, cx + w / 2 - 12, cy); ctx.textAlign = 'left';
+    });
+    ctx.restore();
+}
 
 function pollGamepad() {
     padMove.x = padMove.y = 0;
@@ -1489,7 +1662,16 @@ function pollGamepad() {
         initAudio();
     }
 
-    if (pressed(PAD.BACK))  toggleMute();
+    // View (⧉) is the combo button: hold it and press another button. A quick tap on its own = sound on/off.
+    if (held[PAD.BACK] && !menu && state.gamePhase === 'playing') {
+        const combo = PAD_COMBOS.find(c => pressed(c.btn));
+        if (combo) { combo.run(); padComboUsed = true; }
+        if (was[PAD.RB] && !held[PAD.RB]) meleeRelease();   // still let go of a held hit / shield
+        if (was[PAD.LB] && !held[PAD.LB]) stopBlock();
+        readPadStick(gp, held);
+        return;
+    }
+    if (was[PAD.BACK] && !held[PAD.BACK]) { if (!padComboUsed) toggleMute(); padComboUsed = false; }
     if (menu) {
         if (pressed(PAD.START)) { menu = null; return; }
         if (pressed(PAD.LEFT))  moveMenuCursor(-1, 0);
@@ -1528,6 +1710,10 @@ function pollGamepad() {
     if (pressed(PAD.A) || pressed(PAD.RT)) pressAction();   // hold A for a charge shot
     if (pressed(PAD.Y) && state.room !== ROOM.VOID) superJump();
 
+    readPadStick(gp, held);
+}
+
+function readPadStick(gp, held) {
     let x = gp.axes[0] || 0, y = gp.axes[1] || 0;
     if (Math.abs(x) < PAD_DEADZONE) x = 0;
     if (Math.abs(y) < PAD_DEADZONE) y = 0;
@@ -3261,24 +3447,157 @@ function clearSave() {
 // ── BORN LUCKY: a new game might make you a demigod (half god!) or a wizard. Both are very rare ──
 const DEMIGOD_CHANCE = 0.05;   // 1 in 20 new games — very lucky!
 const BORN_WIZARD_CHANCE = 0.05;   // 1 in 20 new games you're born a wizard and go straight to Hogwarts
-const GOD_PARENTS = [
-    { id: 'zeus',       icon: '⚡', who: 'Your dad is ZEUS, god of the sky!',          gift: 'Super Lightning',  give: () => { state.power = POWER.LIGHTNING; state.powerTier = 2; } },
-    { id: 'poseidon',   icon: '🌊', who: 'Your dad is POSEIDON, god of the sea!',       gift: 'Super Water',      give: () => { state.power = POWER.WATER; state.powerTier = 2; } },
-    { id: 'hephaestus', icon: '🔨', who: 'Your dad is HEPHAESTUS, god of fire!',        gift: 'Super Fire',       give: () => { state.power = POWER.BRIMSTONE; state.powerTier = 2; } },
-    { id: 'khione',     icon: '❄',  who: 'Your mum is KHIONE, goddess of snow!',        gift: 'Super Ice',        give: () => { state.power = POWER.ICE; state.powerTier = 2; } },
-    { id: 'athena',     icon: '🦉', who: 'Your mum is ATHENA, goddess of wisdom!',      gift: '100 coins',        give: () => { state.coins += 100; } },
-    { id: 'hermes',     icon: '👟', who: 'Your dad is HERMES, the speedy messenger!',   gift: 'Dash',             give: () => { state.hasDash = true; } },
-    { id: 'apollo',     icon: '☀',  who: 'Your dad is APOLLO, god of the sun!',         gift: 'Healing',          give: () => { state.lessons.healing = true; } },
-    { id: 'aphrodite',  icon: '💖', who: 'Your mum is APHRODITE, goddess of love!',     gift: 'A Shield Bubble',  give: () => { state.bubble = true; } },
+// Gods from old myths (Greek, Roman, Norse, Egyptian, Babylonian, Aztec, Maya, Inca, Celtic).
+// Each god gives a gift, maybe a passive ('fly' over blocks · 'dark' see in caves · 'fast' run faster)
+// and two powers you take turns using with T / View+A / the god button.
+const setPower = pw => () => { state.power = pw; state.powerTier = 2; };
+const GOD_GIFTS = {
+    lightning: ['Super Lightning',  setPower(POWER.LIGHTNING)],
+    water:     ['Super Water',      setPower(POWER.WATER)],
+    fire:      ['Super Fire',       setPower(POWER.BRIMSTONE)],
+    ice:       ['Super Ice',        setPower(POWER.ICE)],
+    coins:     ['100 coins',        () => { state.coins += 100; }],
+    dash:      ['Dash',             () => { state.hasDash = true; }],
+    healing:   ['Healing',          () => { state.lessons.healing = true; }],
+    bubble:    ['A Shield Bubble',  () => { state.bubble = true; }],
+    strong:    ['Stronger weapons', () => { state.weaponLevel++; }],
+};
+const GOD_POWERS = {
+    storm:    { icon: '⛈', name: 'Lightning Storm',  cd: 600,  use: () => { godStorm = 240; } },
+    obey:     { icon: '👑', name: 'Everyone Obeys!',  cd: 720,  use: () => { freezeAll(300, 350); if (state.room === ROOM.PARADISE) { state.coins += 20; spawnFloatText(player.x, player.y - 56, 'The town brings you gifts! +🪙20', '#FFD700', 100); } } },
+    wave:     { icon: '🌊', name: 'Tidal Wave',       cd: 480,  use: () => { pushAll(200, 9999); hitAll(1, POWER.WATER); } },
+    trident:  { icon: '🔱', name: 'Trident Throw',    cd: 360,  use: () => shootRing(8, '#33CCFF', POWER.WATER) },
+    rain:     { icon: '🌧', name: 'Magic Rain',       cd: 480,  use: () => { hitAll(1, POWER.WATER); freezeAll(120); } },
+    skeleton: { icon: '💀', name: 'Skeleton Army',    cd: 900,  use: () => summonHelpers(600) },
+    treasure: { icon: '💎', name: 'Treasure',         cd: 1200, use: () => { state.coins += 30; spawnParticles(player.x, player.y + 10, '#66FFFF', 24); } },
+    fireRing: { icon: '🔥', name: 'Ring of Fire',     cd: 360,  use: () => { fireRing = 40; hitAll(2, POWER.BRIMSTONE, 170); } },
+    robots:   { icon: '🤖', name: 'Robot Helpers',    cd: 900,  use: () => summonHelpers(600) },
+    blizzard: { icon: '🌨', name: 'Blizzard',         cd: 600,  use: () => { freezeAll(300); hitAll(0, POWER.ICE); } },
+    iceArmor: { icon: '🧊', name: 'Ice Armour',       cd: 900,  use: () => { state.bubble = true; } },
+    shield:   { icon: '🛡', name: 'God Shield',       cd: 600,  use: () => { state.fieldTimer = 360; } },
+    timeStop: { icon: '⏳', name: 'Stop Time',        cd: 900,  use: () => { timeFreeze = 180; } },
+    speed:    { icon: '💨', name: 'Speed Burst',      cd: 480,  use: () => { godSpeedTimer = 300; } },
+    thief:    { icon: '💰', name: 'Sneaky Thief',     cd: 900,  use: () => { const n = 5 + targetableEnemies().length * 3; state.coins += n; spawnFloatText(player.x, player.y - 56, `+🪙${n}`, '#FFD700', 80); } },
+    sun:      { icon: '☀', name: 'Sun Flash',        cd: 600,  use: () => { freezeAll(180); hitAll(1); spawnParticles(player.x, player.y, '#FFEE66', 40); } },
+    arrows:   { icon: '🏹', name: 'Golden Arrows',    cd: 300,  use: () => shootRing(12, '#FFD700') },
+    arrowRain:{ icon: '🏹', name: 'Arrow Rain',       cd: 300,  use: () => shootRing(16, '#DDEEFF') },
+    charm:    { icon: '💘', name: 'Charm',            cd: 600,  use: () => { freezeAll(420, 300); for (const e of targetableEnemies()) if (e.frozen > 0) spawnFloatText(e.x, e.y - 24, '💕', '#FF88CC', 60); } },
+    heal:     { icon: '💗', name: 'Heal',             cd: 1800, use: () => { state.playerHp = fullHearts(); } },
+    warCry:   { icon: '📣', name: 'War Cry',          cd: 420,  use: () => { hitAll(2, POWER.NONE, 250); pushAll(120, 250); triggerShake(14); } },
+    bubble:   { icon: '🫧', name: 'Bubble Shield',    cd: 900,  use: () => { state.bubble = true; } },
+    wolves:   { icon: '🐺', name: 'Wolf Pack',        cd: 900,  use: () => summonHelpers(600) },
+    ravens:   { icon: '🐦‍⬛', name: 'Raven Friends',  cd: 900,  use: () => summonHelpers(600) },
+    vines:    { icon: '🌿', name: 'Vine Trap',        cd: 480,  use: () => { freezeAll(360, 280); spawnParticles(player.x, player.y, '#44CC44', 30); } },
+    frogs:    { icon: '🐸', name: 'Trick: Frogs!',    cd: 600,  use: () => { targetableEnemies().filter(e => !e.frog).slice(0, 3).forEach(frogify); } },
+    wind:     { icon: '🌪', name: 'Whirlwind',        cd: 480,  use: () => { pushAll(250, 300); hitAll(1, POWER.NONE, 300); } },
+    party:    { icon: '🎉', name: 'Party Time',       cd: 600,  use: () => { freezeAll(240); dance(); } },
+    moon:     { icon: '🌙', name: 'Moon Sleep',       cd: 600,  use: () => { freezeAll(360); for (const e of targetableEnemies()) spawnFloatText(e.x, e.y - 24, 'zzz', '#CCCCFF', 60); } },
+};
+const GOD_LIST = [
+    // id, icon, mum/dad, NAME, what they're the god of, gift, passive, power 1, power 2
+    // ── Greek ──
+    ['zeus',       '⚡', 'dad', 'ZEUS',        'god of the sky',            'lightning', 'fly',  'storm',    'obey'],
+    ['poseidon',   '🌊', 'dad', 'POSEIDON',    'god of the sea',            'water',     null,   'wave',     'trident'],
+    ['hades',      '💀', 'dad', 'HADES',       'king of the underworld',    'coins',     'dark', 'skeleton', 'treasure'],
+    ['hephaestus', '🔨', 'dad', 'HEPHAESTUS',  'god of fire',               'fire',      null,   'fireRing', 'robots'],
+    ['khione',     '❄',  'mum', 'KHIONE',      'goddess of snow',           'ice',       null,   'blizzard', 'iceArmor'],
+    ['athena',     '🦉', 'mum', 'ATHENA',      'goddess of wisdom',         'coins',     null,   'shield',   'timeStop'],
+    ['hermes',     '👟', 'dad', 'HERMES',      'the speedy messenger',      'dash',      'fast', 'speed',    'thief'],
+    ['apollo',     '☀',  'dad', 'APOLLO',      'god of the sun',            'healing',   null,   'sun',      'arrows'],
+    ['aphrodite',  '💖', 'mum', 'APHRODITE',   'goddess of love',           'bubble',    null,   'charm',    'heal'],
+    ['ares',       '⚔',  'dad', 'ARES',        'god of war',                'strong',    null,   'warCry',   'bubble'],
+    ['artemis',    '🏹', 'mum', 'ARTEMIS',     'goddess of the hunt',       'dash',      'fast', 'arrowRain','wolves'],
+    ['demeter',    '🌾', 'mum', 'DEMETER',     'goddess of plants',         'healing',   null,   'vines',    'heal'],
+    ['hera',       '👑', 'mum', 'HERA',        'queen of the gods',         'bubble',    null,   'obey',     'shield'],
+    ['dionysus',   '🍇', 'dad', 'DIONYSUS',    'god of parties',            'coins',     null,   'party',    'charm'],
+    ['nyx',        '🌌', 'mum', 'NYX',         'goddess of the night',      'bubble',    'dark', 'moon',     'timeStop'],
+    ['helios',     '🌞', 'dad', 'HELIOS',      'the sun in the sky',        'fire',      'fly',  'sun',      'fireRing'],
+    ['selene',     '🌙', 'mum', 'SELENE',      'goddess of the moon',       'ice',       'dark', 'moon',     'arrows'],
+    ['nike',       '🏆', 'mum', 'NIKE',        'goddess of winning',        'strong',    'fast', 'warCry',   'speed'],
+    ['hecate',     '🔮', 'mum', 'HECATE',      'goddess of magic',          'coins',     'dark', 'frogs',    'timeStop'],
+    ['persephone', '🌸', 'mum', 'PERSEPHONE',  'queen of spring',           'healing',   null,   'vines',    'skeleton'],
+    ['pan',        '🐐', 'dad', 'PAN',         'god of the wild',           'dash',      'fast', 'wolves',   'party'],
+    ['eros',       '💘', 'dad', 'EROS',        'god of love arrows',        'bubble',    'fly',  'charm',    'arrows'],
+    // ── Roman ──
+    ['jupiter',    '⚡', 'dad', 'JUPITER',     'Roman king of the gods',    'lightning', 'fly',  'storm',    'obey'],
+    ['neptune',    '🔱', 'dad', 'NEPTUNE',     'Roman god of the sea',      'water',     null,   'trident',  'wave'],
+    ['mars',       '🛡', 'dad', 'MARS',        'Roman god of war',          'strong',    null,   'warCry',   'shield'],
+    ['venus',      '🌹', 'mum', 'VENUS',       'Roman goddess of love',     'bubble',    null,   'charm',    'heal'],
+    ['minerva',    '📚', 'mum', 'MINERVA',     'Roman goddess of wisdom',   'coins',     null,   'timeStop', 'shield'],
+    ['mercury',    '🪽', 'dad', 'MERCURY',     'Roman messenger god',       'dash',      'fast', 'speed',    'thief'],
+    ['vulcan',     '🌋', 'dad', 'VULCAN',      'Roman god of volcanoes',    'fire',      null,   'fireRing', 'robots'],
+    ['diana',      '🦌', 'mum', 'DIANA',       'Roman goddess of the hunt', 'dash',      'fast', 'arrowRain','wolves'],
+    ['pluto',      '🪦', 'dad', 'PLUTO',       'Roman god of the underworld','coins',    'dark', 'skeleton', 'treasure'],
+    // ── Norse (Vikings) ──
+    ['odin',       '👁', 'dad', 'ODIN',        'Viking king of the gods',   'strong',    null,   'ravens',   'timeStop'],
+    ['thor',       '🔨', 'dad', 'THOR',        'Viking god of thunder',     'lightning', null,   'storm',    'warCry'],
+    ['loki',       '🐍', 'dad', 'LOKI',        'the Viking trickster',      'coins',     'fast', 'frogs',    'thief'],
+    ['freya',      '🐈', 'mum', 'FREYA',       'Viking goddess of love',    'bubble',    'fly',  'charm',    'heal'],
+    ['frigg',      '🧶', 'mum', 'FRIGG',       'Viking queen of the gods',  'healing',   null,   'shield',   'obey'],
+    ['tyr',        '🗡', 'dad', 'TYR',         'Viking god of bravery',     'strong',    null,   'warCry',   'bubble'],
+    ['heimdall',   '📯', 'dad', 'HEIMDALL',    'guard of the rainbow bridge','bubble',   'dark', 'shield',   'arrows'],
+    ['skadi',      '⛷', 'mum', 'SKADI',       'Viking goddess of winter',  'ice',       'fast', 'blizzard', 'arrowRain'],
+    ['baldur',     '✨', 'dad', 'BALDUR',      'Viking god of light',       'healing',   null,   'sun',      'heal'],
+    ['njord',      '⛵', 'dad', 'NJORD',       'Viking god of the sea',     'water',     null,   'wave',     'treasure'],
+    // ── Egyptian ──
+    ['ra',         '🌅', 'dad', 'RA',          'Egyptian god of the sun',   'fire',      'fly',  'sun',      'fireRing'],
+    ['horus',      '🦅', 'dad', 'HORUS',       'Egyptian god of the sky',   'lightning', 'fly',  'arrows',   'obey'],
+    ['anubis',     '🐺', 'dad', 'ANUBIS',      'Egyptian guard of the dead','coins',     'dark', 'skeleton', 'wolves'],
+    ['isis',       '🪶', 'mum', 'ISIS',        'Egyptian goddess of magic', 'healing',   'fly',  'heal',     'frogs'],
+    ['osiris',     '🌿', 'dad', 'OSIRIS',      'Egyptian king of the afterlife','healing','dark','vines',    'skeleton'],
+    ['thoth',      '📜', 'dad', 'THOTH',       'Egyptian god of writing',   'coins',     null,   'timeStop', 'shield'],
+    ['sekhmet',    '🦁', 'mum', 'SEKHMET',     'Egyptian lion goddess',     'fire',      null,   'warCry',   'fireRing'],
+    ['bastet',     '🐱', 'mum', 'BASTET',      'Egyptian cat goddess',      'dash',      'fast', 'charm',    'speed'],
+    ['set',        '🏜', 'dad', 'SET',         'Egyptian god of storms',    'lightning', null,   'wind',     'storm'],
+    ['sobek',      '🐊', 'dad', 'SOBEK',       'Egyptian crocodile god',    'water',     null,   'wave',     'warCry'],
+    // ── Babylon (old Iraq) ──
+    ['ishtar',     '⭐', 'mum', 'ISHTAR',      'Babylonian goddess of love and war','strong',null,'charm', 'warCry'],
+    ['enki',       '💧', 'dad', 'ENKI',        'Babylonian god of water',   'water',     null,   'rain',     'treasure'],
+    ['marduk',     '🐉', 'dad', 'MARDUK',      'Babylonian dragon fighter', 'lightning', null,   'storm',    'wind'],
+    ['shamash',    '🌞', 'dad', 'SHAMASH',     'Babylonian god of the sun', 'fire',      null,   'sun',      'obey'],
+    // ── Aztec, Maya & Inca ──
+    ['quetzalcoatl','🐲','dad', 'QUETZALCOATL','the Aztec feathered snake', 'coins',     'fly',  'wind',     'treasure'],
+    ['tlaloc',     '🌧', 'dad', 'TLALOC',      'Aztec god of rain',         'water',     null,   'rain',     'storm'],
+    ['huitzilopochtli','🐦','dad','HUITZILOPOCHTLI','Aztec sun warrior',    'fire',      null,   'sun',      'warCry'],
+    ['chaac',      '⛈', 'dad', 'CHAAC',       'Maya god of rain',          'lightning', null,   'rain',     'storm'],
+    ['kukulkan',   '🪶', 'dad', 'KUKULKAN',    'Maya feathered snake',      'dash',      'fly',  'wind',     'speed'],
+    ['inti',       '☀',  'dad', 'INTI',        'Inca god of the sun',       'fire',      null,   'sun',      'treasure'],
+    ['mamaquilla', '🌕', 'mum', 'MAMA QUILLA', 'Inca goddess of the moon',  'ice',       'dark', 'moon',     'heal'],
+    // ── Celtic ──
+    ['lugh',       '🎯', 'dad', 'LUGH',        'Celtic god of every skill', 'strong',    null,   'arrows',   'warCry'],
+    ['brigid',     '🔥', 'mum', 'BRIGID',      'Celtic goddess of fire',    'fire',      null,   'fireRing', 'heal'],
+    ['morrigan',   '🐦‍⬛', 'mum', 'THE MORRIGAN', 'Celtic queen of ravens','strong',    'fly',  'ravens',   'warCry'],
+    ['manannan',   '🌫', 'dad', 'MANANNAN',    'Celtic god of the sea',     'water',     null,   'wave',     'timeStop'],
 ];
+const PASSIVE_TEXT = { fly: 'you can FLY', fast: 'super speed', dark: 'see in the dark' };
+const GOD_PARENTS = GOD_LIST.map(([id, icon, parent, name, title, gift, passive, p1, p2]) => ({
+    id, icon, passive, name,
+    who:    `Your ${parent} is ${name}, ${title}!`,
+    gift:   GOD_GIFTS[gift][0] + (passive ? ` + ${PASSIVE_TEXT[passive]}` : ''),
+    give:   GOD_GIFTS[gift][1],
+    powers: [GOD_POWERS[p1], GOD_POWERS[p2]],
+}));
 function godParent() { return GOD_PARENTS.find(g => g.id === state.demigod); }
+function godPassive(kind) { const g = godParent(); return !!(g && g.passive === kind); }
+// The god button takes turns between your two powers
+function nextGodPower() { const g = godParent(); return g ? g.powers[(state.godTurn || 0) % g.powers.length] : null; }
+function useGodPower() {
+    const pw = nextGodPower();
+    if (!pw || !playing() || state.godCooldown > 0) return;
+    pw.use();
+    state.godCooldown = pw.cd;
+    state.godTurn = (state.godTurn || 0) + 1;
+    spawnFloatText(player.x, player.y - 40, `${pw.icon} ${pw.name.toUpperCase()}!`, '#FFE680', 90);
+    sfx('magic');
+}
 function rollBirthLuck() {
     state.demigod = null;
     if (Math.random() < DEMIGOD_CHANCE) {
         const g = GOD_PARENTS[Math.floor(Math.random() * GOD_PARENTS.length)];
         state.demigod = g.id; g.give(); giveAward('demigod'); sfx('found');
         showToast(`${g.icon} You are a DEMIGOD! ${g.who}`, '#FFD700', 420);
-        spawnFloatText(400, 200, `🎁 Gift: ${g.gift}`, '#FFE680', 300);
+        spawnFloatText(400, 200, `🎁 Gift: ${g.gift}`, '#FFE680', 360);
+        spawnFloatText(400, 222, `${g.powers.map(p => p.icon + ' ' + p.name).join('  ·  ')}  (press T)`, '#FFE680', 360);
     }
     if (!state.hogwarts && Math.random() < BORN_WIZARD_CHANCE) {
         state.hogwarts = true; giveAward('hogwarts'); sfx('found');
@@ -3952,7 +4271,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -4101,7 +4420,8 @@ function changeRoom(dest) {
 function updatePlayer() {
     if (state.won || state.levelComplete || state.gamePhase !== 'playing') return;
 
-    const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1) * mountSpeed() * playerSpeedFactor();
+    const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1) * mountSpeed() * playerSpeedFactor()
+              * (godPassive('fast') ? 1.3 : 1) * (godSpeedTimer > 0 ? 1.7 : 1);
     let dx = 0, dy = 0;
     if (!state.shopOpen && !state.awardsOpen && !menu) {
         const arrows = !p2.active;   // with 2 players, the arrow keys belong to Player 2
@@ -4139,7 +4459,7 @@ function updatePlayer() {
     // Move, but blocks are solid (try each direction separately so you slide along walls)
     const nx = Math.max(18, Math.min(GAME_W - 18, player.x + dx));
     const ny = Math.max(52, Math.min(GAME_H - 18, player.y + dy));
-    const flying = state.mount === 'dragon' || settings.creative;   // dragons (and Creative Mode) fly over blocks
+    const flying = state.mount === 'dragon' || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
     if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
     if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
     if (state.mount === 'duck' && (dx || dy) && Math.random() < 0.01) { tone(700, 0.12, 'square', 0.12, 500); spawnFloatText(player.x, player.y - 30, 'QUACK!', '#FFE066', 40); }
@@ -5258,6 +5578,7 @@ const VGADGET = { x: 600, y: 540, r: 22 };   // touch buttons
 const VBUILD  = { x: 530, y: 560, r: 20 };
 const VSPELL  = { x: 580, y: 470, r: 20 };
 const VMOUNT  = { x: 470, y: 560, r: 20 };
+const VGOD    = { x: 520, y: 500, r: 20 };
 const VDASH   = { x: 700, y: 385, r: 20 };
 let gadgetObjs = [];   // boomerangs, bombs and tornadoes flying about
 
@@ -5520,6 +5841,8 @@ function drawGadgetHud() {
         const sp = SPELLS.find(x => x.id === state.spell);
         slots.push({ icon: sp.icon, key: lastInput === 'pad' ? 'X' : 'R', cd: state.spellCooldown / sp.cooldown });
     }
+    const gp = nextGodPower();
+    if (gp) slots.push({ icon: gp.icon, key: lastInput === 'pad' ? 'BACK' : 'T', cd: state.godCooldown / gp.cd });
     slots.forEach((sl, i) => {
         const x = 70 + i * 40, y = 574;
         ctx.save();
@@ -8227,7 +8550,7 @@ function drawInsideCave() {
 // Dark caves: you can only see near your lantern (drawn on top of the room, under the HUD)
 function drawCaveDarkness() {
     const flicker = Math.sin(Date.now() / 90) * 4;
-    const lit = lumosTimer > 0 ? 200 : 0;   // 💡 Lumos makes the light much bigger
+    const lit = lumosTimer > 0 || godPassive('dark') ? 200 : 0;   // 💡 Lumos (or being Hades's kid) makes the light much bigger
     const dark = ctx.createRadialGradient(player.x, player.y, 50 + lit, player.x, player.y, 210 + lit * 1.5 + flicker);
     dark.addColorStop(0, 'rgba(0,0,0,0)'); dark.addColorStop(1, 'rgba(0,0,0,0.9)');
     ctx.fillStyle = dark; ctx.fillRect(0, 0, 800, 600);
@@ -8765,7 +9088,7 @@ function drawHUD() {
     ctx.font = 'bold 17px Arial'; ctx.textAlign = 'left';
     ctx.fillText(`Crystals: ${state.lightCrystals}/3`, 14, 28);
     const god = godParent();
-    if (god) { ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#FFE680'; ctx.fillText(`${god.icon} Child of ${god.id[0].toUpperCase() + god.id.slice(1)}`, 110, 45); }
+    if (god) { ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#FFE680'; ctx.fillText(`${god.icon} Child of ${god.name.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}`, 110, 45); }
     for (let i = 0; i < 3; i++) {
         drawStar(210 + i * 28, 23, i < state.lightCrystals ? 11 : 7,
             i < state.lightCrystals ? '#FFD700' : '#333');
@@ -9205,6 +9528,7 @@ function drawVirtualControls() {
     const touchBtns = [[VDANCE, '💃'], [VFART, '💨'], [VMELEE, '👊'], [VBLOCK, '🛡'], [VJUMP, '🦘']];
     touchBtns.push([VBUILD, state.buildMode ? '⚔' : '🧱']);
     if (state.spell) touchBtns.push([VSPELL, SPELLS.find(x => x.id === state.spell).icon]);
+    if (godParent()) touchBtns.push([VGOD, nextGodPower().icon]);
     if (state.lastMount) touchBtns.push([VMOUNT, state.mount ? '🚶' : MOUNTS.find(m => m.id === state.lastMount).icon]);
     if (state.buildMode) touchBtns.push([VGADGET, '🔄']);
     else if (state.gadget) touchBtns.push([VGADGET, GADGETS.find(g => g.id === state.gadget).icon]);
@@ -9320,6 +9644,7 @@ function draw() {
     else if (!state.won && !state.levelComplete) drawVignette();
     drawFloatTexts();
     drawJoinProgress();
+    drawControlsPanel();
     drawHUD();
     drawControls();
     drawVirtualControls();
