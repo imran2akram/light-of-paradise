@@ -117,7 +117,7 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house',
                 SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space', ARENA: 'arena', MALL: 'mall',
                 UNDERWATER: 'underwater', DINO: 'dino', VOLCANO: 'volcano', JUNGLE: 'jungle',
-                TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity' };
+                TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity', CAMP: 'camp', OLYMPUS: 'olympus', PIRATECOVE: 'piratecove' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -861,6 +861,8 @@ const MOUNTS = [
     { id: 'duck',   icon: '🦆', name: 'Giant Rubber Duck', cost: 15, speed: 0.9, desc: 'Silly and squeaky. Quack!' },
     { id: 'dino',   icon: '🦕', name: 'Triceratops',       cost: 0,  speed: 1.6, desc: 'Tame one on Dinosaur Island!', hidden: true },
     { id: 'broom',  icon: '🧹', name: 'Broomstick',        cost: 0,  speed: 1.9, desc: 'Wizards only — fly over everything!', hidden: true },
+    { id: 'surf',   icon: '🏄', name: 'Lava Surfboard',    cost: 0,  speed: 1.5, desc: 'Find it at the Volcano — surf the lava!', hidden: true },
+    { id: 'trex',   icon: '🦖', name: 'T-Rex',             cost: 0,  speed: 1.5, desc: 'Tame it on Dinosaur Island — STOMP!', hidden: true },
 ];
 
 function mountItems() {
@@ -1170,6 +1172,8 @@ let state = {
     godCooldown:        0,
     godTurn:            0,               // which of your two god powers is next
     house:              null,            // Hogwarts house from the Sorting Hat
+    quest:              null,            // { kind, need, got } from the Demigod Camp quest board
+    questsDone:         0,
     invisible:          0,               // 🧪 potion timers
     giant:              0,
     tiny:               0,
@@ -1301,6 +1305,7 @@ function spend(cost) {
 // The main button: Space, A on a controller, or the on-screen SHOOT / DIG button
 function pressAction() {
     if (menu) return;
+    if (battle && !battle.result && state.gamePhase === 'playing') { battleHit(1, player); return; }   // ⚔ Battle Mode
     if (state.chicken > 0 && state.gamePhase === 'playing') {   // chickens can only cluck
         tone(900, 0.08, 'square', 0.12, 700); tone(800, 0.1, 'square', 0.1, 600, 0.1);
         spawnFloatText(player.x, player.y - 30, 'BAWK!', '#FFFFFF', 40);
@@ -1478,7 +1483,9 @@ function hurtFriend(f) {
 function hurtP2() { hurtFriend(p2); }
 
 function friendShoot(f) {
+    if (battle && !battle.result) { battleHit(f.n, f); return; }   // ⚔ Battle Mode: bonk each other
     if (!f.active || f.down > 0 || f.cooldown > 0 || state.power === POWER.NONE) return;
+    f.lastShot = Date.now(); tryTeamUp();
     let target = null, best = 500;
     for (const e of targetableEnemies()) { const d = Math.hypot(e.x - f.x, e.y - f.y); if (d < best) { best = d; target = e; } }
     if (!target && state.room === ROOM.HELL && hell.devil.alive) target = hell.devil;
@@ -1589,6 +1596,219 @@ const PAD_COMBOS = [
     { btn: PAD.LB, label: 'Hide help', run: () => toggleControlsPanel() },
 ];
 
+// ── WORLD 2: Demigod Camp, quests, Mount Olympus, Pirate Island, lava surf, T-Rex ──
+const CAMP_EXIT       = { x: 400, y: 578 };
+const QUEST_BOARD     = { x: 230, y: 250 };
+const OLYMPUS_STAIRS  = { x: 620, y: 150 };   // in camp
+const HEAVEN_OLYMPUS  = { x: 620, y: 470 };   // in Heaven
+const OLYMPUS_EXIT    = { x: 400, y: 578 };
+const SURFBOARD       = { x: 200, y: 400 };   // in the Volcano
+const TREX            = { x: 200, y: 250 };   // on Dinosaur Island
+// 📜 Quests from the camp board (demigods only)
+const QUESTS = [
+    { kind: 'kills', need: 10, icon: '👾', text: 'Beat 10 monsters',   reward: 80 },
+    { kind: 'kills', need: 25, icon: '👹', text: 'Beat 25 monsters',   reward: 200 },
+    { kind: 'boss',  need: 1,  icon: '🐉', text: 'Beat any boss',      reward: 250 },
+    { kind: 'race',  need: 1,  icon: '⭕', text: 'Win a Ring Race',     reward: 100 },
+];
+function questItems() {
+    const q = state.quest, god = godParent();
+    if (q) return [
+        { icon: q.icon, name: q.text, desc: `Done ${q.got} of ${q.need}. Reward: 🪙${q.reward}`, cost: 0, status: 'ON QUEST', action: () => {} },
+        { icon: '❌', name: 'Give up', desc: 'Pick a different quest', cost: 0, status: null, action: () => { state.quest = null; } },
+    ];
+    return QUESTS.map(qt => ({ icon: qt.icon, name: qt.text, desc: `${god ? god.name : 'Your god'} will give you 🪙${qt.reward}`, cost: 0, status: 'START',
+        action: () => { state.quest = { ...qt, got: 0 }; menu = null; showToast(`📜 QUEST: ${qt.text}! Go, hero!`, '#FFE066', 200); } }));
+}
+function questProgress(kinds) {
+    const q = state.quest;
+    if (!q || !kinds.includes(q.kind)) return;
+    q.got++;
+    if (q.got < q.need) return;
+    const god = godParent();
+    state.coins += q.reward; addScore(q.reward); state.questsDone++; state.quest = null;
+    giveAward('quest'); sfx('win'); spawnConfettiAt(player.x, player.y);
+    showToast(`📜 QUEST DONE! ${god ? god.icon + ' ' + god.name + ' is SO proud of you!' : ''} +🪙${q.reward}`, '#FFD700', 260);
+}
+
+// 🏛 Gods on Olympus: talk to them for a blessing (once a visit). Your own god parent gives the best one.
+const OLYMPUS_STARS = ['zeus', 'hera', 'poseidon', 'athena', 'apollo', 'artemis'];
+function olympusGods() {
+    const ids = [...OLYMPUS_STARS];
+    if (state.demigod && !ids.includes(state.demigod)) ids[ids.length - 1] = state.demigod;   // your parent is always there
+    return ids.map((id, i) => ({ ...GOD_PARENTS.find(g => g.id === id), x: 140 + i * 104, y: i % 2 ? 230 : 200 }));
+}
+function talkToGod(g) {
+    const P = place();
+    if (P.blessed[g.id]) { showToast(`${g.icon} ${g.name}: "Come back another time, little hero!"`, '#FFE8A0', 150); return; }
+    P.blessed[g.id] = true;
+    if (g.id === state.demigod) {
+        state.coins += 50; state.playerHp = fullHearts(); state.bubble = true;
+        showToast(`${g.icon} ${g.name}: "My child! I'm so proud of you!" (+🪙50, hearts, bubble)`, '#FFD700', 260); sfx('win');
+        spawnParticles(player.x, player.y, '#FFD700', 30);
+        return;
+    }
+    const gifts = [
+        ['+🪙15', () => { state.coins += 15; }],
+        ['full hearts', () => { state.playerHp = fullHearts(); }],
+        ['a Shield Bubble', () => { state.bubble = true; }],
+        ['super speed', () => { godSpeedTimer = 600; }],
+    ];
+    const [what, give] = gifts[Math.floor(Math.random() * gifts.length)];
+    give(); sfx('magic'); spawnParticles(player.x, player.y, '#FFF4B0', 16);
+    showToast(`${g.icon} ${g.name} blesses you with ${what}!`, '#FFE8A0', 180);
+}
+
+function drawOlympusStairs(o, text) {
+    ctx.save();
+    for (let k = 0; k < 5; k++) { ctx.fillStyle = k % 2 ? '#F4E8C0' : '#FFFFFF'; ctx.fillRect(o.x - 30 + k * 3, o.y + 14 - k * 8, 60 - k * 6, 8); }
+    ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 12; ctx.beginPath(); ctx.arc(o.x, o.y - 30, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, o.x, o.y + 36);
+    ctx.restore();
+}
+
+function paintCamp(g, R) {
+    g.fillStyle = '#6AAA4A'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 800; i++) { g.fillStyle = `hsla(${90 + R() * 30}, 45%, ${32 + R() * 14}%, 0.6)`; g.fillRect(R() * 800, R() * 600, 3, 3); }
+    for (let k = 0; k < 6; k++) {   // cabins, one colour per god
+        const x = 70 + k * 130, col = ['#E0C040', '#3A8AE0', '#555566', '#E05A3A', '#AAAAAA', '#E07AB0'][k];
+        g.fillStyle = col; g.fillRect(x - 40, 60, 80, 56); g.fillStyle = '#6A3A1A'; g.beginPath(); g.moveTo(x - 46, 62); g.lineTo(x, 36); g.lineTo(x + 46, 62); g.fill();
+        g.fillStyle = '#3A2410'; g.fillRect(x - 9, 86, 18, 30);
+    }
+    g.fillStyle = '#8A6A4A'; g.beginPath(); g.arc(400, 330, 40, 0, Math.PI * 2); g.fill();   // campfire ring
+}
+function paintOlympus(g, R) {
+    const sky = g.createLinearGradient(0, 0, 0, 600); sky.addColorStop(0, '#FFE9A8'); sky.addColorStop(1, '#FFFFFF');
+    g.fillStyle = sky; g.fillRect(0, 0, 800, 600);
+    g.fillStyle = '#F2EEE4'; g.fillRect(0, 300, 800, 300);                                     // marble floor
+    g.strokeStyle = 'rgba(180,170,150,0.4)'; for (let x = 0; x < 800; x += 60) { g.beginPath(); g.moveTo(x, 300); g.lineTo(x, 600); g.stroke(); }
+    for (let k = 0; k < 9; k++) { const x = 40 + k * 90; g.fillStyle = '#FFFFFF'; g.fillRect(x - 12, 70, 24, 220); g.fillStyle = '#E8E0D0'; g.fillRect(x - 18, 60, 36, 14); g.fillRect(x - 18, 284, 36, 14); }   // columns
+    g.fillStyle = '#FFFFFF'; g.fillRect(0, 46, 800, 18);
+    for (let i = 0; i < 20; i++) { g.fillStyle = 'rgba(255,255,255,0.8)'; g.beginPath(); g.ellipse(R() * 800, 560 + R() * 40, 60, 18, 0, 0, Math.PI * 2); g.fill(); }   // clouds below
+}
+function paintPirateCove(g, R) {
+    g.fillStyle = '#E8D090'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 900; i++) { g.fillStyle = `rgba(${200 + R() * 40},${170 + R() * 30},${100 + R() * 30},0.6)`; g.fillRect(R() * 800, R() * 600, 2, 2); }
+    const sea = g.createLinearGradient(0, 46, 0, 140); sea.addColorStop(0, '#1A4A7A'); sea.addColorStop(1, '#3A8ACA');
+    g.fillStyle = sea; g.fillRect(0, 46, 800, 94);
+    for (const [x, y] of [[90, 200], [730, 330], [150, 520], [700, 540]]) {   // palm trees
+        g.fillStyle = '#8A5A2A'; g.fillRect(x - 4, y - 50, 8, 56);
+        g.fillStyle = '#2E8A2E'; for (let k = 0; k < 5; k++) { g.beginPath(); g.ellipse(x + Math.cos(k * 1.26) * 18, y - 54 + Math.sin(k * 1.26) * 8, 20, 6, k * 1.26, 0, Math.PI * 2); g.fill(); }
+    }
+}
+
+function drawWorld2(t, P, label, verb) {
+    const nearIt = (o, r = 50) => Math.hypot(player.x - o.x, player.y - o.y) < r;
+    const emoji = (e, x, y, size) => { ctx.save(); ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); ctx.restore(); };
+    if (state.room === ROOM.CAMP) {
+        emoji('🔥', 400, 322 + Math.sin(t * 8) * 2, 34);
+        ctx.fillStyle = '#8A5A2A'; ctx.fillRect(QUEST_BOARD.x - 34, QUEST_BOARD.y - 30, 68, 46); ctx.fillRect(QUEST_BOARD.x - 3, QUEST_BOARD.y + 16, 6, 24);
+        ctx.fillStyle = '#F4E8C0'; for (let k = 0; k < 3; k++) ctx.fillRect(QUEST_BOARD.x - 28 + k * 20, QUEST_BOARD.y - 24 + (k % 2) * 6, 16, 22);
+        label('📜 QUEST BOARD', QUEST_BOARD.x, QUEST_BOARD.y + 54, '#FFF');
+        if (state.quest) label(`Quest: ${state.quest.text} (${state.quest.got}/${state.quest.need})`, 400, 140, '#FFE066');
+        drawOlympusStairs(OLYMPUS_STAIRS, '🏛 Stairs to Mount Olympus');
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(CAMP_EXIT.x - 24, 560, 48, 40); label('🚪 Back to the Mall', CAMP_EXIT.x, 556, '#FFF');
+        if (nearIt(QUEST_BOARD) && !menu) drawSpeech({ x: QUEST_BOARD.x, y: QUEST_BOARD.y - 20 }, `${verb}: Pick a quest!`);
+    }
+    if (state.room === ROOM.OLYMPUS) {
+        for (const g of olympusGods()) {
+            ctx.save(); ctx.fillStyle = g.id === state.demigod ? 'rgba(255,215,0,0.35)' : 'rgba(255,255,255,0.5)';
+            ctx.beginPath(); ctx.arc(g.x, g.y, 30, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+            emoji(g.icon, g.x, g.y + Math.sin(t * 2 + g.x) * 3, 34);
+            label(g.name, g.x, g.y + 46, g.id === state.demigod ? '#B8860B' : '#665');
+            if (g.id === state.demigod) label('👑 YOUR PARENT', g.x, g.y - 38, '#B8860B');
+            if (nearIt(g, 40) && !menu) drawSpeech({ x: g.x, y: g.y - 20 }, P.blessed[g.id] ? 'Hello again!' : `${verb}: Talk to ${g.name}`);
+        }
+        ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.ellipse(OLYMPUS_EXIT.x, 582, 50, 14, 0, 0, Math.PI * 2); ctx.fill();
+        label('☁ Down to Heaven', OLYMPUS_EXIT.x, 566, '#665');
+    }
+    if (state.room === ROOM.PIRATECOVE) {
+        ctx.save(); ctx.globalAlpha = 0.45 + Math.sin(t) * 0.1;   // 👻 the ghost ship floating out at sea
+        const sx = 400 + Math.sin(t * 0.3) * 250;
+        ctx.fillStyle = '#AACCDD'; ctx.beginPath(); ctx.moveTo(sx - 60, 100); ctx.lineTo(sx + 60, 100); ctx.lineTo(sx + 40, 124); ctx.lineTo(sx - 40, 124); ctx.fill();
+        ctx.fillRect(sx - 2, 52, 4, 50); ctx.fillStyle = '#DDEEFF'; ctx.fillRect(sx - 26, 56, 24, 34); ctx.fillRect(sx + 2, 60, 22, 30);
+        ctx.restore(); label('👻 THE GHOST SHIP', sx, 140, '#DDEEFF');
+        for (const x of P.xs) {
+            if (x.dug) { ctx.fillStyle = 'rgba(90,60,30,0.6)'; ctx.beginPath(); ctx.ellipse(x.x, x.y, 16, 8, 0, 0, Math.PI * 2); ctx.fill(); continue; }
+            ctx.strokeStyle = '#C02020'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(x.x - 12, x.y - 12); ctx.lineTo(x.x + 12, x.y + 12); ctx.moveTo(x.x + 12, x.y - 12); ctx.lineTo(x.x - 12, x.y + 12); ctx.stroke();
+            if (nearIt(x, 30) && !menu) drawSpeech({ x: x.x, y: x.y - 14 }, `${verb}: Dig! (${x.hits}/4)`);
+        }
+    }
+    if (state.room === ROOM.VOLCANO && !state.mounts.surf) {
+        emoji('🏄', SURFBOARD.x, SURFBOARD.y + Math.sin(t * 3) * 3, 30); label('Lava Surfboard!', SURFBOARD.x, SURFBOARD.y + 30, '#FFCC88');
+        if (nearIt(SURFBOARD) && !menu) drawSpeech({ x: SURFBOARD.x, y: SURFBOARD.y - 14 }, `${verb}: Grab the surfboard!`);
+    }
+    if (state.room === ROOM.DINO && !state.mounts.trex) {
+        ctx.save(); ctx.translate(TREX.x, TREX.y); ctx.scale(-1, 1); emoji('🦖', 0, Math.sin(t * 2) * 2, 64); ctx.restore();
+        label('A wild T-Rex!', TREX.x, TREX.y + 44, '#FFFFFF');
+        if (nearIt(TREX, 60) && !menu) drawSpeech({ x: TREX.x, y: TREX.y - 30 }, `${verb}: Tame the T-Rex!`);
+    }
+}
+
+// 🤝 Team-up: two players shoot at nearly the same time, close together → MEGA BLAST
+const TEAMUP_WINDOW = 300, TEAMUP_RANGE = 140, TEAMUP_COOLDOWN = 5000;
+let lastP1Shot = 0, lastTeamUp = 0;
+function tryTeamUp() {
+    const now = Date.now();
+    if (now - lastTeamUp < TEAMUP_COOLDOWN || now - lastP1Shot > TEAMUP_WINDOW) return;
+    const buddy = activeFriends().find(f => f.down <= 0 && now - (f.lastShot || 0) < TEAMUP_WINDOW && Math.hypot(f.x - player.x, f.y - player.y) < TEAMUP_RANGE);
+    if (!buddy || !targetableEnemies().length) return;
+    lastTeamUp = now;
+    for (const e of targetableEnemies()) {
+        bolts.push({ x1: player.x, y1: player.y, x2: e.x, y2: e.y, life: 14, color: '#FF66FF' });
+        bolts.push({ x1: buddy.x, y1: buddy.y, x2: e.x, y2: e.y, life: 14, color: buddy.color });
+        damageEnemy(e, POWER.NONE, false, 3);
+    }
+    triggerShake(16); sfx('boom'); giveAward('teamUp');
+    showToast(`🤝 TEAM-UP MEGA BLAST! P1 + P${buddy.n}!`, '#FF88FF', 180);
+}
+
+// ⚔ Friend Battle: everyone gets 3 battle hearts; the main button bonks anyone close by
+const BATTLE_REACH = 70, BATTLE_HIT_COOLDOWN = 30;
+let battle = null;   // { hp: {n: hearts}, cd: {n: frames}, result }
+function battlers() { return [{ n: 1, x: player.x, y: player.y, ref: player }, ...activeFriends().map(f => ({ n: f.n, x: f.x, y: f.y, ref: f }))]; }
+function startBattle() {
+    if (!activeFriends().length) { showToast('⚔ You need a friend! Plug in a controller and hold a button.', '#FFAA88', 220); return; }
+    battle = { hp: {}, cd: {}, result: 0 };
+    for (const b of battlers()) { battle.hp[b.n] = 3; battle.cd[b.n] = 0; }
+    showToast('⚔ FRIEND BATTLE! Bonk each other! Last one standing WINS!', '#FF8866', 220); sfx('laugh');
+}
+function battleHit(n, who) {
+    if (!battle.hp[n] || battle.cd[n] > 0) return;
+    battle.cd[n] = BATTLE_HIT_COOLDOWN;
+    spawnParticles(who.x, who.y, '#FFFFFF', 6); sfx('whoosh');
+    for (const b of battlers()) {
+        if (b.n === n || !battle.hp[b.n] || Math.hypot(b.x - who.x, b.y - who.y) > BATTLE_REACH) continue;
+        battle.hp[b.n]--;
+        const d = Math.hypot(b.x - who.x, b.y - who.y) || 1;
+        b.ref.x = Math.max(20, Math.min(780, b.x + (b.x - who.x) / d * 50)); b.ref.y = Math.max(60, Math.min(580, b.y + (b.y - who.y) / d * 50));
+        spawnFloatText(b.x, b.y - 30, battle.hp[b.n] ? 'BONK!' : 'OUT!', '#FFE066', 50); triggerShake(6); sfx('hurt');
+    }
+    const left = Object.entries(battle.hp).filter(([, h]) => h > 0);
+    if (left.length <= 1) {
+        battle.result = 240;
+        const w = left[0] ? Number(left[0][0]) : n;
+        state.coins += 30; giveAward('battle'); sfx('win'); spawnConfettiAt(400, 300);
+        showToast(`🏆 PLAYER ${w} WINS THE BATTLE! +🪙30`, '#FFD700', 240);
+    }
+}
+function updateBattle() {
+    if (!battle) return;
+    if (battle.result > 0) { if (--battle.result === 0) battle = null; return; }
+    for (const n in battle.cd) if (battle.cd[n] > 0) battle.cd[n]--;
+    if (!activeFriends().length) battle = null;   // your friend left
+}
+function drawBattle() {
+    if (!battle) return;
+    for (const b of battlers()) {
+        const h = battle.hp[b.n] || 0;
+        ctx.fillStyle = h ? '#FF4466' : '#888'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(h ? '❤'.repeat(h) : '💀 OUT', b.x, b.y - 44);
+    }
+    ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(310, 76, 180, 22);
+    ctx.fillStyle = '#FF8866'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚔ FRIEND BATTLE ⚔', 400, 92); ctx.restore();
+}
+
 // ── FUN EXTRAS: Ring Race, Chicken Rain, potion effects ─────
 const RING_RACE_FRAMES = 2400;   // 40 seconds
 const RING_COUNT       = 8;
@@ -1618,6 +1838,7 @@ function updateRingRace() {
     if (!allGot && racers.length === 1) { showToast('⏰ Out of time! Try again!', '#FFAA88', 200); return; }
     const winner = best ? Number(best[0]) : 1;
     state.coins += 40; addScore(100); giveAward('ringRace'); sfx('win'); spawnConfettiAt(400, 300);
+    if (winner === 1) questProgress(['race']);
     showToast(racers.length > 1 ? `🏆 PLAYER ${winner} WINS with ${best[1]} rings! +🪙40` : '🏆 You got every ring! +🪙40', '#FFD700', 240);
 }
 function drawRingRace() {
@@ -1676,8 +1897,8 @@ function updatePotions() {
     }
 }
 
-function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); }
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -2311,8 +2532,24 @@ const MALL_SHOPS = [
     { id: 'toys',   name: '🧸 TOY SHOP',   keeper: 'Tilly',  x: 460, awning: '#E04A8A', coat: '#FF88CC', hat: 'party',  title: '🧸 TILLY\'S TOY SHOP',
       items: () => [{ icon: '🚪', name: 'Step into TOY LAND', desc: 'Toys come alive… and an Evil Wizard!', cost: 0, status: 'GO!',
                       action: () => { menu = null; changeRoom(ROOM.TOY); showToast('🧸 Whoa! You shrank down into TOY LAND!', '#FFE066', 200); } }] },
+    { id: 'camp',   name: '⛺ DEMIGOD CAMP', keeper: 'Coach', x: 620, awning: '#E0A030', coat: '#C06020', hat: 'cowboy', title: '⛺ DEMIGOD CAMP',
+      items: () => [{ icon: '⛺', name: 'Go to Demigod Camp', desc: godParent() ? 'Quests, training and the stairs to Olympus!' : 'Only demigods can go in…', cost: 0,
+                      status: godParent() ? 'GO!' : 'LOCKED',
+                      action: () => {
+                          if (!godParent()) { showToast('⛺ Only demigods can go in! (1 in 100 new games are born one)', '#FFAA88', 200); return; }
+                          menu = null; changeRoom(ROOM.CAMP); showToast('⛺ Welcome to Demigod Camp, hero!', '#FFE066', 200);
+                      } }] },
 ];
 PLACES.mall = { name: '🏬 THE MALL', spawn: [400, 500], make: () => ({ enemies: [], coins: [] }) };
+// Demigod Camp, Mount Olympus and Pirate Island (their code is in the WORLD 2 section)
+PLACES.camp    = { name: '⛺ DEMIGOD CAMP', spawn: [400, 500], make: () => ({ enemies: [], coins: [] }) };
+PLACES.olympus = { name: '🏛 MOUNT OLYMPUS', spawn: [400, 520], make: () => { giveAward('olympus'); return { enemies: [], coins: [], blessed: {} }; } };
+PLACES.piratecove = { name: '🏴‍☠️ PIRATE ISLAND', spawn: [120, 470], island: true,
+    make: () => ({ coins: [],
+                   xs: [[260, 330], [520, 420], [650, 250], [380, 520]].map(([x, y]) => ({ x, y, hits: 0, dug: false })),
+                   enemies: [e0('pirate', 300, 250), e0('pirate', 600, 380), e0('pirate', 450, 300), e0('skeleton', 650, 480), e0('skeleton', 200, 380),
+                             e0('ghostking', 500, 170, { r: 34, coinDrop: 30, phase: 0 })] }) };
+
 
 function nearMallShop() {
     if (state.room !== ROOM.MALL) return null;
@@ -2404,6 +2641,39 @@ function nearVine() {
 
 // The main button in the new places: tame the dinosaur, swing on a vine
 function tryPlaceAction() {
+    const nearIt = (o, r = 50) => Math.hypot(player.x - o.x, player.y - o.y) < r;
+    if (state.room === ROOM.VOLCANO && !state.mounts.surf && nearIt(SURFBOARD)) {
+        state.mounts.surf = true; state.mount = 'surf'; state.lastMount = 'surf';
+        showToast('🏄 You found a LAVA SURFBOARD! Surf the lava rivers!', '#FF9944', 240); sfx('win');
+        return true;
+    }
+    if (state.room === ROOM.DINO && !state.mounts.trex && nearIt(TREX, 60)) {
+        if (place().enemies.some(e => e.alive && e.type === 'raptor')) { showToast('🦖 ROAR! The T-Rex only lets heroes ride who beat ALL the raptors!', '#FFAA88', 220); sfx('laugh'); return true; }
+        state.mounts.trex = true; state.mount = 'trex'; state.lastMount = 'trex';
+        showToast('🦖 The T-Rex likes you! RIDE IT and STOMP monsters!', '#AAFF88', 240); sfx('boom'); triggerShake(14);
+        return true;
+    }
+    if (state.room === ROOM.CAMP && nearIt(QUEST_BOARD)) { openMenu('📜 QUEST BOARD', questItems); return true; }
+    if (state.room === ROOM.OLYMPUS) {
+        const g = olympusGods().find(o => nearIt(o, 40));
+        if (g) { talkToGod(g); return true; }
+    }
+    if (state.room === ROOM.PIRATECOVE) {
+        const x = place().xs.find(x => !x.dug && nearIt(x, 30));
+        if (x) {
+            x.hits++; sfx('dig'); spawnParticles(x.x, x.y, '#C8A060', 6); triggerShake(2);
+            if (x.hits >= 4) {
+                x.dug = true;
+                const loot = 20 + Math.floor(Math.random() * 40);
+                state.coins += loot; addScore(loot);
+                if (Math.random() < 0.3) state.inv.diamond = invCount('diamond') + 1;
+                spawnParticles(x.x, x.y, '#FFD700', 24); sfx('found');
+                showToast(`🏴‍☠️ BURIED TREASURE! +🪙${loot}${Math.random() < 0.3 ? '' : ''}`, '#FFD700', 200);
+                if (place().xs.every(x => x.dug)) giveAward('pirateGold');
+            }
+            return true;
+        }
+    }
     if (state.room === ROOM.DINO && !place().tamed && Math.hypot(player.x - TRICERATOPS.x, player.y - TRICERATOPS.y) < 50) {
         place().tamed = true;
         state.mounts.dino = true; state.mount = 'dino'; state.lastMount = 'dino';
@@ -2454,7 +2724,7 @@ function updateNewPlaces() {
     }
     if (state.room === ROOM.VOLCANO) {
         // Hot lava hurts (unless you fly over it on your dragon)
-        if (state.mount !== 'dragon' && state.mount !== 'broom' && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
+        if (!['dragon', 'broom', 'surf'].includes(state.mount) && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
             damagePlayer();
             spawnFloatText(player.x, player.y - 30, 'HOT! 🔥', '#FF6633', 50);
         }
@@ -2491,8 +2761,9 @@ function updateNewPlaces() {
         }
     }
     // The tamed dinosaur stomps monsters it runs into
-    if (state.mount === 'dino' && (updateNewPlaces.stomp = (updateNewPlaces.stomp || 0) + 1) % 30 === 0) {
-        for (const e of targetableEnemies()) if (Math.hypot(e.x - player.x, e.y - player.y) < e.r + 26) { damageEnemy(e, POWER.NONE, false, 1); triggerShake(4); }
+    if ((state.mount === 'dino' || state.mount === 'trex') && (updateNewPlaces.stomp = (updateNewPlaces.stomp || 0) + 1) % 30 === 0) {
+        const big = state.mount === 'trex';   // 🦖 bigger feet, bigger stomp
+        for (const e of targetableEnemies()) if (Math.hypot(e.x - player.x, e.y - player.y) < e.r + (big ? 44 : 26)) { damageEnemy(e, POWER.NONE, false, big ? 2 : 1); triggerShake(big ? 7 : 4); }
     }
 }
 
@@ -2581,6 +2852,7 @@ function drawNewPlaces() {
     const t = Date.now() / 1000, P = place();
     const label = (text, x, y, col = 'rgba(255,255,255,0.9)') => { ctx.fillStyle = col; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
     const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    drawWorld2(t, P, label, verb);
     if (state.room === ROOM.TOY) {
         ctx.fillStyle = '#6B3E1E'; ctx.fillRect(TOY_EXIT.x - 24, 560, 48, 40);
         label('🚪 Back to the Mall', TOY_EXIT.x, 556, '#223');
@@ -2692,6 +2964,10 @@ function updatePlaceExits() {
     if (state.room === ROOM.TOY && near(TOY_EXIT, 26))       { changeRoom(ROOM.MALL); player.x = 460; player.y = 300; return true; }
     if (state.room === ROOM.VOID && near(MALL_DOOR, 24))     { changeRoom(ROOM.MALL); showToast('🏬 Welcome to the Mall! Walk up to a shop.', '#FFE066', 160); return true; }
     if (state.room === ROOM.MALL && near(MALL_EXIT, 26))     { changeRoom(ROOM.VOID); player.x = MALL_DOOR.x + 40; player.y = MALL_DOOR.y + 50; return true; }
+    if (state.room === ROOM.CAMP && near(CAMP_EXIT, 26))      { changeRoom(ROOM.MALL); player.x = 620; player.y = 300; return true; }
+    if (state.room === ROOM.CAMP && near(OLYMPUS_STAIRS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
+    if (state.room === ROOM.HEAVEN && near(HEAVEN_OLYMPUS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
+    if (state.room === ROOM.OLYMPUS && near(OLYMPUS_EXIT, 30)) { changeRoom(ROOM.HEAVEN); player.x = HEAVEN_OLYMPUS.x - 50; player.y = HEAVEN_OLYMPUS.y - 30; return true; }
     if (state.room === ROOM.VOID && near(ARENA_GATE, 26))    { changeRoom(ROOM.ARENA); showToast('⚔ BOSS RUSH! Beat all 6 bosses in a row!', '#FF8866', 200); return true; }
     if (state.room === ROOM.ARENA && near(ARENA_EXIT, 26))   { changeRoom(ROOM.VOID); player.x = ARENA_GATE.x + 50; player.y = ARENA_GATE.y - 30; return true; }
     if (state.room === ROOM.SKY && near({ x: 400, y: 575 }, 30)) { changeRoom(ROOM.HEAVEN); player.x = SKY_STAIRS.x - 50; player.y = SKY_STAIRS.y + 40; return true; }
@@ -2782,6 +3058,7 @@ function sailItems() {
         trip(ROOM.VOLCANO, '🌋', 'Lava rivers and the Fire Dragon'),
         trip(ROOM.JUNGLE,  '🐒', 'Vines, traps and a golden idol'),
         trip(ROOM.PYRAMID, '🏜', 'Mummies, scarabs and secret rooms'),
+        trip(ROOM.PIRATECOVE, '🏴‍☠️', 'Buried treasure and a GHOST SHIP'),
         { icon: '🟡', name: 'Submarine Dive', desc: 'Sharks, jellyfish and a Giant Octopus', cost: 0, status: 'DIVE!',
           action: () => { menu = null; changeRoom(ROOM.UNDERWATER); showToast('🟡 Diving down in the yellow submarine! 🌊', '#88DDFF', 180); giveAward('diver'); } },
     ];
@@ -3147,6 +3424,9 @@ const PORTALS = {
     space:   [{ x: 740, y: 470, shape: 'star'    }],
     arena:   [],
     mall:    [],
+    camp:    [],
+    olympus: [],
+    piratecove: [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
     toy:     [{ x: 740, y: 120, shape: 'star'    }],
     pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
@@ -3354,7 +3634,8 @@ function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 function musicTick() {
     if (!audioCtx || muted || !settings.music) return;
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
-    const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell' : state.room;
+    const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell'
+                  : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship' })[state.room] || state.room;
     const song = playing ? SONGS[songKey] : null;
     if (!song) { musicRoom = null; return; }
     const now = audioCtx.currentTime;
@@ -3469,6 +3750,11 @@ const AWARDS = [
     { id: 'ringRace',    icon: '⭕', name: 'Ring Racer',        desc: 'Win a Ring Race' },
     { id: 'superFart',   icon: '💨', name: 'SUPER FART',        desc: 'Do a Super Fart' },
     { id: 'chickenRain', icon: '🐔', name: 'Chicken Rain',      desc: 'Catch a falling chicken' },
+    { id: 'quest',       icon: '📜', name: 'Hero Quest',        desc: 'Finish a quest at Demigod Camp' },
+    { id: 'olympus',     icon: '🏛', name: 'Up on Olympus',     desc: 'Visit Mount Olympus' },
+    { id: 'teamUp',      icon: '🤝', name: 'Team-Up!',          desc: 'Do a team-up blast with a friend' },
+    { id: 'battle',      icon: '⚔', name: 'Battle Winner',     desc: 'Win a Friend Battle' },
+    { id: 'pirateGold',  icon: '🏴‍☠️', name: 'Pirate Gold',     desc: 'Dig up all the treasure on Pirate Island' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -3534,7 +3820,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -4379,7 +4665,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -4745,6 +5031,7 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
         e.alive = false;
         dropLoot(e);
         countStat('kills');
+        questProgress(BOSS_TYPES.includes(e.type) ? ['kills', 'boss'] : ['kills']);
         if (e.type === 'king') giveAward('king');
         if (e.type === 'ghostking' || e.type === 'dragon' || e.type === 'shadow') giveAward(e.type);
         if (e.type === 'monkey' && e.stolen) showToast(`🐒 You got your coins back — and more! (+${e.coinDrop})`, '#FFE066', 150);
@@ -5276,6 +5563,7 @@ function updateEnemyProjectiles() {
 // ── UPDATE: SHOOTING ──────────────────────────────────────────
 function shoot() {
     if (state.won || state.levelComplete || state.power === POWER.NONE || state.room === ROOM.VOID) return;
+    lastP1Shot = Date.now(); tryTeamUp();
     if (fight.blocking) return;
     if (state.ammoReloading || state.ammo <= 0) return;
 
@@ -5992,6 +6280,7 @@ function raceItems() {
     return [
         { icon: '🐾', name: 'Pet Race',  desc: 'Tap fast to make your pet run', cost: 0, status: 'GO!', action: () => { menu = null; startRace(); } },
         { icon: '⭕', name: 'Ring Race', desc: 'Grab the rings! Friends can race too', cost: 0, status: 'GO!', action: () => { menu = null; startRingRace(); } },
+        { icon: '⚔', name: 'Friend Battle', desc: 'Bonk your friends! Last one standing wins', cost: 0, status: activeFriends().length ? 'FIGHT!' : 'NEEDS 2', action: () => { menu = null; startBattle(); } },
     ];
 }
 
@@ -8437,7 +8726,7 @@ function roomBackground(room) {
         const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse,
                            ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace, arena: paintArena, mall: paintMall,
                            underwater: paintUnderwater, dino: paintDino, volcano: paintVolcano, jungle: paintJungle,
-                           toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity };
+                           toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity, camp: paintCamp, olympus: paintOlympus, piratecove: paintPirateCove };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
@@ -9825,7 +10114,7 @@ function draw() {
     if (state.room === ROOM.PARADISE) drawParadise();
     if (state.room === ROOM.SECRET)   drawSecretRoom();
     if (state.room === ROOM.UNDERGROUND) drawUnderground();
-    if (state.room === ROOM.HEAVEN)   drawHeaven();
+    if (state.room === ROOM.HEAVEN)   { drawHeaven(); drawOlympusStairs(HEAVEN_OLYMPUS, '🏛 Stairs to Mount Olympus'); }
     if (state.room === ROOM.HOUSE)    drawHouse();
     if (PLACES[state.room])           drawPlace();
     drawPlayer();
