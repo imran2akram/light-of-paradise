@@ -117,7 +117,7 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house',
                 SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space', ARENA: 'arena', MALL: 'mall',
                 UNDERWATER: 'underwater', DINO: 'dino', VOLCANO: 'volcano', JUNGLE: 'jungle',
-                TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity', CAMP: 'camp', OLYMPUS: 'olympus', PIRATECOVE: 'piratecove' };
+                TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity', CAMP: 'camp', OLYMPUS: 'olympus', PIRATECOVE: 'piratecove', CHESS: 'chess', LIBRARY: 'library' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -183,6 +183,12 @@ const ENEMY_TYPES = {
     candymonster:{ name: 'Candy Monster', hp: 30, weakTo: POWER.BRIMSTONE, color: '#FF66AA' }, // Candy Land boss: splits into jelly beans
     jellybean: { name: 'Jelly Bean', hp: 1,  weakTo: POWER.BRIMSTONE, color: '#FF3388' },
     bigdevil:  { name: "The Devil's Big Brother", hp: 45, weakTo: POWER.LIGHTNING, color: '#442266' },  // the secret final boss
+    // Drawn with a big emoji (see drawEmojiEnemy)
+    book:      { name: 'Flying Book',  hp: 2,  weakTo: POWER.BRIMSTONE, color: '#AA7744', emoji: '📖' },  // Haunted Library
+    pawn:      { name: 'Chess Pawn',   hp: 2,  weakTo: POWER.LIGHTNING, color: '#333333', emoji: '♟' },   // Wizard Chess
+    knight:    { name: 'Chess Knight', hp: 4,  weakTo: POWER.ICE,       color: '#333333', emoji: '♞' },
+    rook:      { name: 'Chess Castle', hp: 5,  weakTo: POWER.WATER,     color: '#333333', emoji: '♜' },
+    queen:     { name: 'Chess Queen',  hp: 25, weakTo: POWER.LIGHTNING, color: '#333333', emoji: '♛' },   // Wizard Chess boss
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
@@ -627,7 +633,9 @@ function castSpell() {
     if (!playing() || !state.spell || state.spellCooldown > 0) return;
     const sp = SPELLS.find(x => x.id === state.spell);
     const foes = targetableEnemies();
-    const bonus = state.weaponLevel - 1;
+    const bonus = state.weaponLevel - 1 + wandInfo().bonus;
+    checkMagicCombo('spell');
+    if (wandInfo().id === 'unicorn' && Math.random() < 0.2 && state.playerHp < fullHearts()) { state.playerHp++; spawnFloatText(player.x, player.y - 50, '🦄 +1 ❤', '#FF88CC', 60); }
     if (sp.id === 'laser') {
         const aim = aimPoint(800), a = Math.atan2(aim.y - player.y, aim.x - player.x);
         const x2 = player.x + Math.cos(a) * 900, y2 = player.y + Math.sin(a) * 900;
@@ -718,7 +726,7 @@ function castSpell() {
         for (const e of foes) damageEnemy(e, POWER.NONE, false, BOSS_TYPES.includes(e.type) ? 6 : 99);   // bosses are too strong to poof
         spawnFloatText(player.x, player.y - 34, 'VADA CADABRA!', '#66FF88', 90); triggerShake(20); sfx('boom');
     }
-    state.spellCooldown = Math.round(sp.cooldown * (state.house === 'ravenclaw' ? 0.6 : 1));
+    state.spellCooldown = Math.round(sp.cooldown * (state.house === 'ravenclaw' ? 0.6 : 1) * wandInfo().cd);
 }
 
 function updateSpells() {
@@ -859,6 +867,7 @@ const MOUNTS = [
     { id: 'dragon', icon: '🐉', name: 'Flying Dragon',     cost: 60, speed: 1.5, desc: 'Fly right over walls and blocks!' },
     { id: 'kart',   icon: '🏎', name: 'Go-Kart',           cost: 35, speed: 2.2, desc: 'Zoom zoom! (a bit slidey)' },
     { id: 'duck',   icon: '🦆', name: 'Giant Rubber Duck', cost: 15, speed: 0.9, desc: 'Silly and squeaky. Quack!' },
+    { id: 'car',    icon: '🚗', name: 'Flying Car',        cost: 80, speed: 2.0, desc: 'Fly over walls, water and lava!' },
     { id: 'dino',   icon: '🦕', name: 'Triceratops',       cost: 0,  speed: 1.6, desc: 'Tame one on Dinosaur Island!', hidden: true },
     { id: 'broom',  icon: '🧹', name: 'Broomstick',        cost: 0,  speed: 1.9, desc: 'Wizards only — fly over everything!', hidden: true },
     { id: 'surf',   icon: '🏄', name: 'Lava Surfboard',    cost: 0,  speed: 1.5, desc: 'Find it at the Volcano — surf the lava!', hidden: true },
@@ -890,7 +899,7 @@ function mountSpeed() { const m = MOUNTS.find(m => m.id === state.mount); return
 // Drawn under the player
 function drawMount() {
     if (!state.mount) return;
-    const emojiMount = { broom: '🧹', surf: '🏄', trex: '🦖' }[state.mount];
+    const emojiMount = { broom: '🧹', surf: '🏄', trex: '🦖', car: '🚗' }[state.mount];
     if (emojiMount) {   // newer rides are drawn with a big emoji under you
         ctx.save(); ctx.font = state.mount === 'trex' ? '52px Arial' : '34px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.translate(player.x, player.y + (state.mount === 'trex' ? 4 : 14)); if (state.faceX > 0) ctx.scale(-1, 1);
@@ -949,6 +958,8 @@ const GADGETS = [
     { id: 'snowball',  name: 'Snowball Launcher', icon: '☃', cost: 20, cooldown: 25,  desc: 'Snowballs freeze monsters' },
     { id: 'paint',     name: 'Paint Gun',         icon: '🎨', cost: 20, cooldown: 45,  desc: "Splat! Painted monsters can't see you" },
     { id: 'banana',    name: 'Banana Peels',      icon: '🍌', cost: 10, cooldown: 40,  desc: 'Drop a peel — monsters slip over!' },
+    { id: 'cloak',     name: 'Invisibility Cloak', icon: '🧥', cost: 60, cooldown: 900, desc: 'Vanish! Nothing can hurt you for 10 s' },
+    { id: 'map',       name: 'Magic Map',         icon: '🗺', cost: 30, cooldown: 600, desc: 'Shows where every monster is' },
 ];
 const ARROWS = [
     { kind: 'fire', power: POWER.BRIMSTONE, color: '#FF5522', label: '🔥 Fire arrow' },
@@ -1173,6 +1184,10 @@ let state = {
     godTurn:            0,               // which of your two god powers is next
     house:              null,            // Hogwarts house from the Sorting Hat
     quest:              null,            // { kind, need, got } from the Demigod Camp quest board
+    wand:               'oak',           // 🪄 from the Hogwarts Wand Shop
+    wands:              {},
+    creature:           null,            // 🐣 magic creature you look after
+    creatureFood:       0,               // 0-100, goes down slowly
     questsDone:         0,
     invisible:          0,               // 🧪 potion timers
     giant:              0,
@@ -1745,6 +1760,182 @@ function drawWorld2(t, P, label, verb) {
     }
 }
 
+// ── MAGIC EXTRAS: wands, creatures, the Snitch, chess, library, magic map, combos ──
+const SCHOOL_EXIT = { x: 400, y: 578 };   // in Wizard Chess and the Haunted Library
+const GOLDEN_BOOK = { x: 700, y: 120 };   // in the Haunted Library
+const WANDS = [
+    { id: 'oak',     icon: '🪵', name: 'Oak Wand',      cost: 0,   bonus: 0, cd: 1,   desc: 'A good first wand' },
+    { id: 'phoenix', icon: '🔥', name: 'Phoenix Wand',  cost: 80,  bonus: 0, cd: 0.7, desc: 'Spells recharge faster' },
+    { id: 'dragon',  icon: '🐉', name: 'Dragon Wand',   cost: 100, bonus: 1, cd: 1,   desc: 'Spells hit harder' },
+    { id: 'unicorn', icon: '🦄', name: 'Unicorn Wand',  cost: 90,  bonus: 0, cd: 0.9, desc: 'Spells sometimes heal you' },
+    { id: 'elder',   icon: '✨', name: 'The Elder Wand', cost: 400, bonus: 2, cd: 0.6, desc: 'The most powerful wand EVER' },
+];
+function wandInfo() { return WANDS.find(w => w.id === state.wand) || WANDS[0]; }
+function wandItems() {
+    return WANDS.map(w => ({ icon: w.icon, name: w.name, desc: w.desc, cost: w.cost,
+        status: state.wand === w.id ? 'HOLDING' : (state.wands[w.id] || !w.cost) ? 'OWNED — pick' : null,
+        action: () => {
+            if (state.wands[w.id] || !w.cost) { state.wand = w.id; return; }
+            if (spend(w.cost)) { state.wands[w.id] = true; state.wand = w.id; showToast(`${w.icon} The ${w.name} chose YOU!`, '#FFD700', 200); sfx('magic'); }
+        } }));
+}
+
+// ✨ Magic combo: a spell, then a gadget or god power (or the other way round) within 2 seconds
+const MAGIC_COMBO_WINDOW = 2000, MAGIC_COMBO_COOLDOWN = 6000;
+let lastMagicUse = { kind: null, at: 0 }, lastCombo = 0;
+function checkMagicCombo(kind) {
+    const now = Date.now(), prev = lastMagicUse;
+    lastMagicUse = { kind, at: now };
+    if (!prev.kind || prev.kind === kind || now - prev.at > MAGIC_COMBO_WINDOW || now - lastCombo < MAGIC_COMBO_COOLDOWN) return;
+    if (prev.kind !== 'spell' && kind !== 'spell') return;   // one of them has to be a spell
+    lastCombo = now;
+    hitAll(3); freezeAll(90);
+    for (let k = 0; k < 6; k++) spawnParticles(player.x, player.y, `hsl(${k * 60}, 100%, 60%)`, 8);
+    triggerShake(14); sfx('boom'); giveAward('combo');
+    showToast('✨🌈 MAGIC COMBO! MEGA SPELL! 🌈✨', '#FFE066', 180);
+}
+
+// 🐣 Magic creatures: feed them and they help you
+const CREATURES = [
+    { id: 'babydragon', icon: '🐲', name: 'Baby Dragon', cost: 50, desc: 'Breathes fire at monsters' },
+    { id: 'phoenix',    icon: '🐦‍🔥', name: 'Phoenix',     cost: 60, desc: 'Heals you sometimes' },
+    { id: 'griffin',    icon: '🦅', name: 'Griffin',     cost: 50, desc: 'Swoops and pecks monsters' },
+    { id: 'goldfinder', icon: '🦡', name: 'Gold Finder', cost: 40, desc: 'Digs up coins for you' },
+];
+const CREATURE_FOOD_COST = 3;
+let creatureTimer = 0;
+function creatureInfo() { return CREATURES.find(c => c.id === state.creature); }
+function creatureItems() {
+    const c = creatureInfo();
+    const items = [];
+    if (c) items.push({ icon: '🍖', name: `Feed your ${c.name}`, desc: `Food: ${Math.round(state.creatureFood)}% — hungry creatures don't help!`, cost: CREATURE_FOOD_COST, status: 'FEED',
+                        action: () => { if (spend(CREATURE_FOOD_COST)) { state.creatureFood = Math.min(100, state.creatureFood + 40); spawnFloatText(player.x, player.y - 40, `${c.icon} Yum! 💕`, '#FF88CC', 60); } } });
+    for (const cr of CREATURES) items.push({ icon: cr.icon, name: cr.name, desc: cr.desc, cost: cr.cost, status: state.creature === cr.id ? 'YOURS' : null,
+        action: () => {
+            if (state.creature === cr.id) return;
+            if (spend(cr.cost)) { state.creature = cr.id; state.creatureFood = 100; giveAward('creature'); showToast(`${cr.icon} You adopted a ${cr.name}! Remember to feed it!`, '#FFE066', 220); }
+        } });
+    return items;
+}
+function updateCreature() {
+    const c = creatureInfo();
+    if (!c || !playing()) return;
+    state.creatureFood = Math.max(0, state.creatureFood - 100 / (60 * 60 * 3));   // empty after 3 minutes
+    if (state.creatureFood < 25 || ++creatureTimer < 150) return;
+    creatureTimer = 0;
+    const cx = player.x - 30, cy = player.y - 34;
+    if (c.id === 'goldfinder') { if (Math.random() < 0.5) { state.coins++; spawnFloatText(cx, cy - 10, '+🪙1', '#FFD700', 50); } return; }
+    if (c.id === 'phoenix')    { if (state.playerHp < fullHearts() && Math.random() < 0.3) { state.playerHp++; spawnFloatText(cx, cy - 10, '🔥 +1 ❤', '#FF8844', 60); } return; }
+    const e = nearestTarget(300);
+    if (!e) return;
+    if (c.id === 'babydragon') projectiles.push({ x: cx, y: cy, dx: (e.x - cx) / Math.hypot(e.x - cx, e.y - cy) * 7, dy: (e.y - cy) / Math.hypot(e.x - cx, e.y - cy) * 7, color: '#FF6622', power: POWER.BRIMSTONE, life: 60, r: 6, fromPet: true });
+    else { damageEnemy(e, POWER.NONE); bolts.push({ x1: cx, y1: cy, x2: e.x, y2: e.y, life: 10, color: '#CCAA66' }); }
+}
+function drawCreature() {
+    const c = creatureInfo();
+    if (!c || state.gamePhase !== 'playing') return;
+    const x = player.x - 30, y = player.y - 34 + Math.sin(Date.now() / 250) * 3;
+    ctx.save(); ctx.font = '22px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(c.icon, x, y);
+    if (state.creatureFood < 25) { ctx.font = '12px Arial'; ctx.fillText('😢', x + 12, y - 12); }
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(x - 12, y + 14, 24, 4);
+    ctx.fillStyle = state.creatureFood < 25 ? '#FF5544' : '#66DD66'; ctx.fillRect(x - 12, y + 14, 24 * state.creatureFood / 100, 4);
+    ctx.restore();
+}
+
+// 🟡 Catch the Snitch
+const SNITCH_FRAMES = 1800;
+let snitch = null;
+function startSnitch() {
+    snitch = { x: 400, y: 300, vx: 4, vy: 2, timer: SNITCH_FRAMES };
+    showToast('🟡 Catch the Golden Snitch! Quick, it\'s FAST!', '#FFE066', 200); sfx('whoosh');
+}
+function updateSnitch() {
+    if (!snitch) return;
+    const S = snitch;
+    if (--S.timer <= 0) { snitch = null; showToast('🟡 The Snitch got away! Try again!', '#FFAA88', 180); return; }
+    const hunters = [{ n: 1, x: player.x, y: player.y }, ...activeFriends().filter(f => f.down <= 0)];
+    for (const h of hunters) {
+        const d = Math.hypot(S.x - h.x, S.y - h.y);
+        if (d < 20) {
+            snitch = null; state.coins += 50; addScore(150); giveAward('snitch'); sfx('win'); spawnConfettiAt(S.x, S.y);
+            showToast(h.n === 1 ? '🟡 YOU CAUGHT THE SNITCH! +🪙50' : `🟡 PLAYER ${h.n} CAUGHT THE SNITCH! +🪙50`, '#FFD700', 240);
+            return;
+        }
+        if (d < 110) { S.vx += (S.x - h.x) / d * 0.6; S.vy += (S.y - h.y) / d * 0.6; }   // zooms away from you
+    }
+    if (Math.random() < 0.04) { S.vx += (Math.random() - 0.5) * 6; S.vy += (Math.random() - 0.5) * 6; }
+    const sp = Math.hypot(S.vx, S.vy), max = 5.5;
+    if (sp > max) { S.vx *= max / sp; S.vy *= max / sp; }
+    S.x += S.vx; S.y += S.vy;
+    if (S.x < 30 || S.x > 770) S.vx *= -1;
+    if (S.y < 70 || S.y > 570) S.vy *= -1;
+    S.x = Math.max(30, Math.min(770, S.x)); S.y = Math.max(70, Math.min(570, S.y));
+}
+function drawSnitch() {
+    if (!snitch) return;
+    const { x, y } = snitch, f = Math.sin(Date.now() / 30) * 6;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.beginPath(); ctx.ellipse(x - 10, y - 2, 10, 3 + Math.abs(f) * 0.4, -0.4, 0, Math.PI * 2); ctx.ellipse(x + 10, y - 2, 10, 3 + Math.abs(f) * 0.4, 0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 14; ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`🟡 Snitch: ${Math.ceil(snitch.timer / 60)}s`, 400, 92);
+}
+
+// 🗺 Magic Map: a little map in the corner showing every monster
+let magicMapTimer = 0;
+function drawMagicMap() {
+    if (magicMapTimer <= 0 || state.gamePhase !== 'playing') return;
+    const x0 = 620, y0 = 80, w = 160, h = 120, sx = w / 800, sy = h / 600;
+    ctx.save();
+    ctx.fillStyle = 'rgba(244,232,192,0.92)'; ctx.fillRect(x0, y0, w, h);
+    ctx.strokeStyle = '#8A6A3A'; ctx.lineWidth = 2; ctx.strokeRect(x0, y0, w, h);
+    for (const e of targetableEnemies()) { ctx.fillStyle = BOSS_TYPES.includes(e.type) ? '#AA0000' : '#E04040'; ctx.beginPath(); ctx.arc(x0 + e.x * sx, y0 + e.y * sy, BOSS_TYPES.includes(e.type) ? 5 : 3, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#2050E0'; ctx.beginPath(); ctx.arc(x0 + player.x * sx, y0 + player.y * sy, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#5A3A1A'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`🗺 ${targetableEnemies().length} monsters`, x0 + w / 2, y0 + h - 4);
+    ctx.restore();
+}
+
+function paintChess(g, R) {
+    for (let y = 46; y < 600; y += 50) for (let x = 0; x < 800; x += 50) { g.fillStyle = ((x + y - 46) / 50) % 2 ? '#3A3A44' : '#E8E0D0'; g.fillRect(x, y, 50, 50); }
+}
+function paintLibrary(g, R) {
+    g.fillStyle = '#3A2A1E'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 300; i++) { g.fillStyle = `rgba(${80 + R() * 30},${50 + R() * 20},30,0.5)`; g.fillRect(R() * 800, 46 + R() * 554, 40, 2); }   // floorboards
+    for (const sx of [0, 740]) for (let y = 60; y < 540; y += 40) {   // bookshelves down both sides
+        g.fillStyle = '#5A3A1E'; g.fillRect(sx, y, 60, 40);
+        for (let k = 0; k < 6; k++) { g.fillStyle = `hsl(${R() * 360}, 50%, 40%)`; g.fillRect(sx + 4 + k * 9, y + 6, 7, 30); }
+    }
+}
+function drawMagicPlaces(t, label, verb) {
+    const P = place();
+    if (state.room === ROOM.CHESS || state.room === ROOM.LIBRARY) {
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SCHOOL_EXIT.x - 24, 560, 48, 40); label('🚪 Back to town', SCHOOL_EXIT.x, 556, '#FFF');
+    }
+    if (state.room === ROOM.CHESS && P.won) label('♛ CHECKMATE! You won! ♛', 400, 104, '#FFD700');
+    if (state.room === ROOM.LIBRARY && !P.bookTaken) {
+        ctx.save(); ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 20 + Math.sin(t * 4) * 8; ctx.font = '30px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('📕', GOLDEN_BOOK.x, GOLDEN_BOOK.y); ctx.restore();
+        label('✨ Secret spell book', GOLDEN_BOOK.x, GOLDEN_BOOK.y + 30, '#FFE066');
+        if (Math.hypot(player.x - GOLDEN_BOOK.x, player.y - GOLDEN_BOOK.y) < 36 && !menu) drawSpeech({ x: GOLDEN_BOOK.x, y: GOLDEN_BOOK.y - 14 }, `${verb}: Open the book!`);
+    }
+}
+function updateMagicExtras() {
+    if (magicMapTimer > 0) magicMapTimer--;
+    updateCreature(); updateSnitch();
+    // owl pets fly off and bring you coins
+    if (state.activePet >= 0 && PETS[state.activePet].id === 'owl' && playing() && ++updateMagicExtras.owl % 1800 === 0) {
+        state.coins += 5; spawnFloatText(pet.x, pet.y - 20, '🦉 Delivery! +🪙5', '#FFE066', 80); sfx('hoot');
+    }
+    if (state.room === ROOM.CHESS && !place().won && place().enemies.every(e => !e.alive)) {
+        place().won = true; state.coins += 80; addScore(200); giveAward('chess'); sfx('win'); spawnConfettiAt(400, 300);
+        showToast('♛ CHECKMATE! You beat Wizard Chess! +🪙80', '#FFD700', 240);
+    }
+}
+updateMagicExtras.owl = 0;
+
 // 🤝 Team-up: two players shoot at nearly the same time, close together → MEGA BLAST
 const TEAMUP_WINDOW = 300, TEAMUP_RANGE = 140, TEAMUP_COOLDOWN = 5000;
 let lastP1Shot = 0, lastTeamUp = 0;
@@ -1897,8 +2088,8 @@ function updatePotions() {
     }
 }
 
-function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); }
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -2480,7 +2671,7 @@ const PLACES = {
 const ARENA_GATE  = { x: 270, y: 545 };
 const ARENA_EXIT  = { x: 400, y: 578 };
 const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon',
-                     'wizard', 'mummyking', 'candymonster', 'bigdevil'];
+                     'wizard', 'mummyking', 'candymonster', 'bigdevil', 'queen'];
 const BOSS_RUSH   = [
     () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
     () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
@@ -2542,6 +2733,14 @@ const MALL_SHOPS = [
 ];
 PLACES.mall = { name: '🏬 THE MALL', spawn: [400, 500], make: () => ({ enemies: [], coins: [] }) };
 // Demigod Camp, Mount Olympus and Pirate Island (their code is in the WORLD 2 section)
+PLACES.chess = { name: '♟ WIZARD CHESS', spawn: [400, 540],
+    make: () => ({ coins: [], won: false,
+                   enemies: [...[0, 1, 2, 3, 4, 5].map(i => e0('pawn', 150 + i * 100, 220, { r: 16 })),
+                             e0('knight', 150, 130, { r: 18 }), e0('knight', 650, 130, { r: 18 }), e0('rook', 80, 130, { r: 18 }), e0('rook', 720, 130, { r: 18 }),
+                             e0('queen', 400, 120, { r: 26, coinDrop: 30 })] }) };
+PLACES.library = { name: '📚 THE HAUNTED LIBRARY', spawn: [400, 540],
+    make: () => ({ coins: [], bookTaken: false,
+                   enemies: [...[0, 1, 2, 3, 4, 5].map(i => e0('book', 120 + i * 110, 160 + (i % 2) * 160, { r: 14 })), e0('ghost', 300, 300), e0('ghost', 550, 420)] }) };
 PLACES.camp    = { name: '⛺ DEMIGOD CAMP', spawn: [400, 500], make: () => ({ enemies: [], coins: [] }) };
 PLACES.olympus = { name: '🏛 MOUNT OLYMPUS', spawn: [400, 520], make: () => { giveAward('olympus'); return { enemies: [], coins: [], blessed: {} }; } };
 PLACES.piratecove = { name: '🏴‍☠️ PIRATE ISLAND', spawn: [120, 470], island: true,
@@ -2654,6 +2853,16 @@ function tryPlaceAction() {
         return true;
     }
     if (state.room === ROOM.CAMP && nearIt(QUEST_BOARD)) { openMenu('📜 QUEST BOARD', questItems); return true; }
+    if (state.room === ROOM.LIBRARY && !place().bookTaken && nearIt(GOLDEN_BOOK, 36)) {
+        place().bookTaken = true; giveAward('spellbook'); sfx('found'); spawnParticles(GOLDEN_BOOK.x, GOLDEN_BOOK.y, '#FFD700', 30);
+        const unknown = SPELLS.filter(sp => sp.school && !state.spells[sp.id]);
+        if (unknown.length) {
+            const sp = unknown[Math.floor(Math.random() * unknown.length)];
+            state.spells[sp.id] = true; state.spell = sp.id;
+            showToast(`📕 The secret spell book taught you ${sp.icon} ${sp.name}! FREE!`, '#FFD700', 260);
+        } else { state.coins += 60; showToast('📕 You know every spell already! The book gives you +🪙60', '#FFD700', 220); }
+        return true;
+    }
     if (state.room === ROOM.OLYMPUS) {
         const g = olympusGods().find(o => nearIt(o, 40));
         if (g) { talkToGod(g); return true; }
@@ -2724,7 +2933,7 @@ function updateNewPlaces() {
     }
     if (state.room === ROOM.VOLCANO) {
         // Hot lava hurts (unless you fly over it on your dragon)
-        if (!['dragon', 'broom', 'surf'].includes(state.mount) && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
+        if (!['dragon', 'broom', 'surf', 'car'].includes(state.mount) && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
             damagePlayer();
             spawnFloatText(player.x, player.y - 30, 'HOT! 🔥', '#FF6633', 50);
         }
@@ -2853,6 +3062,7 @@ function drawNewPlaces() {
     const label = (text, x, y, col = 'rgba(255,255,255,0.9)') => { ctx.fillStyle = col; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
     const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
     drawWorld2(t, P, label, verb);
+    drawMagicPlaces(t, label, verb);
     if (state.room === ROOM.TOY) {
         ctx.fillStyle = '#6B3E1E'; ctx.fillRect(TOY_EXIT.x - 24, 560, 48, 40);
         label('🚪 Back to the Mall', TOY_EXIT.x, 556, '#223');
@@ -2964,6 +3174,7 @@ function updatePlaceExits() {
     if (state.room === ROOM.TOY && near(TOY_EXIT, 26))       { changeRoom(ROOM.MALL); player.x = 460; player.y = 300; return true; }
     if (state.room === ROOM.VOID && near(MALL_DOOR, 24))     { changeRoom(ROOM.MALL); showToast('🏬 Welcome to the Mall! Walk up to a shop.', '#FFE066', 160); return true; }
     if (state.room === ROOM.MALL && near(MALL_EXIT, 26))     { changeRoom(ROOM.VOID); player.x = MALL_DOOR.x + 40; player.y = MALL_DOOR.y + 50; return true; }
+    if ((state.room === ROOM.CHESS || state.room === ROOM.LIBRARY) && near(SCHOOL_EXIT, 26)) { changeRoom(ROOM.PARADISE); player.x = 254; player.y = 290; return true; }
     if (state.room === ROOM.CAMP && near(CAMP_EXIT, 26))      { changeRoom(ROOM.MALL); player.x = 620; player.y = 300; return true; }
     if (state.room === ROOM.CAMP && near(OLYMPUS_STAIRS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
     if (state.room === ROOM.HEAVEN && near(HEAVEN_OLYMPUS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
@@ -3427,6 +3638,8 @@ const PORTALS = {
     camp:    [],
     olympus: [],
     piratecove: [],
+    chess:   [],
+    library: [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
     toy:     [{ x: 740, y: 120, shape: 'star'    }],
     pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
@@ -3635,7 +3848,7 @@ function musicTick() {
     if (!audioCtx || muted || !settings.music) return;
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
     const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell'
-                  : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship' })[state.room] || state.room;
+                  : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship', chess: 'mall', library: 'underground' })[state.room] || state.room;
     const song = playing ? SONGS[songKey] : null;
     if (!song) { musicRoom = null; return; }
     const now = audioCtx.currentTime;
@@ -3755,6 +3968,11 @@ const AWARDS = [
     { id: 'teamUp',      icon: '🤝', name: 'Team-Up!',          desc: 'Do a team-up blast with a friend' },
     { id: 'battle',      icon: '⚔', name: 'Battle Winner',     desc: 'Win a Friend Battle' },
     { id: 'pirateGold',  icon: '🏴‍☠️', name: 'Pirate Gold',     desc: 'Dig up all the treasure on Pirate Island' },
+    { id: 'snitch',      icon: '🟡', name: 'Seeker',            desc: 'Catch the Snitch' },
+    { id: 'chess',       icon: '♟', name: 'Checkmate!',        desc: 'Win Wizard Chess' },
+    { id: 'combo',       icon: '✨', name: 'Magic Combo',       desc: 'Do a magic combo' },
+    { id: 'creature',    icon: '🐣', name: 'Creature Keeper',   desc: 'Adopt a magic creature' },
+    { id: 'spellbook',   icon: '📕', name: 'Secret Spell Book', desc: 'Find the book in the Haunted Library' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -3820,7 +4038,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -3978,6 +4196,7 @@ function useGodPower() {
     const pw = nextGodPower();
     if (!pw || !playing() || state.godCooldown > 0) return;
     pw.use();
+    checkMagicCombo('god');
     state.godCooldown = pw.cd;
     state.godTurn = (state.godTurn || 0) + 1;
     spawnFloatText(player.x, player.y - 40, `${pw.icon} ${pw.name.toUpperCase()}!`, '#FFE680', 90);
@@ -4665,7 +4884,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -4854,7 +5073,7 @@ function updatePlayer() {
     // Move, but blocks are solid (try each direction separately so you slide along walls)
     const nx = Math.max(18, Math.min(GAME_W - 18, player.x + dx));
     const ny = Math.max(52, Math.min(GAME_H - 18, player.y + dy));
-    const flying = state.mount === 'dragon' || state.mount === 'broom' || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
+    const flying = ['dragon', 'broom', 'car'].includes(state.mount) || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
     if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
     if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
     if (state.mount === 'duck' && (dx || dy) && Math.random() < 0.01) { tone(700, 0.12, 'square', 0.12, 500); spawnFloatText(player.x, player.y - 30, 'QUACK!', '#FFE066', 40); }
@@ -5156,6 +5375,14 @@ function enemyShoot(e, speed, color, spread = [0]) {
 
 function moveEnemy(e) {
     const chase = (spd) => { const a = Math.atan2(player.y - e.y, player.x - e.x); e.x += Math.cos(a) * spd; e.y += Math.sin(a) * spd; e.walk = (e.walk || 0) + spd * 0.15; };
+    if (e.type === 'book')   { chase(1.5); e.x += Math.sin(Date.now() / 160 + e.home.x) * 1.8; e.y += Math.cos(Date.now() / 200 + e.home.y) * 1.2; return; }
+    if (e.type === 'pawn')   { chase(0.6); return; }
+    if (e.type === 'rook')   { if (Math.abs(player.x - e.x) > Math.abs(player.y - e.y)) e.x += Math.sign(player.x - e.x) * 1.2; else e.y += Math.sign(player.y - e.y) * 1.2; return; }   // only straight lines
+    if (e.type === 'knight') {   // hops in an L shape
+        if (--e.hopTimer <= 0) { e.hopTimer = 70; e.x += Math.sign(player.x - e.x) * 60; e.y += Math.sign(player.y - e.y) * 30; e.x = Math.max(30, Math.min(770, e.x)); e.y = Math.max(70, Math.min(570, e.y)); sfx('boing'); }
+        return;
+    }
+    if (e.type === 'queen')  { chase(1.0); if (Math.random() < 0.012) enemyShoot(e, 4.5, '#AA66FF', [-0.3, 0, 0.3]); return; }
     if (e.type === 'pirate')   { chase(1.3); return; }
     if (e.type === 'windup') {   // zooms in a straight line, then stops to wind up again
         if (--e.windTimer <= 0) { e.windTimer = 110; const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 4.5; e.dy = Math.sin(a) * 4.5; }
@@ -6011,7 +6238,13 @@ function useGadget() {
     const g = GADGETS.find(g => g.id === state.gadget);
     const aim = aimPoint();
     const a = Math.atan2(aim.y - player.y, aim.x - player.x);
-    if (g.id === 'boomerang') {
+    if (g.id === 'cloak') {
+        state.invisible = 600; spawnParticles(player.x, player.y, '#AACCFF', 20); sfx('magic');
+        showToast('🧥 You vanished! Nothing can hurt you!', '#AACCFF', 150);
+    } else if (g.id === 'map') {
+        magicMapTimer = 600; sfx('magic');
+        showToast('🗺 "I solemnly swear…" The map shows every monster!', '#F4E8C0', 150);
+    } else if (g.id === 'boomerang') {
         gadgetObjs.push({ kind: 'boomerang', x: player.x, y: player.y, vx: Math.cos(a) * 9, vy: Math.sin(a) * 9, t: 0, hits: new Set() });
         sfx('whoosh');
     } else if (g.id === 'bomb') {
@@ -6053,6 +6286,7 @@ function useGadget() {
         spawnFloatText(player.x, player.y - 30, '🍌 peel dropped!', '#FFE066', 40); sfx('pop');
     }
     state.gadgetCooldown = g.cooldown;
+    checkMagicCombo('gadget');   // last, so the combo message shows on top
 }
 
 function dash() {
@@ -6462,6 +6696,11 @@ function hogwartsItems() {
         { icon: '🏁', name: 'Broomstick Race', desc: 'Fly through all the rings!', cost: 0, status: 'GO!',
           action: () => { menu = null; if (state.mounts.broom) { state.mount = 'broom'; state.lastMount = 'broom'; } startRingRace(); } },
         { icon: '⚔', name: 'Wizard Duel',   desc: 'Fight the Evil Wizard!',    cost: 0, status: 'DUEL!', action: () => { menu = null; startWizardDuel(); } },
+        { icon: '🪄', name: 'Wand Shop',     desc: wandInfo().id === 'oak' ? 'Pick a magic wand' : `Your wand: ${wandInfo().name}`, cost: 0, status: null, action: () => openMenu('🪄 THE WAND SHOP', wandItems) },
+        { icon: '🐣', name: 'Magic Creatures', desc: state.creature ? `Look after your ${creatureInfo().name}` : 'Adopt a magic creature', cost: 0, status: null, action: () => openMenu('🐣 MAGIC CREATURES', creatureItems) },
+        { icon: '🟡', name: 'Catch the Snitch', desc: 'Catch the speedy golden ball!', cost: 0, status: 'GO!', action: () => { menu = null; startSnitch(); } },
+        { icon: '♟', name: 'Wizard Chess',  desc: 'Giant chess pieces come alive!', cost: 0, status: 'PLAY!', action: () => { menu = null; changeRoom(ROOM.CHESS); showToast('♟ WIZARD CHESS! Beat every piece — the Queen is the boss!', '#FFE066', 220); } },
+        { icon: '📚', name: 'Haunted Library', desc: 'Flying books… and a secret spell book', cost: 0, status: 'ENTER', action: () => { menu = null; changeRoom(ROOM.LIBRARY); showToast('📚 Shhh… the books are ALIVE!', '#CCAAFF', 200); } },
     ];
 }
 function startWizardDuel() {
@@ -7649,8 +7888,25 @@ function drawEnemyInner(e, t) {
     drawEnemyBody(e, t);
 }
 
+function drawEmojiEnemy(e, t) {
+    const info = ENEMY_TYPES[e.type], size = e.r * 2.2;
+    const bob = e.type === 'book' ? Math.sin(t * 8 + e.home.x) * 4 : 0;
+    drawGroundShadow(e.x + 2, e.y + e.r + (e.type === 'book' ? 12 : 2), e.r * 0.8, e.r * 0.3, 0.25);
+    ctx.save();
+    if (e.emerge > 0) ctx.globalAlpha = Math.max(0.1, 1 - e.emerge / 60);
+    if (info.emoji.length === 1) {   // chess pieces are plain text: give them a white glow so they show up
+        ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(e.x, e.y + bob, e.r * 1.05, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = e.hitFlash > 0 ? '#FF3333' : '#222';
+    ctx.translate(e.x, e.y + bob);
+    if (e.type === 'book') ctx.scale(1, 0.7 + Math.abs(Math.sin(t * 10)) * 0.3);   // flap flap
+    ctx.fillText(info.emoji, 0, 0);
+    ctx.restore();
+}
+
 function drawEnemyBody(e, t) {
     if (e.frog) { drawGroundShadow(e.x, e.y + 12, 10, 3); drawFrog(e); return; }
+    if (ENEMY_TYPES[e.type].emoji) { drawEmojiEnemy(e, t); return; }
     if (!e.hidden && !(e.emerge > 45)) {
         const flying = e.type === 'ghost' || e.type === 'bat' || e.type === 'imp' || e.type === 'ghostking' || e.dropping
                     || e.type === 'thunderbird' || e.type === 'mothership' || state.room === ROOM.SPACE;
@@ -8726,7 +8982,7 @@ function roomBackground(room) {
         const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse,
                            ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace, arena: paintArena, mall: paintMall,
                            underwater: paintUnderwater, dino: paintDino, volcano: paintVolcano, jungle: paintJungle,
-                           toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity, camp: paintCamp, olympus: paintOlympus, piratecove: paintPirateCove };
+                           toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity, camp: paintCamp, olympus: paintOlympus, piratecove: paintPirateCove, chess: paintChess, library: paintLibrary };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
