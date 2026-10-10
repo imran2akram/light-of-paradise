@@ -718,7 +718,7 @@ function castSpell() {
         for (const e of foes) damageEnemy(e, POWER.NONE, false, BOSS_TYPES.includes(e.type) ? 6 : 99);   // bosses are too strong to poof
         spawnFloatText(player.x, player.y - 34, 'VADA CADABRA!', '#66FF88', 90); triggerShake(20); sfx('boom');
     }
-    state.spellCooldown = sp.cooldown;
+    state.spellCooldown = Math.round(sp.cooldown * (state.house === 'ravenclaw' ? 0.6 : 1));
 }
 
 function updateSpells() {
@@ -860,6 +860,7 @@ const MOUNTS = [
     { id: 'kart',   icon: '🏎', name: 'Go-Kart',           cost: 35, speed: 2.2, desc: 'Zoom zoom! (a bit slidey)' },
     { id: 'duck',   icon: '🦆', name: 'Giant Rubber Duck', cost: 15, speed: 0.9, desc: 'Silly and squeaky. Quack!' },
     { id: 'dino',   icon: '🦕', name: 'Triceratops',       cost: 0,  speed: 1.6, desc: 'Tame one on Dinosaur Island!', hidden: true },
+    { id: 'broom',  icon: '🧹', name: 'Broomstick',        cost: 0,  speed: 1.9, desc: 'Wizards only — fly over everything!', hidden: true },
 ];
 
 function mountItems() {
@@ -887,6 +888,13 @@ function mountSpeed() { const m = MOUNTS.find(m => m.id === state.mount); return
 // Drawn under the player
 function drawMount() {
     if (!state.mount) return;
+    const emojiMount = { broom: '🧹', surf: '🏄', trex: '🦖' }[state.mount];
+    if (emojiMount) {   // newer rides are drawn with a big emoji under you
+        ctx.save(); ctx.font = state.mount === 'trex' ? '52px Arial' : '34px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.translate(player.x, player.y + (state.mount === 'trex' ? 4 : 14)); if (state.faceX > 0) ctx.scale(-1, 1);
+        ctx.fillText(emojiMount, 0, 0); ctx.restore();
+        return;
+    }
     const t = Date.now(), x = player.x, y = player.y + 12, f = state.faceX < 0 ? -1 : 1;
     ctx.save();
     ctx.translate(x, y); ctx.scale(f, 1);
@@ -1161,6 +1169,10 @@ let state = {
     demigod:            undefined,       // god parent id, null = a normal kid, undefined = not rolled yet
     godCooldown:        0,
     godTurn:            0,               // which of your two god powers is next
+    house:              null,            // Hogwarts house from the Sorting Hat
+    invisible:          0,               // 🧪 potion timers
+    giant:              0,
+    tiny:               0,
     hats:               {},              // hats you own
     hat:                null,            // hat you're wearing
     houseFrom:          null,            // which house door you went in by
@@ -1295,7 +1307,7 @@ function pressAction() {
         return;
     }
     if (race) { raceTap(); return; }
-    if (nearRaceMaster() && state.gamePhase === 'playing') { startRace(); return; }
+    if (nearRaceMaster() && state.gamePhase === 'playing') { openMenu('🏁 PICK A RACE!', raceItems); return; }
     if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
         const { cx, cy } = buildTargetCell();
         buildAt(cx, cy, player.x + state.faceX * 30, player.y + 5 + state.faceY * 30);
@@ -1576,6 +1588,96 @@ const PAD_COMBOS = [
     { btn: PAD.Y,  label: 'Awards',    run: () => { if (canOpenShop()) state.awardsOpen = !state.awardsOpen; } },
     { btn: PAD.LB, label: 'Hide help', run: () => toggleControlsPanel() },
 ];
+
+// ── FUN EXTRAS: Ring Race, Chicken Rain, potion effects ─────
+const RING_RACE_FRAMES = 2400;   // 40 seconds
+const RING_COUNT       = 8;
+let ringRace = null;             // { rings, timer, scores, result }
+function startRingRace() {
+    ringRace = { timer: RING_RACE_FRAMES, result: 0, scores: {},
+                 rings: Array.from({ length: RING_COUNT }, () => ({ x: 60 + Math.random() * 680, y: 110 + Math.random() * 440, got: false })) };
+    showToast(`⭕ RING RACE! Grab all ${RING_COUNT} rings in 40 seconds!`, '#FFE066', 200); sfx('bite');
+}
+function updateRingRace() {
+    const R = ringRace;
+    if (!R) return;
+    if (R.result > 0) { if (--R.result === 0) ringRace = null; return; }
+    R.timer--;
+    const racers = [{ n: 1, x: player.x, y: player.y }, ...activeFriends().filter(f => f.down <= 0)];
+    for (const ring of R.rings) {
+        if (ring.got) continue;
+        const who = racers.find(r => Math.hypot(r.x - ring.x, r.y - ring.y) < 30);
+        if (!who) continue;
+        ring.got = who.n; R.scores[who.n] = (R.scores[who.n] || 0) + 1;
+        spawnParticles(ring.x, ring.y, '#FFE066', 10); sfx('coin');
+    }
+    const allGot = R.rings.every(r => r.got);
+    if (!allGot && R.timer > 0) return;
+    R.result = 240;
+    const best = Object.entries(R.scores).sort((a, b) => b[1] - a[1])[0];
+    if (!allGot && racers.length === 1) { showToast('⏰ Out of time! Try again!', '#FFAA88', 200); return; }
+    const winner = best ? Number(best[0]) : 1;
+    state.coins += 40; addScore(100); giveAward('ringRace'); sfx('win'); spawnConfettiAt(400, 300);
+    showToast(racers.length > 1 ? `🏆 PLAYER ${winner} WINS with ${best[1]} rings! +🪙40` : '🏆 You got every ring! +🪙40', '#FFD700', 240);
+}
+function drawRingRace() {
+    const R = ringRace;
+    if (!R) return;
+    const t = Date.now() / 200;
+    for (const ring of R.rings) {
+        if (ring.got) continue;
+        ctx.save(); ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 5; ctx.shadowColor = '#FFE066'; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.ellipse(ring.x, ring.y, 12 + Math.sin(t + ring.x) * 2, 20, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    }
+    const left = R.rings.filter(r => !r.got).length;
+    const scores = Object.entries(R.scores).map(([n, c]) => `P${n}: ${c}`).join('  ');
+    ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(300, 76, 200, 34);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`⭕ ${left} rings left · ⏰ ${Math.ceil(Math.max(0, R.timer) / 60)}s`, 400, 92);
+    ctx.font = '10px Arial'; ctx.fillStyle = '#FFF'; ctx.fillText(scores || 'GO GO GO!', 400, 105); ctx.restore();
+}
+
+// 🐔 Chicken Rain: every few minutes chickens fall from the sky for 10 seconds
+const CHICKEN_RAIN_FRAMES = 600;
+let chickenRain = 0, chickenRainNext = 7200 + Math.random() * 7200, chickens = [];
+function updateChickenRain() {
+    if (!playing() || state.room === ROOM.HOUSE) return;
+    if (chickenRain <= 0 && --chickenRainNext <= 0) {
+        chickenRain = CHICKEN_RAIN_FRAMES; chickenRainNext = 7200 + Math.random() * 10800;
+        showToast('🐔🐔🐔 IT\'S RAINING CHICKENS! 🐔🐔🐔', '#FFE066', 200); sfx('laugh');
+    }
+    if (chickenRain > 0 && --chickenRain % 8 === 0) {
+        chickens.push({ x: 30 + Math.random() * 740, y: 40, vy: 2 + Math.random() * 3, land: 120 + Math.random() * 440, sit: 0 });
+    }
+    for (const c of chickens) {
+        if (c.sit > 0) { c.sit--; continue; }
+        c.y += c.vy;
+        if (c.y < c.land) continue;
+        c.sit = 60;
+        for (const e of targetableEnemies()) if (Math.hypot(e.x - c.x, e.y - c.y) < e.r + 16) { damageEnemy(e, POWER.NONE); spawnFloatText(e.x, e.y - 20, 'BONK!', '#FFE066', 40); }
+    }
+    for (const c of chickens) {   // catch one for a coin!
+        if (c.done || Math.hypot(c.x - player.x, c.y - player.y) > 26) continue;
+        c.done = true; state.coins++; giveAward('chickenRain');
+        spawnFloatText(c.x, c.y - 20, 'CLUCK! +🪙1', '#FFE066', 50); tone(900, 0.08, 'square', 0.1, 600);
+    }
+    chickens = chickens.filter(c => !c.done && !(c.y >= c.land && c.sit <= 0));
+}
+function drawChickenRain() {
+    for (const c of chickens) { ctx.save(); ctx.translate(c.x, c.y); ctx.scale(0.8, 0.8); drawChicken(0, 0); ctx.restore(); }
+}
+
+function updatePotions() {
+    if (state.invisible > 0) state.invisible--;
+    if (state.tiny > 0) state.tiny--;
+    if (state.giant > 0) {   // 🦍 big feet stomp monsters
+        state.giant--;
+        if (state.giant % 20 === 0) for (const e of targetableEnemies()) if (Math.hypot(e.x - player.x, e.y - player.y) < e.r + 34) { damageEnemy(e, POWER.NONE, false, 1); triggerShake(3); }
+    }
+}
+
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -2352,7 +2454,7 @@ function updateNewPlaces() {
     }
     if (state.room === ROOM.VOLCANO) {
         // Hot lava hurts (unless you fly over it on your dragon)
-        if (state.mount !== 'dragon' && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
+        if (state.mount !== 'dragon' && state.mount !== 'broom' && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
             damagePlayer();
             spawnFloatText(player.x, player.y - 30, 'HOT! 🔥', '#FF6633', 50);
         }
@@ -3362,6 +3464,11 @@ const AWARDS = [
     { id: 'student',     icon: '🎓', name: 'Top of the Class', desc: 'Learn a lesson at School' },
     { id: 'hogwarts',    icon: '🦉', name: 'You\'re a Wizard!', desc: 'Get your Hogwarts letter' },
     { id: 'demigod',     icon: '⚡', name: 'Half God',          desc: 'Be born a demigod' },
+    { id: 'sorted',      icon: '🎩', name: 'Sorted!',           desc: 'Try on the Sorting Hat' },
+    { id: 'potion',      icon: '🧪', name: 'Potion Maker',      desc: 'Mix a potion' },
+    { id: 'ringRace',    icon: '⭕', name: 'Ring Racer',        desc: 'Win a Ring Race' },
+    { id: 'superFart',   icon: '💨', name: 'SUPER FART',        desc: 'Do a Super Fart' },
+    { id: 'chickenRain', icon: '🐔', name: 'Chicken Rain',      desc: 'Catch a falling chicken' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -3427,7 +3534,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -4226,6 +4333,7 @@ function damagePlayer() {
     if (settings.creative) return;   // nothing can hurt you in Creative Mode
     if (fight.jump > 0) return;      // …or while you're up in the air
     if (state.playerInvincible > 0) return;
+    if (state.invisible > 0) return;   // 👻 they can't see you!
     if (state.bubble) {
         // Shield Bubble pops instead of losing a heart
         state.bubble = false;
@@ -4271,7 +4379,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -4421,7 +4529,8 @@ function updatePlayer() {
     if (state.won || state.levelComplete || state.gamePhase !== 'playing') return;
 
     const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1) * mountSpeed() * playerSpeedFactor()
-              * (godPassive('fast') ? 1.3 : 1) * (godSpeedTimer > 0 ? 1.7 : 1);
+              * (godPassive('fast') ? 1.3 : 1) * (godSpeedTimer > 0 ? 1.7 : 1) * (state.house === 'slytherin' ? 1.15 : 1)
+              * (state.tiny > 0 ? 1.4 : state.giant > 0 ? 0.9 : 1);
     let dx = 0, dy = 0;
     if (!state.shopOpen && !state.awardsOpen && !menu) {
         const arrows = !p2.active;   // with 2 players, the arrow keys belong to Player 2
@@ -4459,7 +4568,7 @@ function updatePlayer() {
     // Move, but blocks are solid (try each direction separately so you slide along walls)
     const nx = Math.max(18, Math.min(GAME_W - 18, player.x + dx));
     const ny = Math.max(52, Math.min(GAME_H - 18, player.y + dy));
-    const flying = state.mount === 'dragon' || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
+    const flying = state.mount === 'dragon' || state.mount === 'broom' || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
     if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
     if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
     if (state.mount === 'duck' && (dx || dy) && Math.random() < 0.01) { tone(700, 0.12, 'square', 0.12, 500); spawnFloatText(player.x, player.y - 30, 'QUACK!', '#FFE066', 40); }
@@ -5546,6 +5655,7 @@ function dance() {
 }
 
 // A stinky cloud that hurts monsters right next to you 😂
+const SUPER_FART_CHANCE = 0.25;   // 1 in 4 farts knocks every monster over
 function fart() {
     if (!playing() || state.fartCooldown > 0) return;
     state.fartCooldown = 60;
@@ -5557,6 +5667,16 @@ function fart() {
     }
     for (const e of targetableEnemies()) {
         if (Math.hypot(e.x - player.x, e.y - player.y) < 70) damageEnemy(e, POWER.NONE);
+    }
+    pushAll(50, 120);   // the smell pushes monsters back
+    if (Math.random() < SUPER_FART_CHANCE) {   // 💨💨💨 SUPER FART!
+        pushAll(220, 260); hitAll(1, POWER.NONE, 260); freezeAll(90, 260);
+        for (let i = 0; i < 40; i++) {
+            const a = Math.random() * Math.PI * 2, sp = 1 + Math.random() * 4;
+            particles.push({ x: player.x, y: player.y + 10, dx: Math.cos(a) * sp, dy: Math.sin(a) * sp, life: 70, maxLife: 70, color: ['#9ACD32', '#7FA830', '#C8E070'][i % 3], r: 8 + Math.random() * 10 });
+        }
+        triggerShake(18); tone(70, 0.6, 'sawtooth', 0.25, 40);
+        showToast('💨💨💨 SUPER FART!!! 💨💨💨', '#9ACD32', 150); giveAward('superFart');
     }
     const n = nearbyTownsfolk(100)[0];
     if (n) say(n, ['EWWW! 🤢', 'What is that SMELL?!', 'Pee-yew!'][Math.floor(Math.random() * 3)]);
@@ -5868,6 +5988,13 @@ function nearRaceMaster() {
     return state.room === ROOM.VOID && !state.shopOpen && Math.hypot(player.x - RACE_MASTER.x, player.y - RACE_MASTER.y) < 44;
 }
 
+function raceItems() {
+    return [
+        { icon: '🐾', name: 'Pet Race',  desc: 'Tap fast to make your pet run', cost: 0, status: 'GO!', action: () => { menu = null; startRace(); } },
+        { icon: '⭕', name: 'Ring Race', desc: 'Grab the rings! Friends can race too', cost: 0, status: 'GO!', action: () => { menu = null; startRingRace(); } },
+    ];
+}
+
 function startRace() {
     if (state.activePet < 0) { showToast('🏁 You need a pet to race! Buy one in the Shop.', '#FFCC88', 150); return; }
     const others = PETS.map((p, i) => i).filter(i => i !== state.activePet).sort(() => Math.random() - 0.5).slice(0, 3);
@@ -6006,17 +6133,80 @@ function schoolItems() {
         { icon: '🏰', name: 'Hogwarts', desc: state.hogwarts ? 'Learn magic spells!' : 'Only if an owl brings your letter…',
           cost: state.hogwarts ? 0 : HOGWARTS_LETTER_COST, status: state.hogwarts ? 'YOU GO HERE' : null,
           action: () => {
-              if (state.hogwarts) { openMenu('🏰 HOGWARTS — learn a spell!', hogwartsItems); return; }
+              if (state.hogwarts) { openMenu('🏰 HOGWARTS', hogwartsItems); return; }
               if (!spend(HOGWARTS_LETTER_COST)) return;
               if (Math.random() >= HOGWARTS_LETTER_CHANCE) { showToast('🦉 No letter this time… the owl got lost! Try again!', '#CCBBFF', 180); return; }
               state.hogwarts = true; giveAward('hogwarts'); sfx('found');
               spawnParticles(player.x, player.y, '#FFD700', 30);
               showToast('🦉📜 A LETTER! You got into HOGWARTS! You are a WIZARD!', '#FFD700', 260);
-              openMenu('🏰 HOGWARTS — learn a spell!', hogwartsItems);
+              openMenu('🏰 HOGWARTS', hogwartsItems);
           } },
     ];
 }
+const HOUSES = [
+    { id: 'gryffindor', icon: '🦁', name: 'Gryffindor', color: '#E0503A', bonus: 'Brave: stronger weapons', give: () => { state.weaponLevel++; } },
+    { id: 'slytherin',  icon: '🐍', name: 'Slytherin',  color: '#3ABF6A', bonus: 'Sneaky: run faster',      give: () => {} },
+    { id: 'ravenclaw',  icon: '🦅', name: 'Ravenclaw',  color: '#4A90E0', bonus: 'Clever: spells recharge faster', give: () => {} },
+    { id: 'hufflepuff', icon: '🦡', name: 'Hufflepuff', color: '#F0C030', bonus: 'Kind: healing + a Shield Bubble', give: () => { state.lessons.healing = true; state.bubble = true; } },
+];
+function houseInfo() { return HOUSES.find(h => h.id === state.house); }
+function sortingHat() {
+    const h = HOUSES[Math.floor(Math.random() * HOUSES.length)];
+    state.house = h.id; h.give(); giveAward('sorted'); sfx('found');
+    spawnParticles(player.x, player.y, h.color, 30);
+    showToast(`🎩 Hmm… let me see… ${h.icon} ${h.name.toUpperCase()}! (${h.bonus})`, h.color, 300);
+}
 function hogwartsItems() {
+    const h = houseInfo();
+    return [
+        { icon: '🎩', name: 'The Sorting Hat', desc: h ? `${h.icon} ${h.name}: ${h.bonus}` : 'Which house will you be in?', cost: 0,
+          status: h ? h.name.toUpperCase() : 'TRY IT ON!', action: () => { if (!h) sortingHat(); } },
+        { icon: '🪄', name: 'Spell Class',   desc: 'Learn magic spells',        cost: 0, status: null, action: () => openMenu('🪄 SPELL CLASS', spellClassItems) },
+        { icon: '🧪', name: 'Potion Class',  desc: 'Mix potions from blocks',   cost: 0, status: null, action: () => openMenu('🧪 POTION CLASS', potionItems) },
+        { icon: '🧹', name: 'Broomstick',    desc: 'Fly over everything!',      cost: 40,
+          status: state.mount === 'broom' ? 'RIDING' : state.mounts.broom ? 'OWNED — ride' : null,
+          action: () => {
+              if (!state.mounts.broom && !spend(40)) return;
+              state.mounts.broom = true; state.mount = 'broom'; state.lastMount = 'broom'; menu = null;
+              showToast('🧹 Up you go! Fly over walls and lava!', '#CCAAFF', 180);
+          } },
+        { icon: '🏁', name: 'Broomstick Race', desc: 'Fly through all the rings!', cost: 0, status: 'GO!',
+          action: () => { menu = null; if (state.mounts.broom) { state.mount = 'broom'; state.lastMount = 'broom'; } startRingRace(); } },
+        { icon: '⚔', name: 'Wizard Duel',   desc: 'Fight the Evil Wizard!',    cost: 0, status: 'DUEL!', action: () => { menu = null; startWizardDuel(); } },
+    ];
+}
+function startWizardDuel() {
+    const list = state.room === ROOM.PARADISE ? paradise.ambushers : spawnList();
+    const w = e0('wizard', Math.min(740, player.x + 220), Math.max(120, player.y - 80), { r: 26, coinDrop: 30, teleTimer: 150, spellTimer: 100, emerge: 0 });
+    w.hp = w.maxHp = 20;
+    list.push(w);
+    showToast('⚔ WIZARD DUEL! Use your spells! (R / X / ✨)', '#CC99FF', 200); sfx('laugh');
+}
+
+// 🧪 Potions: mix blocks you've mined
+const POTIONS = [
+    { icon: '👻', name: 'Invisibility', need: { glass: 3, leaves: 2 }, desc: 'Monsters can\'t hurt you', drink: () => { state.invisible = 600; } },
+    { icon: '🦍', name: 'Giant Potion', need: { stone: 4, log: 2 },    desc: 'Grow HUGE and stomp',     drink: () => { state.giant = 900; state.tiny = 0; } },
+    { icon: '🐜', name: 'Tiny Potion',  need: { leaves: 3, dirt: 2 },  desc: 'Shrink and run super fast', drink: () => { state.tiny = 900; state.giant = 0; } },
+    { icon: '❤', name: 'Healing',      need: { leaves: 2, glass: 1 }, desc: 'All your hearts back',    drink: () => { state.playerHp = fullHearts(); } },
+    { icon: '⚡', name: 'Speed Potion', need: { planks: 2, dirt: 3 },  desc: 'Zoom for 10 seconds',     drink: () => { godSpeedTimer = 600; } },
+];
+function potionItems() {
+    const has = need => settings.creative || Object.entries(need).every(([k, v]) => invCount(k) >= v);
+    const needText = need => Object.entries(need).map(([k, v]) => `${v} ${BLOCKS[k].name}`).join(' + ');
+    return POTIONS.map(p => ({
+        icon: p.icon, name: p.name, desc: `${p.desc} · ${needText(p.need)}`, cost: 0, status: has(p.need) ? 'MIX IT!' : null,
+        action: () => {
+            if (!has(p.need)) { showToast(`🧪 You need ${needText(p.need)} (mine some!)`, '#FFAA88', 150); sfx('hurt'); return; }
+            if (!settings.creative) for (const [k, v] of Object.entries(p.need)) state.inv[k] -= v;
+            p.drink(); menu = null; giveAward('potion'); sfx('magic');
+            spawnParticles(player.x, player.y, '#AA66FF', 20);
+            showToast(`${p.icon} Gulp! ${p.name}!`, '#CC99FF', 150);
+        },
+    }));
+}
+
+function spellClassItems() {
     return SPELLS.filter(sp => sp.school).map(sp => ({
         icon: sp.icon, name: sp.name, desc: sp.desc, cost: sp.cost,
         status: state.spell === sp.id ? 'HOLDING' : state.spells[sp.id] ? 'LEARNED — pick' : null,
@@ -6858,7 +7048,7 @@ function drawRaceMaster() {
     ctx.fillText('🏁 Race Master', x, y + 30);
     if (nearRaceMaster()) {
         const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
-        drawSpeech({ x, y }, `${verb}: Start a pet race! 🏁`);
+        drawSpeech({ x, y }, `${verb}: Start a race! 🏁`);
     }
 }
 
@@ -8619,6 +8809,9 @@ function drawPlayer() {
     drawGroundShadow(player.x + (state.mount === 'dragon' ? 12 : 3), player.y + (state.mount === 'dragon' ? 34 : 19), state.mount ? 24 : 16, 5);
     const jumpUp = fight.jump > 0 ? Math.sin((1 - fight.jump / JUMP_FRAMES) * Math.PI) * 60 : 0;
     ctx.save(); ctx.translate(0, -jumpUp);
+    const size = state.giant > 0 ? 1.7 : state.tiny > 0 ? 0.55 : 1;   // 🧪 potions
+    if (size !== 1) { ctx.translate(player.x, player.y); ctx.scale(size, size); ctx.translate(-player.x, -player.y); }
+    if (state.invisible > 0) ctx.globalAlpha = 0.3;
     drawMount();
     if (state.room === ROOM.UNDERWATER) {   // you're in a yellow submarine!
         ctx.save();
@@ -9088,7 +9281,14 @@ function drawHUD() {
     ctx.font = 'bold 17px Arial'; ctx.textAlign = 'left';
     ctx.fillText(`Crystals: ${state.lightCrystals}/3`, 14, 28);
     const god = godParent();
-    if (god) { ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#FFE680'; ctx.fillText(`${god.icon} Child of ${god.name.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}`, 110, 45); }
+    let tagX = 110;
+    if (god) {
+        ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#FFE680';
+        const tag = `${god.icon} Child of ${god.name.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}`;
+        ctx.fillText(tag, tagX, 45); tagX += ctx.measureText(tag).width + 10;
+    }
+    const house = houseInfo();
+    if (house) { ctx.font = 'bold 11px Arial'; ctx.fillStyle = house.color; ctx.fillText(`${house.icon} ${house.name}`, tagX, 45); }
     for (let i = 0; i < 3; i++) {
         drawStar(210 + i * 28, 23, i < state.lightCrystals ? 11 : 7,
             i < state.lightCrystals ? '#FFD700' : '#333');
@@ -9570,6 +9770,7 @@ function update() {
         updateDanceAndFart();
         updateP2();
         updateSpells();
+        updateFunExtras();
         updateFighting();
         updateGadgets();
         updateBlocks();
@@ -9632,6 +9833,7 @@ function draw() {
     drawHeartPickups();
     drawGadgets();
     drawSpells();
+    drawFunExtras();
     drawFighting();
     drawPet();
     drawProjectiles();
