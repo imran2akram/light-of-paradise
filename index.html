@@ -121,7 +121,7 @@ const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secre
                 GREECE: 'greece', MAZE: 'maze', GORGON: 'gorgon', UNDERWORLD: 'underworld', VIKING: 'viking',
                 CANDYVOLCANO: 'candyvolcano', SEACITY: 'seacity', MOONBASE: 'moonbase', CLOUDCASTLE: 'cloudcastle', ICECAVE: 'icecave',
                 TREEHOUSE: 'treehouse', FACTORY: 'factory', TOYSHOP: 'toyshop', MUSEUM: 'museum', UNDERBED: 'underbed',
-                BACKYARD: 'backyard', SECRETROOM: 'secretroom' };
+                BACKYARD: 'backyard', SECRETROOM: 'secretroom', STADIUM: 'stadium', SNOWFORT: 'snowfort' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -218,6 +218,7 @@ const ENEMY_TYPES = {
     bedmonster:{ name: 'Monster Under the Bed', hp: 24, weakTo: POWER.LIGHTNING, color: '#6A3A8A', emoji: '👹' },
     bonesaur:  { name: 'Skeleton Raptor', hp: 4, weakTo: POWER.BRIMSTONE, color: '#EEEEDD', emoji: '🦖', filter: 'grayscale(1) brightness(1.5)' },   // Museum at night
     bonerex:   { name: 'Skeleton T-Rex', hp: 30, weakTo: POWER.BRIMSTONE, color: '#EEEEDD', emoji: '🦖', filter: 'grayscale(1) brightness(1.6)' },
+    snowkid:   { name: 'Snowball Kid', hp: 3,  weakTo: POWER.BRIMSTONE, color: '#AADDFF', emoji: '🧒' },   // Snowball Fight
     penguinpal:{ name: 'Ice Penguin',  hp: 3,  weakTo: POWER.BRIMSTONE, color: '#222233', emoji: '🐧', filter: 'hue-rotate(180deg)' },   // grumpy penguins
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
@@ -1413,6 +1414,7 @@ function handleTap(x, y) {
     }
     if (race) { raceTap(); return true; }
     if (petBattle) { cheerPetBattle(); return true; }
+    if (danceBattle) { danceTap(x, y); return true; }
     if (lastInput !== 'touch' && state.gamePhase === 'playing' && !menu && !state.shopOpen && inRect(x, y, BUILD_BTN)) { toggleBuild(); return true; }
     if (state.awardsOpen) { state.awardsOpen = false; return true; }
     if (menu) {
@@ -2065,6 +2067,11 @@ function tryHeroAction(nearIt) {
             return true;
         }
     }
+    if (state.room === ROOM.MAZE && !P.won && nearIt(MAZE_GOAL, 36) && P.raceTimer > 0) {
+        P.won = true; const secs = Math.ceil(P.raceTimer / 60), prize = 20 + secs; state.coins += prize; giveAward('mazeRace'); sfx('win'); spawnConfettiAt(MAZE_GOAL.x, MAZE_GOAL.y);
+        showToast(`🌀 MAZE RACE DONE with ${secs}s left! +🪙${prize}`, '#FFD700', 240); P.raceTimer = 0;
+        return true;
+    }
     if (state.room === ROOM.MAZE && !P.won && nearIt(MAZE_GOAL, 36)) {
         P.won = true; state.coins += 100; addScore(200); giveAward('maze'); sfx('win'); spawnConfettiAt(MAZE_GOAL.x, MAZE_GOAL.y);
         showToast('🐂 You found the maze treasure! +🪙100 — the door home is open!', '#FFD700', 240);
@@ -2194,6 +2201,11 @@ function moveNewBoss(e, chase) {
     if (e.type === 'minizombie') { chase(0.8); return true; }
     if (['chocoblob', 'snake', 'dustbunny', 'penguinpal'].includes(e.type)) { chase(1.2); return true; }
     if (e.type === 'minibot' || e.type === 'bonesaur') { chase(1.1); return true; }
+    if (e.type === 'snowkid') {   // pops up behind its snow fort and throws snowballs
+        e.x = e.home.x + Math.sin(Date.now() / 700 + e.home.y) * 60;
+        if (Math.random() < 0.012) { enemyShoot(e, 4.5, '#FFFFFF'); spawnFloatText(e.x, e.y - 24, 'Take that!', '#FFFFFF', 40); }
+        return true;
+    }
     if (e.type === 'giant')   { chase(0.6); if (Math.random() < 0.006) { triggerShake(8); spawnFloatText(e.x, e.y - e.r - 10, 'FEE FI FO FUM!', '#FFCC88', 60); } return true; }
     if (e.type === 'bonerex') { chase(0.9); if (Math.random() < 0.008) { spawnFloatText(e.x, e.y - e.r - 10, 'ROOOAR!', '#FFFFFF', 50); sfx('dragonRoar'); triggerShake(6); } return true; }
     if (e.type === 'bedmonster') { chase(0.7); if (Math.random() < 0.01) enemyShoot(e, 4, '#AA66FF', [-0.3, 0, 0.3]); return true; }
@@ -2296,6 +2308,289 @@ function drawGloop() {
         const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
         drawSpeech({ x: GLOOP.x, y: GLOOP.y - 14 }, `${verb}: Give a cookie (🪙${GLOOP_COOKIE}) ${state.gloop || 0}/3`);
     }
+}
+
+// ── MINI-GAMES (at the Race Master): hide & seek, fishing, treasure, football, snowballs, dancing, cooking, maze race, tag, quiz ──
+let miniGame = null;   // the in-world mini-game that's running: { kind, timer, ... }
+function winMiniGame(text, coins) { state.coins += coins; addScore(coins * 2); giveAward('miniGame'); sfx('win'); spawnConfettiAt(player.x, player.y); showToast(`🏆 ${text} +🪙${coins}`, '#FFD700', 240); }
+function miniGameItems() {
+    const go = (icon, name, desc, start) => ({ icon, name, desc, cost: 0, status: 'PLAY!', action: () => { menu = null; start(); } });
+    return [
+        go('🙈', 'Hide & Seek',      'Find 3 kids hiding in Paradise!',      startHideSeek),
+        go('🎣', 'Fishing Contest',  'Catch more fish than Old Tom',         startFishingContest),
+        go('🗺', 'Mega Treasure Hunt', 'Follow 5 clues to big treasure',       () => { if (state.treasure) showToast('🗺 Finish your treasure map first!', '#FFE8A0', 150); else startTreasureMap(5); }),
+        go('⚽', 'Football',         'Score goals past the goalie!',         startFootball),
+        go('☃', 'Snowball Fight',   'Hit all the snowball kids!',           () => { changeRoom(ROOM.SNOWFORT); miniGame = { kind: 'snow' }; showToast('☃ SNOWBALL FIGHT! Hit every kid!', '#AADDFF', 200); }),
+        go('💃', 'Dance Battle',     'Press the arrows in time!',            startDanceBattle),
+        go('👨‍🍳', 'Cooking Contest', 'Cook a dish for the judges',          startCooking),
+        go('🌀', 'Maze Race',        'Get through the maze in 60 seconds',   () => { delete worldBlocks.maze; changeRoom(ROOM.MAZE); place().enemies = []; place().raceTimer = 3600; showToast('🌀 MAZE RACE! Reach the 💰 in 60 seconds!', '#FFE066', 200); }),
+        go('🏃', 'Tag',              activeFriends().length ? 'Don\'t be IT when time runs out!' : 'Catch 4 kids before time runs out', startTag),
+        go('❓', 'Quiz Show',        '5 questions — how many can you get?',  startQuiz),
+    ];
+}
+
+// 🙈 Hide & Seek: 3 kids hide around Paradise; get close to find them
+const HIDE_SPOTS = [[90, 140], [700, 150], [255, 250], [520, 250], [160, 520], [600, 380], [720, 440], [330, 130], [470, 470], [90, 330]];
+function startHideSeek() {
+    changeRoom(ROOM.PARADISE);
+    const spots = [...HIDE_SPOTS].sort(() => Math.random() - 0.5).slice(0, 3);
+    miniGame = { kind: 'hide', timer: 3600, kids: spots.map(([x, y], i) => ({ x, y, found: false, icon: ['🧒', '👧', '👦'][i] })) };
+    showToast('🙈 Ready or not, here I come! Find 3 hiding kids in 60 s!', '#FFE066', 220);
+}
+// 🎣 Fishing contest
+function startFishingContest() {
+    changeRoom(ROOM.PARADISE); player.x = FISH_SPOT.x; player.y = FISH_SPOT.y - 30;
+    miniGame = { kind: 'fish', timer: 3600, start: awards.fish || 0, tom: 2 + Math.floor(Math.random() * 3) };
+    showToast(`🎣 FISHING CONTEST! Old Tom will catch ${miniGame.tom}. Catch more in 60 s!`, '#88CCFF', 240);
+}
+// ⚽ Football: push the ball into the goal on the right
+function startFootball() {
+    changeRoom(ROOM.STADIUM);
+    miniGame = { kind: 'ball', timer: 3600, goals: 0, ball: { x: 400, y: 330, vx: 0, vy: 0 }, keeper: 330 };
+    showToast('⚽ FOOTBALL! Run into the ball to kick it. Score in the goal on the right!', '#FFFFFF', 240);
+}
+// 🏃 Tag
+function startTag() {
+    if (activeFriends().length) {
+        const all = [1, ...activeFriends().map(f => f.n)];
+        miniGame = { kind: 'tag', timer: 2700, it: all[Math.floor(Math.random() * all.length)], cool: 60, friends: true };
+        showToast(`🏃 TAG! Player ${miniGame.it} is IT! Don't be IT at the end!`, '#FFE066', 220);
+    } else {
+        changeRoom(ROOM.PARADISE);
+        miniGame = { kind: 'tag', timer: 2700, runners: [0, 1, 2, 3].map(i => ({ x: 150 + i * 170, y: 150 + (i % 2) * 300, caught: false, icon: ['🧒', '👧', '👦', '🧑'][i] })) };
+        showToast('🏃 TAG! You\'re IT! Catch all 4 kids in 45 s!', '#FFE066', 220);
+    }
+}
+function updateMiniGame() {
+    const G = miniGame;
+    if (!G || !playing()) return;
+    if (G.timer !== undefined && --G.timer <= 0) {
+        miniGame = null;
+        if (G.kind === 'hide')  { const n = G.kids.filter(k => k.found).length; if (n) winMiniGame(`Time's up! You found ${n} kids!`, n * 10); else showToast('🙈 Time\'s up! They hid too well!', '#FFAA88', 200); }
+        if (G.kind === 'fish')  { const n = (awards.fish || 0) - G.start; if (n > G.tom) winMiniGame(`You caught ${n} fish! Old Tom caught ${G.tom}!`, 40); else showToast(`🎣 You caught ${n}, Old Tom caught ${G.tom}. Try again!`, '#FFAA88', 220); }
+        if (G.kind === 'ball')  { if (G.goals) winMiniGame(`Final whistle! You scored ${G.goals} goal${G.goals > 1 ? 's' : ''}!`, G.goals * 15); else showToast('⚽ Final whistle! No goals… try again!', '#FFAA88', 200); }
+        if (G.kind === 'tag')   { if (G.friends) showToast(`🏃 TIME! Player ${G.it} was IT — everyone else WINS!`, '#FFD700', 240); else showToast('🏃 Time\'s up! The kids got away!', '#FFAA88', 200); }
+        return;
+    }
+    if (G.kind === 'hide') {
+        for (const k of G.kids) if (!k.found && Math.hypot(k.x - player.x, k.y - player.y) < 45) { k.found = true; sfx('found'); spawnFloatText(k.x, k.y - 20, 'You found me!', '#FFE066', 70); }
+        if (G.kids.every(k => k.found)) { miniGame = null; winMiniGame('You found everyone!', 40); }
+    }
+    if (G.kind === 'ball') {
+        const b = G.ball, kickers = [{ x: player.x, y: player.y }, ...activeFriends()];
+        for (const k of kickers) {
+            const d = Math.hypot(b.x - k.x, b.y - k.y);
+            if (d < 26 && d > 0) { b.vx = (b.x - k.x) / d * 8; b.vy = (b.y - k.y) / d * 8; sfx('boing'); }
+        }
+        b.x += b.vx; b.y += b.vy; b.vx *= 0.97; b.vy *= 0.97;
+        if (b.y < 90 || b.y > 570) { b.vy *= -1; b.y = Math.max(90, Math.min(570, b.y)); }
+        if (b.x < 30) { b.vx *= -1; b.x = 30; }
+        G.keeper += Math.sign(b.y - G.keeper) * Math.min(2.2, Math.abs(b.y - G.keeper));   // the goalie follows the ball
+        G.keeper = Math.max(270, Math.min(390, G.keeper));
+        if (b.x > 740 && Math.abs(b.y - G.keeper) < 26) { b.vx = -Math.abs(b.vx) - 3; spawnFloatText(740, G.keeper - 30, 'SAVED!', '#FFFFFF', 40); }
+        if (b.x > 770) {
+            if (b.y > 260 && b.y < 400) { G.goals++; giveAward('goal'); sfx('win'); spawnConfettiAt(760, b.y); showToast('⚽ GOOOOOAL!!!', '#FFE066', 120); }
+            Object.assign(b, { x: 400, y: 330, vx: 0, vy: 0 });
+        }
+    }
+    if (G.kind === 'snow' && state.room === ROOM.SNOWFORT && place().enemies.every(e => !e.alive)) { miniGame = null; winMiniGame('You won the SNOWBALL FIGHT!', 40); }
+    if (G.kind === 'tag') {
+        if (G.friends) {
+            if (G.cool > 0) { G.cool--; return; }
+            const players = [{ n: 1, x: player.x, y: player.y }, ...activeFriends()];
+            const it = players.find(p => p.n === G.it);
+            const caught = it && players.find(p => p.n !== G.it && Math.hypot(p.x - it.x, p.y - it.y) < 30);
+            if (caught) { G.it = caught.n; G.cool = 60; sfx('boing'); showToast(`🏃 TAG! Player ${G.it} is IT!`, '#FFE066', 90); }
+        } else {
+            for (const r of G.runners) {
+                if (r.caught) continue;
+                const d = Math.hypot(r.x - player.x, r.y - player.y) || 1;
+                if (d < 26) { r.caught = true; sfx('found'); spawnFloatText(r.x, r.y - 20, 'Tagged!', '#FFE066', 60); continue; }
+                if (d < 160) { r.x += (r.x - player.x) / d * 2.3; r.y += (r.y - player.y) / d * 2.3; }   // run away!
+                r.x += Math.sin(Date.now() / 400 + r.y) * 0.6;
+                r.x = Math.max(30, Math.min(770, r.x)); r.y = Math.max(70, Math.min(570, r.y));
+            }
+            if (G.runners.every(r => r.caught)) { miniGame = null; winMiniGame('You tagged everyone!', 40); }
+        }
+    }
+}
+function drawMiniGame() {
+    if (state.room === ROOM.STADIUM || state.room === ROOM.SNOWFORT) {
+        ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', SUBPLACE_EXIT.x, 556);
+    }
+    const G = miniGame;
+    if (!G) return;
+    const t = Date.now() / 1000;
+    const emoji = (e, x, y, size) => { ctx.save(); ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); ctx.restore(); };
+    if (G.kind === 'hide') for (const k of G.kids) {
+        if (k.found) emoji(k.icon, k.x, k.y, 26);
+        else if (Math.sin(t * 2 + k.x) > 0.95) emoji('👀', k.x, k.y, 12);   // a tiny peek…
+    }
+    if (G.kind === 'ball') {
+        ctx.fillStyle = '#FFF'; ctx.fillRect(776, 260, 6, 140); ctx.fillRect(740, 260, 40, 4); ctx.fillRect(740, 396, 40, 4);
+        emoji('🧤', 752, G.keeper, 26);
+        emoji('⚽', G.ball.x, G.ball.y, 22);
+    }
+    if (G.kind === 'tag' && !G.friends) for (const r of G.runners) if (!r.caught) emoji(r.icon, r.x, r.y + Math.sin(t * 10 + r.x) * 2, 24);
+    if (G.kind === 'tag' && G.friends) {
+        const it = G.it === 1 ? player : activeFriends().find(f => f.n === G.it);
+        if (it) { ctx.fillStyle = '#FF4444'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('IT!', it.x, it.y - 40); }
+    }
+    const info = { hide: () => `🙈 Found ${G.kids.filter(k => k.found).length}/3`, fish: () => `🎣 You: ${(awards.fish || 0) - G.start}  ·  Old Tom: ${G.tom}`,
+                   ball: () => `⚽ Goals: ${G.goals}`, snow: () => `☃ Kids left: ${place() ? place().enemies.filter(e => e.alive).length : 0}`,
+                   tag: () => G.friends ? `🏃 Player ${G.it} is IT!` : `🏃 Tagged ${G.runners.filter(r => r.caught).length}/4` }[G.kind];
+    ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(290, 76, 220, 22);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(info() + (G.timer !== undefined ? `  ·  ⏰ ${Math.ceil(G.timer / 60)}s` : ''), 400, 92); ctx.restore();
+}
+function paintStadium(g, R) {
+    for (let x = 0; x < 800; x += 50) { g.fillStyle = (x / 50) % 2 ? '#4AA04A' : '#56B056'; g.fillRect(x, 46, 50, 554); }
+    g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 3;
+    g.strokeRect(20, 80, 760, 500); g.beginPath(); g.moveTo(400, 80); g.lineTo(400, 580); g.stroke();
+    g.beginPath(); g.arc(400, 330, 60, 0, Math.PI * 2); g.stroke(); g.strokeRect(660, 230, 120, 200);
+    g.fillStyle = '#8A7A6A'; g.fillRect(0, 46, 800, 30);
+    for (let x = 6; x < 800; x += 12) { g.fillStyle = `hsl(${R() * 360}, 60%, 55%)`; g.beginPath(); g.arc(x, 60, 5, 0, Math.PI * 2); g.fill(); }
+}
+function paintSnowfort(g, R) {
+    g.fillStyle = '#EEF6FF'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 600; i++) { g.fillStyle = `rgba(${200 + R() * 55},${220 + R() * 35},255,0.7)`; g.fillRect(R() * 800, R() * 600, 3, 3); }
+    for (const [x, y] of [[200, 190], [400, 160], [600, 190], [300, 290]]) { g.fillStyle = '#FFFFFF'; g.beginPath(); g.ellipse(x, y, 70, 18, 0, 0, Math.PI * 2); g.fill(); g.strokeStyle = '#C8DDEE'; g.lineWidth = 2; g.stroke(); }
+}
+
+// 🌀 Maze race timer
+function updateMazeRace() {
+    if (state.room !== ROOM.MAZE || !place() || !(place().raceTimer > 0) || !playing()) return;
+    if (--place().raceTimer === 0) showToast('🌀 Time\'s up! Try the Maze Race again!', '#FFAA88', 200);
+}
+function drawMazeRace() {
+    if (state.room !== ROOM.MAZE || !place() || !(place().raceTimer > 0)) return;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(330, 50, 140, 22);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center'; ctx.fillText(`🌀 ⏰ ${Math.ceil(place().raceTimer / 60)}s`, 400, 66);
+}
+
+// 💃 Dance Battle: arrows come up — press that way in time!
+const DANCE_DIRS = [['⬅', -1, 0], ['➡', 1, 0], ['⬆', 0, -1], ['⬇', 0, 1]];
+let danceBattle = null;
+function startDanceBattle() {
+    danceBattle = { moves: Array.from({ length: 12 }, () => Math.floor(Math.random() * 4)), i: 0, t: 0, score: 0, dj: 7 + Math.floor(Math.random() * 4), result: 0, last: null, msg: 'GET READY!', wait: 90 };
+    sfx('bite');
+}
+function danceInputDir() {
+    let x = padMove.x, y = padMove.y;
+    if (keys['ArrowLeft'] || keys['KeyA']) x = -1; if (keys['ArrowRight'] || keys['KeyD']) x = 1;
+    if (keys['ArrowUp'] || keys['KeyW']) y = -1;   if (keys['ArrowDown'] || keys['KeyS']) y = 1;
+    if (vTouch.joyId !== null) { x = vTouch.joyDX; y = vTouch.joyDY; }
+    if (Math.abs(x) < 0.5 && Math.abs(y) < 0.5) return -1;
+    return Math.abs(x) > Math.abs(y) ? (x < 0 ? 0 : 1) : (y < 0 ? 2 : 3);
+}
+function danceJudge(dir) {
+    const D = danceBattle;
+    if (!D || D.result || D.wait > 0 || D.i >= D.moves.length) return;
+    if (dir === D.moves[D.i]) { D.score++; D.msg = D.t < 25 ? 'PERFECT! ⭐' : 'GOOD!'; sfx('coin'); }
+    else { D.msg = 'OOPS!'; sfx('hurt'); }
+    D.i++; D.t = 0;
+}
+function danceTap(x, y) {   // on a phone: tap left/right/top/bottom of the screen
+    const dx = x - 400, dy = y - 300;
+    danceJudge(Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 0 : 1) : (dy < 0 ? 2 : 3));
+}
+function updateDanceBattle() {
+    const D = danceBattle;
+    if (D.result) { if (--D.result === 0) danceBattle = null; return; }
+    if (D.wait > 0) { D.wait--; if (D.wait === 0) D.msg = 'GO!'; return; }
+    const dir = danceInputDir();
+    if (dir >= 0 && D.last < 0) danceJudge(dir);
+    D.last = dir;
+    if (D.i < D.moves.length && ++D.t > 70) { D.msg = 'TOO SLOW!'; D.i++; D.t = 0; }   // missed it
+    if (D.i >= D.moves.length) {
+        D.result = 200;
+        if (D.score > D.dj) { D.msg = `🏆 YOU WIN! ${D.score} vs DJ Dancey's ${D.dj}! +🪙40`; state.coins += 40; giveAward('miniGame'); sfx('win'); }
+        else D.msg = `DJ Dancey wins ${D.dj} to ${D.score}… dance again!`;
+    }
+}
+function drawDanceBattle() {
+    const D = danceBattle;
+    if (!D) return;
+    const t = Date.now() / 1000;
+    ctx.save();
+    ctx.fillStyle = 'rgba(20,0,40,0.85)'; ctx.fillRect(0, 0, 800, 600);
+    for (let k = 0; k < 12; k++) { ctx.fillStyle = `hsla(${(k * 30 + t * 120) % 360}, 90%, 60%, 0.25)`; ctx.beginPath(); ctx.arc(70 + k * 60, 520, 26, 0, Math.PI * 2); ctx.fill(); }   // disco floor
+    ctx.fillStyle = '#FF66FF'; ctx.font = 'bold 26px Arial'; ctx.textAlign = 'center'; ctx.fillText('💃 DANCE BATTLE 🕺', 400, 120);
+    ctx.font = '16px Arial'; ctx.fillStyle = '#FFF'; ctx.fillText(`You: ${D.score}   ·   DJ Dancey: ${D.dj}   ·   Move ${Math.min(D.i + 1, D.moves.length)}/${D.moves.length}`, 400, 150);
+    if (D.i < D.moves.length && !D.result) {
+        const ring = 1 - D.t / 70;
+        ctx.strokeStyle = '#FFE066'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(400, 300, 40 + ring * 60, 0, Math.PI * 2); ctx.stroke();
+        ctx.font = '70px Arial'; ctx.textBaseline = 'middle'; ctx.fillText(D.wait > 0 ? '🎵' : DANCE_DIRS[D.moves[D.i]][0], 400, 300);
+        ctx.font = '30px Arial'; for (let k = 1; k <= 3 && D.i + k < D.moves.length; k++) ctx.fillText(DANCE_DIRS[D.moves[D.i + k]][0], 400 + k * 80, 300);
+    }
+    ctx.textBaseline = 'alphabetic'; ctx.font = 'bold 22px Arial'; ctx.fillStyle = '#FFE066'; ctx.fillText(D.msg, 400, 410);
+    ctx.font = '12px Arial'; ctx.fillStyle = '#DDD';
+    ctx.fillText(lastInput === 'pad' ? 'Push the stick or D-pad that way!' : lastInput === 'touch' ? 'Tap that side of the screen!' : 'Press the arrow keys (or WASD)!', 400, 445);
+    const bounce = Math.abs(Math.sin(t * 6)) * 12;
+    ctx.font = '50px Arial'; ctx.fillText('🕺', 160, 330 - bounce); ctx.fillText('💃', 640, 330 - (12 - bounce));
+    ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#FFF'; ctx.fillText('YOU', 160, 370); ctx.fillText('DJ Dancey', 640, 370);
+    ctx.restore();
+}
+
+// 👨‍🍳 Cooking Contest: pick a dish and two toppings; three judges give marks
+const DISHES   = [['🍕', 'Pizza'], ['🍰', 'Cake'], ['🍜', 'Soup'], ['🥪', 'Sandwich']];
+const TOPPINGS = [['🍓', 'Strawberries'], ['🧀', 'Cheese'], ['🍫', 'Chocolate'], ['🌶', 'Chilli'], ['🍌', 'Banana'], ['🥦', 'Broccoli'], ['🐟', 'Fish'], ['🍬', 'Sweets']];
+const YUMMY = { Pizza: ['Cheese', 'Chilli', 'Fish'], Cake: ['Strawberries', 'Chocolate', 'Banana', 'Sweets'], Soup: ['Broccoli', 'Fish', 'Chilli', 'Cheese'], Sandwich: ['Cheese', 'Banana', 'Strawberries'] };
+let cooking = null;
+function startCooking() { cooking = { dish: null, tops: [] }; openMenu('👨‍🍳 PICK YOUR DISH', cookingItems); }
+function cookingItems() {
+    if (!cooking.dish) return DISHES.map(([icon, name]) => ({ icon, name, desc: 'Cook this!', cost: 0, status: null, action: () => { cooking.dish = name; openMenu(`👨‍🍳 ${name.toUpperCase()}: PICK 2 TOPPINGS`, cookingItems); } }));
+    return TOPPINGS.map(([icon, name]) => ({ icon, name, desc: cooking.tops.includes(name) ? 'Added!' : 'Add it!', cost: 0, status: cooking.tops.includes(name) ? '✅' : null,
+        action: () => {
+            if (cooking.tops.includes(name)) return;
+            cooking.tops.push(name);
+            if (cooking.tops.length < 2) return;
+            menu = null;
+            const good = cooking.tops.filter(tp => YUMMY[cooking.dish].includes(tp)).length;
+            const judges = ['Chef Pierre', 'Granny Rose', 'Little Sam'].map(j => [j, Math.min(10, 3 + good * 3 + Math.floor(Math.random() * 3))]);
+            const total = judges.reduce((a, [, n]) => a + n, 0);
+            const icon = DISHES.find(d => d[1] === cooking.dish)[0];
+            const words = good === 2 ? 'DELICIOUS!' : good === 1 ? 'Not bad!' : 'Ewww… 🤢';
+            if (total >= 21) winMiniGame(`${icon} ${words} ${judges.map(([j, n]) => `${j}: ${n}`).join(' · ')}`, 30);
+            else showToast(`${icon} ${words} ${judges.map(([j, n]) => `${j}: ${n}`).join(' · ')} — need 21 to win!`, '#FFAA88', 300);
+        } }));
+}
+
+// ❓ Quiz Show
+const QUIZ = [
+    ['How many legs does a spider have?', '8', ['6', '10']],
+    ['What colour do you get mixing blue and yellow?', 'Green', ['Purple', 'Orange']],
+    ['What is the biggest planet?', 'Jupiter', ['Earth', 'Mars']],
+    ['How many days are in a week?', '7', ['5', '10']],
+    ['What do bees make?', 'Honey', ['Milk', 'Jam']],
+    ['Which animal says "moo"?', 'A cow', ['A dog', 'A duck']],
+    ['What is frozen water called?', 'Ice', ['Steam', 'Sand']],
+    ['How many sides does a triangle have?', '3', ['4', '5']],
+    ['What is 5 + 5?', '10', ['9', '55']],
+    ['Which is the fastest land animal?', 'Cheetah', ['Snail', 'Elephant']],
+    ['What do caterpillars turn into?', 'Butterflies', ['Frogs', 'Birds']],
+    ['In this game, what beats Fire Monsters?', 'Ice', ['Fire', 'Lightning']],
+    ['Who is the Teacher in Paradise?', 'The school teacher', ['A dragon', 'The Devil']],
+    ['What is 3 × 4?', '12', ['7', '34']],
+    ['Which ocean animal has 8 arms?', 'Octopus', ['Shark', 'Whale']],
+];
+let quiz = null;
+function startQuiz() { quiz = { qs: [...QUIZ].sort(() => Math.random() - 0.5).slice(0, 5), i: 0, right: 0 }; openMenu(quizTitle(), quizItems); }
+function quizTitle() { return `❓ Q${quiz.i + 1}/5: ${quiz.qs[quiz.i][0]}`; }
+function quizItems() {
+    const [, right, wrong] = quiz.qs[quiz.i];
+    if (!quiz.shuffled || quiz.shuffled.q !== quiz.i) quiz.shuffled = { q: quiz.i, a: [right, ...wrong].sort(() => Math.random() - 0.5) };
+    return quiz.shuffled.a.map(a => ({ icon: '❓', name: a, desc: 'Is it this?', cost: 0, status: null,
+        action: () => {
+            if (a === right) { quiz.right++; sfx('coin'); spawnFloatText(player.x, player.y - 40, '✅ Right!', '#88FF88', 50); }
+            else { sfx('hurt'); spawnFloatText(player.x, player.y - 40, `❌ It was ${right}`, '#FF8888', 70); }
+            quiz.i++;
+            if (quiz.i < 5) { openMenu(quizTitle(), quizItems); return; }
+            menu = null;
+            if (quiz.right >= 3) winMiniGame(`QUIZ CHAMPION! ${quiz.right}/5 right!`, quiz.right * 10);
+            else showToast(`❓ You got ${quiz.right}/5. Get 3 to win — try again!`, '#FFAA88', 220);
+        } }));
 }
 
 // ── HOME & BUILDING: the backyard builder and the secret room ──
@@ -2752,8 +3047,8 @@ function updatePotions() {
     }
 }
 
-function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); updateRides(); updateYard(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); drawRides(); drawYard(); drawSecretRoom2(); }
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); updateRides(); updateYard(); updateMiniGame(); updateMazeRace(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); drawRides(); drawYard(); drawSecretRoom2(); drawMiniGame(); drawMazeRace(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -3587,6 +3882,10 @@ const SUBPLACES = {
 };
 const FACTORY_BELTS = [160, 330, 500];   // conveyor belts push you sideways
 const LOST_TOYS = ['🧸', '🚗', '🧦', '🎲', '🪀'];
+// Mini-game places (their code is in the MINI-GAMES section)
+PLACES.stadium  = { name: '⚽ THE STADIUM',      spawn: [200, 330], make: () => ({ enemies: [], coins: [] }) };
+PLACES.snowfort = { name: '☃ SNOWBALL FIGHT!',  spawn: [400, 520],
+    make: () => ({ coins: [], enemies: [[200, 160], [400, 130], [600, 160], [300, 260]].map(([x, y]) => e0('snowkid', x, y, { coinDrop: 3, emerge: 0 })) }) };
 for (const [id, sp] of Object.entries(SUBPLACES)) {
     PLACES[id] = { name: sp.name, spawn: [400, 520],
         make: () => ({ coins: [], prize: false, night: id === 'museum' ? 1200 : 0, enemies: sp.enemies(),
@@ -3939,6 +4238,7 @@ function place(room = state.room) { return placeState[room]; }
 // Walking into the special exits
 function updatePlaceExits() {
     const near = (o, r = 30) => Math.hypot(player.x - o.x, player.y - o.y) < r;
+    if ((state.room === ROOM.STADIUM || state.room === ROOM.SNOWFORT) && near(SUBPLACE_EXIT, 26)) { miniGame = null; changeRoom(ROOM.VOID); player.x = RACE_MASTER.x - 60; player.y = RACE_MASTER.y; return true; }
     for (const [id, sp] of Object.entries(SUBPLACES)) {
         if (state.room === sp.parent && near(sp.door, 26)) { changeRoom(id); showToast(`${sp.name} — find all ${sp.count} ${sp.item}!`, '#FFE066', 220); return true; }
         if (state.room === id && near(SUBPLACE_EXIT, 26)) { changeRoom(sp.parent); player.x = sp.door.x; player.y = sp.door.y - 50; return true; }
@@ -3982,8 +4282,8 @@ const TREASURE_SPOTS = [
 ];
 const TREASURE_HITS = 3;
 
-function startTreasureMap() {
-    const spots = [...TREASURE_SPOTS].sort(() => Math.random() - 0.5).slice(0, 3);
+function startTreasureMap(clues = 3) {
+    const spots = [...TREASURE_SPOTS].sort(() => Math.random() - 0.5).slice(0, Math.min(clues, TREASURE_SPOTS.length));
     state.treasure = { spots, step: 0, hits: 0 };
     showToast(`🗺 CLUE 1: ${spots[0].clue}!`, '#FFE8A0', 300);
 }
@@ -4440,6 +4740,8 @@ const PORTALS = {
     underbed: [],
     backyard: [],
     secretroom: [],
+    stadium: [],
+    snowfort: [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
     toy:     [{ x: 740, y: 120, shape: 'star'    }],
     pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
@@ -4650,7 +4952,7 @@ function musicTick() {
     const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell'
                   : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship', chess: 'mall', library: 'underground',
                        greece: 'heaven', maze: 'underground', gorgon: 'underground', underworld: 'hell', viking: 'ship',
-                       ...Object.fromEntries(Object.entries(SUBPLACES).map(([id, sp]) => [id, sp.song])) })[state.room] || state.room;
+                       ...Object.fromEntries(Object.entries(SUBPLACES).map(([id, sp]) => [id, sp.song])), stadium: 'paradise', snowfort: 'ice' })[state.room] || state.room;
     const song = playing ? SONGS[songKey] : null;
     if (!song) { musicRoom = null; return; }
     const now = audioCtx.currentTime;
@@ -4789,6 +5091,9 @@ const AWARDS = [
     { id: 'royal',       icon: '🏰', name: 'King of the Castle', desc: 'Sit on your castle throne' },
     { id: 'rollercoaster', icon: '🎢', name: 'Wheee!',          desc: 'Ride your rollercoaster' },
     { id: 'secretRoom',  icon: '🕵', name: 'Secret Agent',      desc: 'Find the secret room in your house' },
+    { id: 'miniGame',    icon: '🎪', name: 'Game Champ',        desc: 'Win a mini-game' },
+    { id: 'mazeRace',    icon: '🌀', name: 'Maze Racer',        desc: 'Finish a Maze Race in time' },
+    { id: 'goal',        icon: '⚽', name: 'GOOOAL!',           desc: 'Score a goal' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -7375,6 +7680,7 @@ function raceItems() {
         { icon: '🐾', name: 'Pet Race',  desc: 'Tap fast to make your pet run', cost: 0, status: 'GO!', action: () => { menu = null; startRace(); } },
         { icon: '⭕', name: 'Ring Race', desc: 'Grab the rings! Friends can race too', cost: 0, status: 'GO!', action: () => { menu = null; startRingRace(); } },
         { icon: '🐾', name: 'Pet Battle', desc: 'Your pet vs a wild pet! Tap to cheer', cost: 0, status: 'GO!', action: () => { menu = null; startPetBattle(); } },
+        { icon: '🎪', name: 'Mini-Games', desc: 'Football, tag, quiz, dancing and more!', cost: 0, status: 'LOOK →', action: () => openMenu('🎪 MINI-GAMES', miniGameItems) },
         { icon: '⚔', name: 'Friend Battle', desc: 'Bonk your friends! Last one standing wins', cost: 0, status: activeFriends().length ? 'FIGHT!' : 'NEEDS 2', action: () => { menu = null; startBattle(); } },
     ];
 }
@@ -9877,7 +10183,7 @@ function roomBackground(room) {
                            underwater: paintUnderwater, dino: paintDino, volcano: paintVolcano, jungle: paintJungle,
                            toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity, camp: paintCamp, olympus: paintOlympus, piratecove: paintPirateCove, chess: paintChess, library: paintLibrary,
                            greece: paintGreece, maze: paintMaze, gorgon: paintGorgon, underworld: paintUnderworld, viking: paintViking,
-                           ...Object.fromEntries(Object.entries(SUBPLACES).map(([id, sp]) => [id, sp.paint])) };
+                           ...Object.fromEntries(Object.entries(SUBPLACES).map(([id, sp]) => [id, sp.paint])), stadium: paintStadium, snowfort: paintSnowfort };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
@@ -11201,6 +11507,7 @@ function update() {
     if (state.gamePhase === 'intro') return;
     if (race) { updateRace(); updateParticles(); return; }   // everything waits while you race
     if (petBattle) { updatePetBattle(); updateParticles(); return; }
+    if (danceBattle) { updateDanceBattle(); updateParticles(); return; }
 
     if (settings.creative) {   // Creative Mode: coins never run out (your real coins are kept safe)
         if (state.coinsBackup === undefined) state.coinsBackup = state.coins;
@@ -11308,6 +11615,7 @@ function draw() {
     drawToast();
     drawRace();
     drawPetBattle();
+    drawDanceBattle();
     if (state.levelComplete) drawLevelComplete();
     if (state.won)           drawWin();
 
