@@ -117,7 +117,8 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
 const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secret', UNDERGROUND: 'underground', HEAVEN: 'heaven', HOUSE: 'house',
                 SHIP: 'ship', CANDY: 'candy', ICE: 'ice', HAUNTED: 'haunted', SKY: 'sky', SPACE: 'space', ARENA: 'arena', MALL: 'mall',
                 UNDERWATER: 'underwater', DINO: 'dino', VOLCANO: 'volcano', JUNGLE: 'jungle',
-                TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity', CAMP: 'camp', OLYMPUS: 'olympus', PIRATECOVE: 'piratecove', CHESS: 'chess', LIBRARY: 'library' };
+                TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity', CAMP: 'camp', OLYMPUS: 'olympus', PIRATECOVE: 'piratecove', CHESS: 'chess', LIBRARY: 'library',
+                GREECE: 'greece', MAZE: 'maze', GORGON: 'gorgon', UNDERWORLD: 'underworld', VIKING: 'viking' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -189,6 +190,12 @@ const ENEMY_TYPES = {
     knight:    { name: 'Chess Knight', hp: 4,  weakTo: POWER.ICE,       color: '#333333', emoji: '♞' },
     rook:      { name: 'Chess Castle', hp: 5,  weakTo: POWER.WATER,     color: '#333333', emoji: '♜' },
     queen:     { name: 'Chess Queen',  hp: 25, weakTo: POWER.LIGHTNING, color: '#333333', emoji: '♛' },   // Wizard Chess boss
+    hydra:     { name: 'The Hydra',    hp: 30, weakTo: POWER.BRIMSTONE, color: '#3A8A4A', emoji: '🐲' },   // Greek Island boss: cut a head, two grow back!
+    hydrahead: { name: 'Hydra Head',   hp: 2,  weakTo: POWER.BRIMSTONE, color: '#3A8A4A', emoji: '🐍' },
+    medusa:    { name: 'Medusa',       hp: 28, weakTo: POWER.LIGHTNING, color: '#6A9A5A', emoji: '👸' },   // her stare turns you to stone!
+    minotaur:  { name: 'The Minotaur', hp: 30, weakTo: POWER.ICE,       color: '#8A5A3A', emoji: '🐂' },   // lives in the maze
+    cerberus:  { name: 'Cerberus',     hp: 32, weakTo: POWER.WATER,     color: '#442222', emoji: '🐕' },   // three-headed guard dog of the Underworld
+    troll:     { name: 'Troll',        hp: 6,  weakTo: POWER.BRIMSTONE, color: '#6A7A5A', emoji: '🧌' },   // Viking Island
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
@@ -872,6 +879,7 @@ const MOUNTS = [
     { id: 'broom',  icon: '🧹', name: 'Broomstick',        cost: 0,  speed: 1.9, desc: 'Wizards only — fly over everything!', hidden: true },
     { id: 'surf',   icon: '🏄', name: 'Lava Surfboard',    cost: 0,  speed: 1.5, desc: 'Find it at the Volcano — surf the lava!', hidden: true },
     { id: 'trex',   icon: '🦖', name: 'T-Rex',             cost: 0,  speed: 1.5, desc: 'Tame it on Dinosaur Island — STOMP!', hidden: true },
+    { id: 'pegasus', icon: '🪽', name: 'Pegasus',          cost: 0,  speed: 2.0, desc: 'The flying horse of the Greek Island!', hidden: true },
 ];
 
 function mountItems() {
@@ -899,11 +907,13 @@ function mountSpeed() { const m = MOUNTS.find(m => m.id === state.mount); return
 // Drawn under the player
 function drawMount() {
     if (!state.mount) return;
-    const emojiMount = { broom: '🧹', surf: '🏄', trex: '🦖', car: '🚗' }[state.mount];
+    const emojiMount = { broom: '🧹', surf: '🏄', trex: '🦖', car: '🚗', pegasus: '🐎' }[state.mount];
     if (emojiMount) {   // newer rides are drawn with a big emoji under you
         ctx.save(); ctx.font = state.mount === 'trex' ? '52px Arial' : '34px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.translate(player.x, player.y + (state.mount === 'trex' ? 4 : 14)); if (state.faceX > 0) ctx.scale(-1, 1);
-        ctx.fillText(emojiMount, 0, 0); ctx.restore();
+        ctx.fillText(emojiMount, 0, 0);
+        if (state.mount === 'pegasus') { ctx.font = '22px Arial'; ctx.fillText('🪽', 4, -14 + Math.sin(Date.now() / 90) * 3); }
+        ctx.restore();
         return;
     }
     const t = Date.now(), x = player.x, y = player.y + 12, f = state.faceX < 0 ? -1 : 1;
@@ -960,6 +970,7 @@ const GADGETS = [
     { id: 'banana',    name: 'Banana Peels',      icon: '🍌', cost: 10, cooldown: 40,  desc: 'Drop a peel — monsters slip over!' },
     { id: 'cloak',     name: 'Invisibility Cloak', icon: '🧥', cost: 60, cooldown: 900, desc: 'Vanish! Nothing can hurt you for 10 s' },
     { id: 'map',       name: 'Magic Map',         icon: '🗺', cost: 30, cooldown: 600, desc: 'Shows where every monster is' },
+    { id: 'mjolnir',   name: "Thor's Hammer",     icon: '🔨', cost: 80, cooldown: 50,  desc: 'Throw it — lightning! — it comes back' },
 ];
 const ARROWS = [
     { kind: 'fire', power: POWER.BRIMSTONE, color: '#FF5522', label: '🔥 Fire arrow' },
@@ -1188,6 +1199,10 @@ let state = {
     wands:              {},
     creature:           null,            // 🐣 magic creature you look after
     creatureFood:       0,               // 0-100, goes down slowly
+    trials:             {},              // ⚡ hero trials beaten (hydra, minotaur, medusa, cerberus)
+    fleece:             false,           // 🐑 the Golden Fleece
+    fullGod:            false,           // finished every hero trial!
+    stoned:             0,               // 🗿 frames left as a statue
     questsDone:         0,
     invisible:          0,               // 🧪 potion timers
     giant:              0,
@@ -1654,6 +1669,7 @@ function olympusGods() {
     return ids.map((id, i) => ({ ...GOD_PARENTS.find(g => g.id === id), x: 140 + i * 104, y: i % 2 ? 230 : 200 }));
 }
 function talkToGod(g) {
+    if (g.id === 'zeus') { openMenu('⚡ ZEUS: THE HERO TRIALS', trialItems); return; }
     const P = place();
     if (P.blessed[g.id]) { showToast(`${g.icon} ${g.name}: "Come back another time, little hero!"`, '#FFE8A0', 150); return; }
     P.blessed[g.id] = true;
@@ -1936,6 +1952,200 @@ function updateMagicExtras() {
 }
 updateMagicExtras.owl = 0;
 
+// ── HEROES: Greek Island, the maze, Medusa, the Underworld, Vikings, the Sphinx, Hero Trials ──
+const FLEECE      = { x: 680, y: 140 };   // on the Greek Island, guarded by the Hydra
+const PEGASUS     = { x: 400, y: 150 };
+const MAZE_DOOR   = { x: 250, y: 230 };
+const GORGON_DOOR = { x: 700, y: 430 };
+const CHARON      = { x: 460, y: 530 };   // the boat to the Underworld
+const MAZE_GOAL   = { x: 768, y: 96 };    // treasure in the far corner of the maze
+const MAZE_START  = { x: 48, y: 528 };    // where you come in (and can give up)
+const VIKING_CHEST = { x: 680, y: 480 };
+const SPHINX      = { x: 400, y: 500 };   // in the Desert Pyramid
+const HERO_TRIALS = [
+    { type: 'hydra',    text: 'Beat the Hydra (Greek Island)' },
+    { type: 'minotaur', text: 'Beat the Minotaur (the maze)' },
+    { type: 'medusa',   text: 'Beat Medusa (her temple)' },
+    { type: 'cerberus', text: 'Beat Cerberus (the Underworld)' },
+];
+const RIDDLES = [
+    ['What has hands but can\'t clap?',              'A clock',  ['A monkey', 'A glove']],
+    ['What gets wetter the more it dries?',          'A towel',  ['Water', 'A fish']],
+    ['What goes up but never comes down?',           'Your age', ['A balloon', 'A bird']],
+    ['What has legs but can\'t walk?',               'A table',  ['A snake', 'A dog']],
+    ['What can you catch but not throw?',            'A cold',   ['A ball', 'A fish']],
+    ['What has one eye but can\'t see?',             'A needle', ['A pirate', 'A cyclops']],
+    ['What has a neck but no head?',                 'A bottle', ['A giraffe', 'A snake']],
+    ['What is full of holes but still holds water?', 'A sponge', ['A bucket', 'A net']],
+];
+
+// The maze is rebuilt every visit: 11 × 7 rooms, walls of stone blocks between them
+function makeMazeBlocks() {
+    const b = {}, W = 11, H = 7, seen = new Set(), put = (cx, cy) => { b[cellKey(cx, cy)] = { type: 'brick', hits: 0 }; };
+    const walls = new Set();
+    for (let cx = 0; cx <= 3 * W; cx++) for (let cy = 2; cy <= 3 + 3 * H; cy++) walls.add(cellKey(cx, cy));
+    const open = (i, j) => { for (let dx = 1; dx <= 2; dx++) for (let dy = 1; dy <= 2; dy++) walls.delete(cellKey(3 * i + dx, 2 + 3 * j + dy)); };
+    const stack = [[0, H - 1]]; seen.add('0,' + (H - 1)); open(0, H - 1);
+    while (stack.length) {
+        const [i, j] = stack[stack.length - 1];
+        const next = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([di, dj]) => [i + di, j + dj, di, dj])
+            .filter(([a, c]) => a >= 0 && a < W && c >= 0 && c < H && !seen.has(a + ',' + c));
+        if (!next.length) { stack.pop(); continue; }
+        const [a, c, di, dj] = next[Math.floor(Math.random() * next.length)];
+        seen.add(a + ',' + c); open(a, c);
+        for (let k = 1; k <= 2; k++) {   // knock down the wall between the two rooms
+            if (di) walls.delete(cellKey(3 * Math.max(i, a), 2 + 3 * j + k));
+            else    walls.delete(cellKey(3 * i + k, 2 + 3 * Math.max(j, c)));
+        }
+        stack.push([a, c]);
+    }
+    for (const k of walls) { const [cx, cy] = k.split(',').map(Number); put(cx, cy); }
+    return b;
+}
+
+function tryHeroAction(nearIt) {
+    const P = place();
+    if (state.room === ROOM.GREECE) {
+        if (nearIt(FLEECE, 44) && !state.fleece) {
+            if (P.enemies.some(e => e.alive && e.type === 'hydra')) { showToast('🐲 The Hydra guards the Golden Fleece! Beat it first!', '#FFAA88', 180); return true; }
+            state.fleece = true; state.armor = (state.armor || 0) + 1; state.playerHp = fullHearts(); giveAward('fleece'); sfx('win'); spawnConfettiAt(FLEECE.x, FLEECE.y);
+            showToast('🐑✨ THE GOLDEN FLEECE! You get an extra heart forever!', '#FFD700', 260);
+            return true;
+        }
+        if (nearIt(PEGASUS, 50) && !state.mounts.pegasus) {
+            if (!state.fleece) { showToast('🪽 Pegasus only lets heroes with the Golden Fleece ride!', '#FFFFFF', 200); return true; }
+            state.mounts.pegasus = true; state.mount = 'pegasus'; state.lastMount = 'pegasus'; giveAward('pegasus'); sfx('win');
+            showToast('🪽 PEGASUS likes you! Fly, hero, FLY!', '#FFFFFF', 220);
+            return true;
+        }
+        if (nearIt(CHARON, 44)) {
+            changeRoom(ROOM.UNDERWORLD); showToast('💀 Charon rows you across the dark river to the UNDERWORLD…', '#CCAAFF', 220); sfx('groan');
+            return true;
+        }
+    }
+    if (state.room === ROOM.MAZE && !P.won && nearIt(MAZE_GOAL, 36)) {
+        P.won = true; state.coins += 100; addScore(200); giveAward('maze'); sfx('win'); spawnConfettiAt(MAZE_GOAL.x, MAZE_GOAL.y);
+        showToast('🐂 You found the maze treasure! +🪙100 — the door home is open!', '#FFD700', 240);
+        return true;
+    }
+    if (state.room === ROOM.MAZE && ((P.won && nearIt(MAZE_GOAL, 36)) || nearIt(MAZE_START, 22))) { changeRoom(ROOM.GREECE); player.x = MAZE_DOOR.x; player.y = MAZE_DOOR.y + 50; return true; }
+    if (state.room === ROOM.VIKING && !P.chestOpen && nearIt(VIKING_CHEST, 40)) {
+        P.chestOpen = true; const loot = 60 + Math.floor(Math.random() * 60); state.coins += loot; state.inv.iron = invCount('iron') + 3;
+        giveAward('viking'); sfx('found'); spawnParticles(VIKING_CHEST.x, VIKING_CHEST.y, '#FFD700', 30);
+        showToast(`🛶 VIKING TREASURE! +🪙${loot} and 3 iron!`, '#FFD700', 220);
+        return true;
+    }
+    if (state.room === ROOM.PYRAMID && nearIt(SPHINX, 50)) {
+        if (P.riddled) { showToast('🦁 Sphinx: "One riddle a visit, little one!"', '#FFE8A0', 160); return true; }
+        const [q, right, wrong] = RIDDLES[Math.floor(Math.random() * RIDDLES.length)];
+        const answers = [right, ...wrong].sort(() => Math.random() - 0.5);
+        P.riddled = true;
+        openMenu(`🦁 ${q}`, () => answers.map(a => ({ icon: '❓', name: a, desc: 'Is it this?', cost: 0, status: null,
+            action: () => {
+                menu = null;
+                if (a === right) { state.coins += 50; addScore(100); giveAward('riddle'); sfx('win'); showToast(`🦁 "CORRECT! It's ${right.toLowerCase()}!" +🪙50`, '#FFD700', 220); }
+                else { sfx('hurt'); showToast(`🦁 "WRONG! It was ${right.toLowerCase()}!" Come back and try again!`, '#FFAA88', 220); }
+            } })));
+        return true;
+    }
+    return false;
+}
+
+function trialItems() {
+    const done = HERO_TRIALS.filter(tr => state.trials[tr.type]).length;
+    const items = HERO_TRIALS.map(tr => ({ icon: state.trials[tr.type] ? '✅' : '⚔', name: tr.text, desc: state.trials[tr.type] ? 'Done! Great job!' : 'Not yet…', cost: 0,
+                                          status: state.trials[tr.type] ? 'DONE' : null, action: () => {} }));
+    items.push({ icon: '🌟', name: state.fullGod ? 'You are a GOD!' : 'Become a GOD', desc: state.fullGod ? 'Zeus is proud of you!' : `Finish all 4 trials (${done}/4)`, cost: 0,
+        status: state.fullGod ? 'GOD' : done === 4 ? 'NOW!' : null,
+        action: () => {
+            if (state.fullGod || done < 4) return;
+            state.fullGod = true; state.armor = (state.armor || 0) + 2; state.playerHp = fullHearts(); menu = null;
+            giveAward('fullGod'); sfx('win'); spawnConfettiAt(player.x, player.y); triggerShake(20);
+            showToast('🌟⚡ ZEUS: "You passed every trial. You are now a GOD!" (+2 hearts forever) ⚡🌟', '#FFD700', 320);
+        } });
+    items.push({ icon: '🙏', name: 'Ask for a blessing', desc: 'Zeus gives you a little gift', cost: 0, status: null,
+        action: () => { menu = null; const P = place(); if (P.blessed.zeus) { showToast('⚡ ZEUS: "Come back another time!"', '#FFE8A0', 150); return; } P.blessed.zeus = true; state.coins += 15; godSpeedTimer = 600; showToast('⚡ Zeus blesses you: +🪙15 and super speed!', '#FFE8A0', 180); } });
+    return items;
+}
+
+function paintGreece(g, R) {
+    g.fillStyle = '#C8D890'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 700; i++) { g.fillStyle = `hsla(${70 + R() * 30}, 40%, ${55 + R() * 15}%, 0.5)`; g.fillRect(R() * 800, R() * 600, 3, 3); }
+    const sea = g.createLinearGradient(0, 520, 0, 600); sea.addColorStop(0, '#4AA0E0'); sea.addColorStop(1, '#2A70B0');
+    g.fillStyle = sea; g.fillRect(380, 555, 420, 45);
+    for (const [x, y] of [[90, 120], [740, 300], [150, 330]]) {   // olive trees
+        g.fillStyle = '#7A5A3A'; g.fillRect(x - 4, y, 8, 26); g.fillStyle = '#6A8A4A'; g.beginPath(); g.arc(x, y - 4, 22, 0, Math.PI * 2); g.fill();
+    }
+    g.fillStyle = '#8A6A3A'; g.fillRect(FLEECE.x - 5, FLEECE.y, 10, 60);                      // the fleece tree
+    g.fillStyle = '#4A7A3A'; g.beginPath(); g.arc(FLEECE.x, FLEECE.y - 6, 36, 0, Math.PI * 2); g.fill();
+}
+function paintMaze(g, R) {
+    g.fillStyle = '#B8A888'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 600; i++) { g.fillStyle = `rgba(${120 + R() * 40},${100 + R() * 30},70,0.4)`; g.fillRect(R() * 800, R() * 600, 4, 3); }
+}
+function paintGorgon(g, R) {
+    g.fillStyle = '#4A5A4A'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 500; i++) { g.fillStyle = `rgba(${60 + R() * 30},${80 + R() * 30},60,0.5)`; g.fillRect(R() * 800, R() * 600, 6, 4); }
+    for (const [x, y] of [[100, 150], [700, 150], [120, 420], [680, 420], [250, 480], [560, 480]]) {   // people Medusa turned to stone!
+        g.fillStyle = '#9A9A9A'; g.beginPath(); g.arc(x, y - 18, 8, 0, Math.PI * 2); g.fill(); g.fillRect(x - 8, y - 10, 16, 24); g.fillRect(x - 12, y + 14, 24, 6);
+    }
+}
+function paintUnderworld(g, R) {
+    g.fillStyle = '#1A1020'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 500; i++) { g.fillStyle = `rgba(${40 + R() * 40},${20 + R() * 20},${50 + R() * 40},0.6)`; g.fillRect(R() * 800, R() * 600, 5, 4); }
+    g.fillStyle = 'rgba(80,200,120,0.25)'; g.fillRect(0, 545, 800, 55);   // the glowing river
+}
+function paintViking(g, R) {
+    g.fillStyle = '#DDE8EE'; g.fillRect(0, 0, 800, 600);
+    for (let i = 0; i < 700; i++) { g.fillStyle = `rgba(${200 + R() * 55},${210 + R() * 45},255,0.6)`; g.fillRect(R() * 800, R() * 600, 3, 3); }
+    for (const [x, y] of [[90, 140], [720, 160], [140, 330], [740, 380]]) {   // pine trees
+        g.fillStyle = '#5A3A2A'; g.fillRect(x - 3, y + 10, 6, 14); g.fillStyle = '#2E5A3A'; g.beginPath(); g.moveTo(x, y - 30); g.lineTo(x - 18, y + 12); g.lineTo(x + 18, y + 12); g.fill();
+    }
+    g.fillStyle = '#7A4A2A'; g.fillRect(330, 60, 140, 60); g.fillStyle = '#4A2A1A'; g.beginPath(); g.moveTo(320, 62); g.lineTo(400, 30); g.lineTo(480, 62); g.fill();   // mead hall
+}
+
+function drawHeroPlaces(t, label, verb) {
+    const P = place();
+    const emoji = (e, x, y, size) => { ctx.save(); ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); ctx.restore(); };
+    const door = (o, text) => { ctx.fillStyle = '#3A2A1A'; ctx.fillRect(o.x - 18, o.y - 26, 36, 46); ctx.fillStyle = '#1A1008'; ctx.fillRect(o.x - 12, o.y - 18, 24, 38); label(text, o.x, o.y + 32, '#222'); };
+    const near = (o, r) => Math.hypot(player.x - o.x, player.y - o.y) < r && !menu;
+    if (state.room === ROOM.GREECE) {
+        if (!state.fleece) { ctx.save(); ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 18; emoji('🐑', FLEECE.x, FLEECE.y + 10 + Math.sin(t * 2) * 2, 26); ctx.restore(); label('✨ Golden Fleece', FLEECE.x, FLEECE.y + 42, '#8A6A00'); }
+        if (!state.mounts.pegasus) { emoji('🐎', PEGASUS.x, PEGASUS.y + Math.sin(t * 2) * 3, 40); emoji('🪽', PEGASUS.x + 6, PEGASUS.y - 18 + Math.sin(t * 6) * 3, 22); label('Pegasus', PEGASUS.x, PEGASUS.y + 32, '#444'); }
+        door(MAZE_DOOR, '🐂 The Maze');
+        ctx.fillStyle = '#EEE8DA'; ctx.fillRect(GORGON_DOOR.x - 30, GORGON_DOOR.y - 40, 60, 10); for (const dx of [-24, 18]) ctx.fillRect(GORGON_DOOR.x + dx, GORGON_DOOR.y - 30, 6, 46);
+        door(GORGON_DOOR, '🐍 Medusa\'s Temple');
+        emoji('🛶', CHARON.x, CHARON.y + Math.sin(t * 2) * 2, 34); emoji('💀', CHARON.x + 4, CHARON.y - 18, 18); label('Charon\'s boat to the Underworld', CHARON.x, CHARON.y + 26, '#223');
+        if (near(FLEECE, 44) && !state.fleece) drawSpeech({ x: FLEECE.x, y: FLEECE.y }, `${verb}: Take the Fleece!`);
+        if (near(PEGASUS, 50) && !state.mounts.pegasus) drawSpeech({ x: PEGASUS.x, y: PEGASUS.y - 20 }, `${verb}: Ride Pegasus!`);
+        if (near(CHARON, 44)) drawSpeech({ x: CHARON.x, y: CHARON.y - 20 }, `${verb}: Cross the river`);
+    }
+    if (state.room === ROOM.MAZE) {
+        ctx.save(); ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 16; emoji(P.won ? '🚪' : '💰', MAZE_GOAL.x, MAZE_GOAL.y, 28); ctx.restore();
+        if (near(MAZE_GOAL, 36)) drawSpeech({ x: MAZE_GOAL.x, y: MAZE_GOAL.y - 10 }, P.won ? `${verb}: Go home` : `${verb}: Grab the treasure!`);
+        emoji('🚪', MAZE_START.x, MAZE_START.y + 10, 18);
+        if (near(MAZE_START, 22)) drawSpeech({ x: MAZE_START.x + 30, y: MAZE_START.y - 10 }, `${verb}: Leave the maze`);
+    }
+    if (state.room === ROOM.GORGON || state.room === ROOM.UNDERWORLD) {
+        ctx.fillStyle = '#3A2A1A'; ctx.fillRect(SCHOOL_EXIT.x - 24, 560, 48, 40); label(state.room === ROOM.GORGON ? '🚪 Back outside' : '🛶 Row back', SCHOOL_EXIT.x, 556, '#FFF');
+    }
+    if (state.room === ROOM.VIKING && !P.chestOpen) {
+        emoji('🧰', VIKING_CHEST.x, VIKING_CHEST.y, 30); label('Viking treasure!', VIKING_CHEST.x, VIKING_CHEST.y + 26, '#223');
+        if (near(VIKING_CHEST, 40)) drawSpeech({ x: VIKING_CHEST.x, y: VIKING_CHEST.y - 14 }, `${verb}: Open it!`);
+    }
+    if (state.room === ROOM.PYRAMID) {
+        emoji('🦁', SPHINX.x, SPHINX.y, 40); label('The Sphinx', SPHINX.x, SPHINX.y + 30, '#FFE8A0');
+        if (near(SPHINX, 50)) drawSpeech({ x: SPHINX.x, y: SPHINX.y - 20 }, P.riddled ? 'One riddle a visit!' : `${verb}: Answer a riddle!`);
+    }
+}
+function drawHeroAura() {
+    if (state.stoned > 0) { ctx.save(); ctx.fillStyle = 'rgba(150,150,150,0.7)'; ctx.beginPath(); ctx.arc(player.x, player.y, 20, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+    if (state.fullGod && state.gamePhase === 'playing') {   // 🌟 gods glow
+        ctx.save(); ctx.strokeStyle = `rgba(255,215,0,${0.4 + Math.sin(Date.now() / 200) * 0.2})`; ctx.lineWidth = 3; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 16;
+        ctx.beginPath(); ctx.arc(player.x, player.y, 26, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    }
+}
+
 // 🤝 Team-up: two players shoot at nearly the same time, close together → MEGA BLAST
 const TEAMUP_WINDOW = 300, TEAMUP_RANGE = 140, TEAMUP_COOLDOWN = 5000;
 let lastP1Shot = 0, lastTeamUp = 0;
@@ -2089,7 +2299,7 @@ function updatePotions() {
 }
 
 function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -2671,7 +2881,7 @@ const PLACES = {
 const ARENA_GATE  = { x: 270, y: 545 };
 const ARENA_EXIT  = { x: 400, y: 578 };
 const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon',
-                     'wizard', 'mummyking', 'candymonster', 'bigdevil', 'queen'];
+                     'wizard', 'mummyking', 'candymonster', 'bigdevil', 'queen', 'hydra', 'medusa', 'minotaur', 'cerberus'];
 const BOSS_RUSH   = [
     () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
     () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
@@ -2733,6 +2943,18 @@ const MALL_SHOPS = [
 ];
 PLACES.mall = { name: '🏬 THE MALL', spawn: [400, 500], make: () => ({ enemies: [], coins: [] }) };
 // Demigod Camp, Mount Olympus and Pirate Island (their code is in the WORLD 2 section)
+// ⚡ Greek Island and its secret places (code in the HEROES section)
+PLACES.greece = { name: '🏛 THE GREEK ISLAND', spawn: [120, 470], island: true,
+    make: () => ({ coins: [], enemies: [e0('hydra', 600, 230, { r: 36, coinDrop: 30, nextSplit: 24 }), e0('hydrahead', 420, 300, { r: 13 })] }) };
+PLACES.maze = { name: '🐂 THE MINOTAUR MAZE', spawn: [48, 528],
+    make: () => ({ coins: [], won: false, enemies: [e0('minotaur', 600, 200, { r: 26, coinDrop: 30, chargeTimer: 200, charge: 0, emerge: 0 })] }) };
+PLACES.gorgon = { name: '🐍 MEDUSA\'S TEMPLE', spawn: [400, 520],
+    make: () => ({ coins: [], enemies: [e0('medusa', 400, 200, { r: 30, coinDrop: 30, gazeTimer: 260 }), e0('hydrahead', 250, 300, { r: 13 }), e0('hydrahead', 550, 300, { r: 13 })] }) };
+PLACES.underworld = { name: '💀 THE UNDERWORLD', spawn: [400, 520],
+    make: () => ({ coins: [], enemies: [e0('skeleton', 200, 250), e0('skeleton', 600, 250), e0('skeleton', 400, 350), e0('cerberus', 400, 170, { r: 34, coinDrop: 30, fireTimer: 150 })] }) };
+PLACES.viking = { name: '🛶 VIKING ISLAND', spawn: [120, 470], island: true,
+    make: () => ({ coins: [], chestOpen: false,
+                   enemies: [e0('troll', 300, 250), e0('troll', 550, 400), e0('troll', 650, 200), e0('frostgiant', 450, 170, { r: 40, coinDrop: 25, stompTimer: 160 })] }) };
 PLACES.chess = { name: '♟ WIZARD CHESS', spawn: [400, 540],
     make: () => ({ coins: [], won: false,
                    enemies: [...[0, 1, 2, 3, 4, 5].map(i => e0('pawn', 150 + i * 100, 220, { r: 16 })),
@@ -2853,6 +3075,7 @@ function tryPlaceAction() {
         return true;
     }
     if (state.room === ROOM.CAMP && nearIt(QUEST_BOARD)) { openMenu('📜 QUEST BOARD', questItems); return true; }
+    if (tryHeroAction(nearIt)) return true;
     if (state.room === ROOM.LIBRARY && !place().bookTaken && nearIt(GOLDEN_BOOK, 36)) {
         place().bookTaken = true; giveAward('spellbook'); sfx('found'); spawnParticles(GOLDEN_BOOK.x, GOLDEN_BOOK.y, '#FFD700', 30);
         const unknown = SPELLS.filter(sp => sp.school && !state.spells[sp.id]);
@@ -2933,7 +3156,7 @@ function updateNewPlaces() {
     }
     if (state.room === ROOM.VOLCANO) {
         // Hot lava hurts (unless you fly over it on your dragon)
-        if (!['dragon', 'broom', 'surf', 'car'].includes(state.mount) && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
+        if (!['dragon', 'broom', 'surf', 'car', 'pegasus'].includes(state.mount) && LAVA_RIVERS.some(r => inRectXY(player.x, player.y + 12, r)) && state.playerInvincible === 0) {
             damagePlayer();
             spawnFloatText(player.x, player.y - 30, 'HOT! 🔥', '#FF6633', 50);
         }
@@ -3063,6 +3286,7 @@ function drawNewPlaces() {
     const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
     drawWorld2(t, P, label, verb);
     drawMagicPlaces(t, label, verb);
+    drawHeroPlaces(t, label, verb);
     if (state.room === ROOM.TOY) {
         ctx.fillStyle = '#6B3E1E'; ctx.fillRect(TOY_EXIT.x - 24, 560, 48, 40);
         label('🚪 Back to the Mall', TOY_EXIT.x, 556, '#223');
@@ -3174,6 +3398,9 @@ function updatePlaceExits() {
     if (state.room === ROOM.TOY && near(TOY_EXIT, 26))       { changeRoom(ROOM.MALL); player.x = 460; player.y = 300; return true; }
     if (state.room === ROOM.VOID && near(MALL_DOOR, 24))     { changeRoom(ROOM.MALL); showToast('🏬 Welcome to the Mall! Walk up to a shop.', '#FFE066', 160); return true; }
     if (state.room === ROOM.MALL && near(MALL_EXIT, 26))     { changeRoom(ROOM.VOID); player.x = MALL_DOOR.x + 40; player.y = MALL_DOOR.y + 50; return true; }
+    if (state.room === ROOM.GREECE && near(MAZE_DOOR, 26))    { delete worldBlocks.maze; changeRoom(ROOM.MAZE); showToast('🐂 THE MAZE! Find the treasure… and watch out for the MINOTAUR!', '#FFAA66', 220); return true; }
+    if (state.room === ROOM.GREECE && near(GORGON_DOOR, 26))  { changeRoom(ROOM.GORGON); showToast('🐍 Medusa\'s temple! When she says DON\'T LOOK — turn away!', '#88FF88', 240); return true; }
+    if ([ROOM.GORGON, ROOM.UNDERWORLD].includes(state.room) && near(SCHOOL_EXIT, 26)) { const back = state.room === ROOM.GORGON ? GORGON_DOOR : CHARON; changeRoom(ROOM.GREECE); player.x = back.x; player.y = back.y - 50; return true; }
     if ((state.room === ROOM.CHESS || state.room === ROOM.LIBRARY) && near(SCHOOL_EXIT, 26)) { changeRoom(ROOM.PARADISE); player.x = 254; player.y = 290; return true; }
     if (state.room === ROOM.CAMP && near(CAMP_EXIT, 26))      { changeRoom(ROOM.MALL); player.x = 620; player.y = 300; return true; }
     if (state.room === ROOM.CAMP && near(OLYMPUS_STAIRS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
@@ -3270,6 +3497,9 @@ function sailItems() {
         trip(ROOM.JUNGLE,  '🐒', 'Vines, traps and a golden idol'),
         trip(ROOM.PYRAMID, '🏜', 'Mummies, scarabs and secret rooms'),
         trip(ROOM.PIRATECOVE, '🏴‍☠️', 'Buried treasure and a GHOST SHIP'),
+        trip(ROOM.GREECE,  '🏛', 'The Hydra, Pegasus, Medusa and a maze!'),
+        { icon: '🛶', name: 'Viking Longship', desc: 'Row to Viking Island — trolls and treasure', cost: 0, status: 'ROW!',
+          action: () => { menu = null; changeRoom(ROOM.VIKING); showToast('🛶 HEAVE! HO! You rowed the Viking longship to Viking Island!', '#AADDFF', 220); } },
         { icon: '🟡', name: 'Submarine Dive', desc: 'Sharks, jellyfish and a Giant Octopus', cost: 0, status: 'DIVE!',
           action: () => { menu = null; changeRoom(ROOM.UNDERWATER); showToast('🟡 Diving down in the yellow submarine! 🌊', '#88DDFF', 180); giveAward('diver'); } },
     ];
@@ -3640,6 +3870,11 @@ const PORTALS = {
     piratecove: [],
     chess:   [],
     library: [],
+    greece:  [],
+    maze:    [],
+    gorgon:  [],
+    underworld: [],
+    viking:  [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
     toy:     [{ x: 740, y: 120, shape: 'star'    }],
     pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
@@ -3848,7 +4083,8 @@ function musicTick() {
     if (!audioCtx || muted || !settings.music) return;
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
     const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell'
-                  : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship', chess: 'mall', library: 'underground' })[state.room] || state.room;
+                  : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship', chess: 'mall', library: 'underground',
+                       greece: 'heaven', maze: 'underground', gorgon: 'underground', underworld: 'hell', viking: 'ship' })[state.room] || state.room;
     const song = playing ? SONGS[songKey] : null;
     if (!song) { musicRoom = null; return; }
     const now = audioCtx.currentTime;
@@ -3973,6 +4209,12 @@ const AWARDS = [
     { id: 'combo',       icon: '✨', name: 'Magic Combo',       desc: 'Do a magic combo' },
     { id: 'creature',    icon: '🐣', name: 'Creature Keeper',   desc: 'Adopt a magic creature' },
     { id: 'spellbook',   icon: '📕', name: 'Secret Spell Book', desc: 'Find the book in the Haunted Library' },
+    { id: 'fleece',      icon: '🐑', name: 'Golden Fleece',     desc: 'Take the Golden Fleece from the Hydra' },
+    { id: 'pegasus',     icon: '🪽', name: 'Pegasus Rider',     desc: 'Ride Pegasus' },
+    { id: 'maze',        icon: '🐂', name: 'Maze Master',       desc: 'Find the treasure in the Minotaur Maze' },
+    { id: 'riddle',      icon: '🦁', name: 'Riddle Solver',     desc: 'Answer the Sphinx\'s riddle' },
+    { id: 'viking',      icon: '🛶', name: 'Viking Gold',       desc: 'Open the Viking treasure chest' },
+    { id: 'fullGod',     icon: '🌟', name: 'YOU ARE A GOD!',    desc: 'Finish all the Hero Trials' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -4038,7 +4280,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -4320,6 +4562,7 @@ function makeWorldBlocks(room) {
     const R = Math.random;
     const clear = (x, y) => (PORTALS[room] || []).every(p => Math.hypot(p.x - x, p.y - y) > PORTAL_R + 30)
         && Math.hypot(x - 100, y - 300) > 70 && Math.hypot(x - 400, y - 300) > 70;
+    if (room === 'maze') return makeMazeBlocks();
     if (room === 'paradise') {
         for (const [tx, ty] of [[13, 15], [29, 16]]) {   // block trees: a log with leaves all around
             for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) put(tx + dx, ty + dy, dx || dy ? 'leaves' : 'log');
@@ -4884,7 +5127,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -5052,6 +5295,7 @@ function updatePlayer() {
         // Controller stick (analog — push a little to walk slowly)
         dx += padMove.x; dy += padMove.y;
     }
+    if (state.stoned > 0) { state.stoned--; dx = dy = 0; }   // 🗿 turned to stone by Medusa
     const len = Math.hypot(dx, dy);
     if (len > 1) { dx /= len; dy /= len; }   // diagonals aren't faster
     if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; state.walkPhase += 0.32; }   // remember which way you're going
@@ -5073,7 +5317,7 @@ function updatePlayer() {
     // Move, but blocks are solid (try each direction separately so you slide along walls)
     const nx = Math.max(18, Math.min(GAME_W - 18, player.x + dx));
     const ny = Math.max(52, Math.min(GAME_H - 18, player.y + dy));
-    const flying = ['dragon', 'broom', 'car'].includes(state.mount) || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
+    const flying = ['dragon', 'broom', 'car', 'pegasus'].includes(state.mount) || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
     if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
     if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
     if (state.mount === 'duck' && (dx || dy) && Math.random() < 0.01) { tone(700, 0.12, 'square', 0.12, 500); spawnFloatText(player.x, player.y - 30, 'QUACK!', '#FFE066', 40); }
@@ -5251,6 +5495,7 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
         dropLoot(e);
         countStat('kills');
         questProgress(BOSS_TYPES.includes(e.type) ? ['kills', 'boss'] : ['kills']);
+        if (HERO_TRIALS.some(tr => tr.type === e.type) && !state.trials[e.type]) { state.trials[e.type] = true; showToast(`⚡ HERO TRIAL DONE: you beat ${ENEMY_TYPES[e.type].name.toUpperCase()}! (tell Zeus on Olympus)`, '#FFD700', 240); }
         if (e.type === 'king') giveAward('king');
         if (e.type === 'ghostking' || e.type === 'dragon' || e.type === 'shadow') giveAward(e.type);
         if (e.type === 'monkey' && e.stolen) showToast(`🐒 You got your coins back — and more! (+${e.coinDrop})`, '#FFE066', 150);
@@ -5383,6 +5628,36 @@ function moveEnemy(e) {
         return;
     }
     if (e.type === 'queen')  { chase(1.0); if (Math.random() < 0.012) enemyShoot(e, 4.5, '#AA66FF', [-0.3, 0, 0.3]); return; }
+    if (e.type === 'hydrahead') { chase(1.4); return; }
+    if (e.type === 'troll')  { chase(0.7); return; }
+    if (e.type === 'hydra') {   // every few hits, two new heads pop out
+        chase(0.4);
+        if (e.hp <= e.nextSplit) {
+            e.nextSplit -= 6;
+            spawnList().push(e0('hydrahead', e.x - 40, e.y + 20, { emerge: 0, r: 13 }), e0('hydrahead', e.x + 40, e.y + 20, { emerge: 0, r: 13 }));
+            spawnFloatText(e.x, e.y - e.r - 14, 'TWO HEADS GREW BACK!', '#88FF88', 80); sfx('hiss');
+        }
+        if (Math.random() < 0.01) enemyShoot(e, 4, '#66DD44', [-0.2, 0.2]);
+        return;
+    }
+    if (e.type === 'minotaur') {   // charges at you!
+        if (--e.chargeTimer <= 0) { e.chargeTimer = 200; e.charge = 30; const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 6; e.dy = Math.sin(a) * 6; spawnFloatText(e.x, e.y - e.r - 10, 'SNORT!', '#FFAA66', 50); }
+        if (e.charge > 0) { e.charge--; e.x += e.dx; e.y += e.dy; e.x = Math.max(30, Math.min(770, e.x)); e.y = Math.max(70, Math.min(570, e.y)); }
+        else chase(1.0);
+        return;
+    }
+    if (e.type === 'medusa') {   // 👁 her stare turns you to stone — unless you look away!
+        chase(0.5);
+        if (--e.gazeTimer === 90) { spawnFloatText(e.x, e.y - e.r - 14, '👁 DON\'T LOOK AT ME!', '#88FF88', 90); sfx('hiss'); }
+        if (e.gazeTimer <= 0) {
+            e.gazeTimer = 260;
+            const dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy) || 1;
+            if ((state.faceX * dx + state.faceY * dy) / d > 0.3 && d < 450 && !state.invisible) { state.stoned = 120; showToast('🗿 You looked at Medusa! You\'re STONE for 2 seconds!', '#AAAAAA', 150); sfx('freeze'); }
+            else spawnFloatText(player.x, player.y - 34, 'Phew! You looked away!', '#AAFFAA', 60);
+        }
+        return;
+    }
+    if (e.type === 'cerberus') { chase(0.8); if (--e.fireTimer <= 0) { e.fireTimer = 150; enemyShoot(e, 4, '#FF5522', [-0.3, 0, 0.3]); sfx('bark'); } return; }
     if (e.type === 'pirate')   { chase(1.3); return; }
     if (e.type === 'windup') {   // zooms in a straight line, then stops to wind up again
         if (--e.windTimer <= 0) { e.windTimer = 110; const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 4.5; e.dy = Math.sin(a) * 4.5; }
@@ -6238,7 +6513,10 @@ function useGadget() {
     const g = GADGETS.find(g => g.id === state.gadget);
     const aim = aimPoint();
     const a = Math.atan2(aim.y - player.y, aim.x - player.x);
-    if (g.id === 'cloak') {
+    if (g.id === 'mjolnir') {
+        gadgetObjs.push({ kind: 'boomerang', hammer: true, x: player.x, y: player.y, vx: Math.cos(a) * 10, vy: Math.sin(a) * 10, t: 0, hits: new Set() });
+        sfx('whoosh');
+    } else if (g.id === 'cloak') {
         state.invisible = 600; spawnParticles(player.x, player.y, '#AACCFF', 20); sfx('magic');
         showToast('🧥 You vanished! Nothing can hurt you!', '#AACCFF', 150);
     } else if (g.id === 'map') {
@@ -6317,7 +6595,8 @@ function updateGadgets() {
             for (const e of targetableEnemies()) {
                 if (o.hits.has(e) || Math.hypot(e.x - o.x, e.y - o.y) > e.r + 12) continue;
                 o.hits.add(e);
-                damageEnemy(e, POWER.NONE, false, 1 + state.weaponLevel - 1);
+                if (o.hammer) { bolts.push({ x1: e.x + 10, y1: 50, x2: e.x, y2: e.y, life: 12 }); damageEnemy(e, POWER.LIGHTNING, false, 2 + state.weaponLevel - 1); sfx('zap'); }
+                else damageEnemy(e, POWER.NONE, false, 1 + state.weaponLevel - 1);
             }
             if (o.t > 150) gadgetObjs.splice(i, 1);
         } else if (o.kind === 'bomb') {
@@ -6412,7 +6691,10 @@ function drawGadgets() {
     const t = Date.now() / 1000;
     for (const o of gadgetObjs) {
         ctx.save();
-        if (o.kind === 'boomerang') {
+        if (o.kind === 'boomerang' && o.hammer) {
+            ctx.translate(o.x, o.y); ctx.rotate(o.t * 0.5); ctx.font = '26px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.shadowColor = '#AADDFF'; ctx.shadowBlur = 16; ctx.fillText('🔨', 0, 0);
+        } else if (o.kind === 'boomerang') {
             ctx.translate(o.x, o.y); ctx.rotate(o.t * 0.5);
             ctx.strokeStyle = '#C8843A'; ctx.lineWidth = 5; ctx.lineCap = 'round';
             ctx.beginPath(); ctx.moveTo(-10, 6); ctx.lineTo(0, -6); ctx.lineTo(10, 6); ctx.stroke();
@@ -7900,7 +8182,9 @@ function drawEmojiEnemy(e, t) {
     ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = e.hitFlash > 0 ? '#FF3333' : '#222';
     ctx.translate(e.x, e.y + bob);
     if (e.type === 'book') ctx.scale(1, 0.7 + Math.abs(Math.sin(t * 10)) * 0.3);   // flap flap
-    ctx.fillText(info.emoji, 0, 0);
+    if (e.type === 'cerberus') { ctx.font = `${size * 0.7}px Arial`; ctx.fillText('🐕', -e.r * 0.7, 4); ctx.fillText('🐕', e.r * 0.7, 4); ctx.fillText('🐕', 0, -e.r * 0.5); }   // three heads!
+    else ctx.fillText(info.emoji, 0, 0);
+    if (e.type === 'medusa') { ctx.font = `${e.r * 0.7}px Arial`; for (let k = 0; k < 5; k++) ctx.fillText('🐍', Math.cos(k * 0.8 - 1.6 - 0.4) * e.r * 0.9, -e.r * 0.6 + Math.sin(k * 0.8 - 2) * e.r * 0.5 + Math.sin(t * 6 + k) * 2); }
     ctx.restore();
 }
 
@@ -8982,7 +9266,8 @@ function roomBackground(room) {
         const painters = { hell: paintHell, paradise: paintParadise, underground: paintUnderground, void: paintVoidFog, heaven: paintHeaven, house: paintHouse,
                            ship: paintShip, candy: paintCandy, ice: paintIce, haunted: paintHaunted, sky: paintSky, space: paintSpace, arena: paintArena, mall: paintMall,
                            underwater: paintUnderwater, dino: paintDino, volcano: paintVolcano, jungle: paintJungle,
-                           toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity, camp: paintCamp, olympus: paintOlympus, piratecove: paintPirateCove, chess: paintChess, library: paintLibrary };
+                           toy: paintToy, pyramid: paintPyramid, cloudcity: paintCloudCity, camp: paintCamp, olympus: paintOlympus, piratecove: paintPirateCove, chess: paintChess, library: paintLibrary,
+                           greece: paintGreece, maze: paintMaze, gorgon: paintGorgon, underworld: paintUnderworld, viking: paintViking };
         painters[room](c.getContext('2d'), seededRandom(room.length * 7919 + 13));
         bgCache[room] = c;
     }
