@@ -120,7 +120,8 @@ const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secre
                 TOY: 'toy', PYRAMID: 'pyramid', CLOUDCITY: 'cloudcity', CAMP: 'camp', OLYMPUS: 'olympus', PIRATECOVE: 'piratecove', CHESS: 'chess', LIBRARY: 'library',
                 GREECE: 'greece', MAZE: 'maze', GORGON: 'gorgon', UNDERWORLD: 'underworld', VIKING: 'viking',
                 CANDYVOLCANO: 'candyvolcano', SEACITY: 'seacity', MOONBASE: 'moonbase', CLOUDCASTLE: 'cloudcastle', ICECAVE: 'icecave',
-                TREEHOUSE: 'treehouse', FACTORY: 'factory', TOYSHOP: 'toyshop', MUSEUM: 'museum', UNDERBED: 'underbed' };
+                TREEHOUSE: 'treehouse', FACTORY: 'factory', TOYSHOP: 'toyshop', MUSEUM: 'museum', UNDERBED: 'underbed',
+                BACKYARD: 'backyard', SECRETROOM: 'secretroom' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -1238,6 +1239,9 @@ let state = {
     stoned:             0,               // 🗿 frames left as a statue
     gloop:              0,               // 👾 cookies given to Gloop (3 = best friends)
     petCostume:         null,            // 🐾 what your pet is wearing
+    yard:               {},              // 🏡 things you've built in the backyard
+    magicGarden:        [0, 0, 0],       // when each magic plant was planted (Date.now()), 0 = empty
+    farmAt:             0,               // when you last collected from the farm
     petCostumes:        {},
     questsDone:         0,
     invisible:          0,               // 🧪 potion timers
@@ -2294,6 +2298,170 @@ function drawGloop() {
     }
 }
 
+// ── HOME & BUILDING: the backyard builder and the secret room ──
+const SECRET_CHEST = { x: 400, y: 200 };
+const YARD_SIGN    = { x: 220, y: 300 };
+const YARD = [
+    { id: 'treehouse',  icon: '🌳', name: 'Treehouse',        cost: 40,  x: 150, y: 150, desc: 'Climb up for a cosy rest (heals you)' },
+    { id: 'pethouse',   icon: '🏠', name: 'Pet House',        cost: 30,  x: 330, y: 140, desc: 'Your pets play here and bring you coins' },
+    { id: 'castle',     icon: '🏰', name: 'Your Own Castle',  cost: 150, x: 560, y: 140, desc: 'Sit on the throne — get a crown!' },
+    { id: 'garden',     icon: '🌱', name: 'Magic Garden',     cost: 35,  x: 130, y: 390, desc: 'Grow coin flowers, heart fruit and star plants' },
+    { id: 'farm',       icon: '🐄', name: 'Farm',             cost: 50,  x: 370, y: 470, desc: 'Cows, pigs, chickens and sheep!' },
+    { id: 'trampoline', icon: '🤸', name: 'Trampoline',       cost: 20,  x: 330, y: 300, desc: 'BOING BOING BOING!' },
+    { id: 'coaster',    icon: '🎢', name: 'Rollercoaster',    cost: 120, x: 700, y: 300, desc: 'Loop the loop!' },
+    { id: 'slide',      icon: '🛝', name: 'Water Slide',      cost: 60,  x: 530, y: 330, desc: 'Whoosh into the pool!' },
+    { id: 'pool',       icon: '🏊', name: 'Swimming Pool',    cost: 50,  x: 600, y: 480, desc: 'Swim to cool off (heals slowly)' },
+];
+const POOL_RECT   = { x: 520, y: 430, w: 170, h: 110 };
+const MAGIC_GROW_MS = 30000;
+const MAGIC_PLOTS = [0, 1, 2].map(i => ({ x: 80 + i * 50, y: 390 }));   // above the controls panel
+const FARM_ANIMALS = ['🐄', '🐖', '🐔', '🐑'];
+let yardRide = null;   // { kind, t, len }
+let yardTimers = {};
+
+function yardItems() {
+    return YARD.map(b => ({ icon: b.icon, name: b.name, desc: b.desc, cost: b.cost, status: state.yard[b.id] ? 'BUILT!' : null,
+        action: () => {
+            if (state.yard[b.id]) return;
+            if (!spend(b.cost)) return;
+            state.yard[b.id] = true; giveAward('builder'); sfx('place'); menu = null;
+            spawnParticles(b.x, b.y, '#FFE066', 30); triggerShake(6);
+            showToast(`🔨 You built a ${b.name}!`, '#FFE066', 180);
+        } }));
+}
+function magicStage(i) { const at = state.magicGarden[i]; if (!at) return 0; const k = (Date.now() - at) / MAGIC_GROW_MS; return k >= 1 ? 3 : k >= 0.5 ? 2 : 1; }
+function tryYardAction(nearIt) {
+    const built = id => state.yard[id];
+    const b = id => YARD.find(y => y.id === id);
+    if (nearIt(YARD_SIGN, 40)) { openMenu('🔨 BACKYARD BUILDER', yardItems); return true; }
+    if (built('garden')) {
+        const i = MAGIC_PLOTS.findIndex(p => nearIt(p, 22));
+        if (i >= 0) {
+            const st = magicStage(i);
+            if (st === 0) { state.magicGarden[i] = Date.now(); spawnFloatText(MAGIC_PLOTS[i].x, MAGIC_PLOTS[i].y - 20, '🌱 Planted!', '#AAFFAA', 60); sfx('place'); }
+            else if (st < 3) spawnFloatText(MAGIC_PLOTS[i].x, MAGIC_PLOTS[i].y - 20, 'Still growing…', '#FFFFFF', 50);
+            else {
+                state.magicGarden[i] = 0; sfx('found');
+                const gift = [['🌼 Coin Flower! +🪙20', () => { state.coins += 20; }], ['🍎 Heart Fruit! Full hearts!', () => { state.playerHp = fullHearts(); }],
+                              ['⭐ Star Plant! Super speed!', () => { godSpeedTimer = 900; }], ['🫧 Bubble Berry! Shield Bubble!', () => { state.bubble = true; }]][Math.floor(Math.random() * 4)];
+                gift[1](); showToast(gift[0], '#AAFFAA', 180);
+            }
+            return true;
+        }
+    }
+    if (built('treehouse') && nearIt(b('treehouse'), 44)) {
+        if (Date.now() - (yardTimers.tree || 0) < 30000) { spawnFloatText(player.x, player.y - 30, 'You just rested!', '#FFF', 50); return true; }
+        yardTimers.tree = Date.now(); state.playerHp = fullHearts(); sfx('magic');
+        showToast('🌳 A cosy rest in your treehouse! Full hearts!', '#AAFFAA', 180); return true;
+    }
+    if (built('pethouse') && nearIt(b('pethouse'), 44)) {
+        const P = place(), n = state.ownedPets.filter(Boolean).length;
+        if (P.petGift || !n) { spawnFloatText(player.x, player.y - 30, n ? 'Your pets are napping 💤' : 'Get a pet first!', '#FFF', 60); return true; }
+        P.petGift = true; state.coins += n * 3; sfx('coin');
+        showToast(`🏠 Your ${n} pet${n > 1 ? 's' : ''} found coins for you! +🪙${n * 3}`, '#FFE066', 180); return true;
+    }
+    if (built('castle') && nearIt(b('castle'), 50)) {
+        state.hats.crown = true; state.hat = 'crown'; giveAward('royal'); sfx('win'); spawnConfettiAt(player.x, player.y);
+        showToast('🏰 You sit on your throne. ALL HAIL THE KING/QUEEN! 👑', '#FFD700', 220); return true;
+    }
+    if (built('farm') && nearIt(b('farm'), 70)) {
+        if (Date.now() - state.farmAt < 60000) { spawnFloatText(player.x, player.y - 30, 'The animals need a rest!', '#FFF', 60); return true; }
+        state.farmAt = Date.now(); state.coins += 15; sfx('coin');
+        showToast('🐄 Moo! 🥛 milk, 🥚 eggs and 🧶 wool! +🪙15', '#FFE066', 180); return true;
+    }
+    if (built('trampoline') && nearIt(b('trampoline'), 40)) { yardRide = { kind: 'bounce', t: 0, len: 150 }; sfx('boing'); return true; }
+    if (built('coaster') && nearIt(b('coaster'), 50)) { yardRide = { kind: 'coaster', t: 0, len: 300 }; giveAward('rollercoaster'); sfx('whoosh'); showToast('🎢 WHEEEEEE!', '#FFE066', 150); return true; }
+    if (built('slide') && nearIt(b('slide'), 40)) { yardRide = { kind: 'slide', t: 0, len: 90 }; sfx('whoosh'); return true; }
+    return false;
+}
+function updateYardRide() {
+    if (!yardRide) return false;
+    const R = yardRide, k = ++R.t / R.len;
+    state.playerInvincible = Math.max(state.playerInvincible, 2);
+    if (R.kind === 'bounce') {   // up and down on the trampoline
+        const c = YARD.find(y => y.id === 'trampoline');
+        player.x = c.x; player.y = c.y - Math.abs(Math.sin(k * Math.PI * 5)) * 90;
+        if (R.t % 30 === 15) { sfx('boing'); spawnFloatText(player.x, player.y - 30, 'BOING!', '#FFE066', 30); }
+    } else if (R.kind === 'coaster') {   // round the loop twice
+        const c = YARD.find(y => y.id === 'coaster'), a = k * Math.PI * 4;
+        player.x = c.x + Math.cos(a) * 70; player.y = c.y + Math.sin(a) * 110;
+        if (R.t % 8 === 0) spawnParticles(player.x, player.y, '#FFE066', 1);
+    } else if (R.kind === 'slide') {   // down the slide into the pool
+        const c = YARD.find(y => y.id === 'slide');
+        player.x = c.x + k * 70; player.y = c.y - 20 + k * 150;
+        if (R.t === R.len - 1) { for (let n = 0; n < 4; n++) spawnParticles(player.x, player.y, '#66BBFF', 8); sfx('splash'); spawnFloatText(player.x, player.y - 30, 'SPLASH!', '#66BBFF', 50); }
+    }
+    if (R.t >= R.len) yardRide = null;
+    return true;
+}
+function updateYard() {
+    if (state.room !== ROOM.BACKYARD || !playing()) return;
+    if (state.yard.pool && inRectXY(player.x, player.y, POOL_RECT)) {   // 🏊 swimming!
+        if (Math.random() < 0.15) particles.push({ x: player.x + (Math.random() - 0.5) * 30, y: player.y + 10, dx: 0, dy: -0.5, life: 30, maxLife: 30, color: 'rgba(200,240,255,0.8)', r: 4 });
+        if (++yardTimers.swim % 300 === 0 && state.playerHp < fullHearts()) { state.playerHp++; spawnFloatText(player.x, player.y - 30, '🏊 +1 ❤', '#66BBFF', 50); }
+    }
+}
+yardTimers.swim = 0;
+function drawYard() {
+    if (state.room !== ROOM.BACKYARD) return;
+    const t = Date.now() / 1000, verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const emoji = (e, x, y, size) => { ctx.save(); ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); ctx.restore(); };
+    const near = (o, r) => Math.hypot(player.x - o.x, player.y - o.y) < r && !menu && !yardRide;
+    const label = (text, x, y) => { ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
+    ctx.fillStyle = '#8A5A2A'; ctx.fillRect(YARD_SIGN.x - 3, YARD_SIGN.y, 6, 26); ctx.fillStyle = '#D8B080'; ctx.fillRect(YARD_SIGN.x - 34, YARD_SIGN.y - 22, 68, 26);
+    ctx.fillStyle = '#4A2A10'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center'; ctx.fillText('🔨 BUILDER', YARD_SIGN.x, YARD_SIGN.y - 6);
+    if (near(YARD_SIGN, 40)) drawSpeech({ x: YARD_SIGN.x, y: YARD_SIGN.y - 24 }, `${verb}: Build things!`);
+    for (const b of YARD) {
+        if (!state.yard[b.id]) { ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.setLineDash([5, 5]); ctx.strokeRect(b.x - 30, b.y - 30, 60, 60); ctx.setLineDash([]); label(`${b.icon}?`, b.x, b.y + 4); continue; }
+        if (b.id === 'pool') {
+            ctx.fillStyle = '#E8E0D0'; ctx.fillRect(POOL_RECT.x - 6, POOL_RECT.y - 6, POOL_RECT.w + 12, POOL_RECT.h + 12);
+            ctx.fillStyle = '#44AAEE'; ctx.fillRect(POOL_RECT.x, POOL_RECT.y, POOL_RECT.w, POOL_RECT.h);
+            ctx.strokeStyle = 'rgba(255,255,255,0.5)'; for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.moveTo(POOL_RECT.x + 10, POOL_RECT.y + 20 + k * 25 + Math.sin(t * 2 + k) * 3); ctx.lineTo(POOL_RECT.x + POOL_RECT.w - 10, POOL_RECT.y + 20 + k * 25 + Math.sin(t * 2 + k + 1) * 3); ctx.stroke(); }
+            continue;
+        }
+        if (b.id === 'garden') {
+            MAGIC_PLOTS.forEach((p, i) => {
+                const st = magicStage(i);
+                ctx.fillStyle = '#6A4A2A'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 6, 18, 8, 0, 0, Math.PI * 2); ctx.fill();
+                if (st) emoji(st === 3 ? ['🌼', '🍎', '⭐'][i] : st === 2 ? '🌿' : '🌱', p.x, p.y - 6 + (st === 3 ? Math.sin(t * 3 + i) * 2 : 0), st === 3 ? 22 : 16);
+                if (near(p, 22)) drawSpeech({ x: p.x, y: p.y - 18 }, `${verb}: ${st === 0 ? 'Plant a magic seed' : st < 3 ? 'Growing…' : 'Pick it!'}`);
+            });
+            label('🌱 Magic Garden', b.x, b.y + 36);
+            continue;
+        }
+        if (b.id === 'farm') {
+            ctx.strokeStyle = '#C8A070'; ctx.lineWidth = 3; ctx.strokeRect(b.x - 80, b.y - 50, 160, 100);
+            FARM_ANIMALS.forEach((a, i) => emoji(a, b.x - 50 + i * 33 + Math.sin(t * 0.7 + i * 2) * 8, b.y + Math.cos(t * 0.5 + i) * 18, 22));
+            label('🐄 Your Farm', b.x, b.y + 64);
+            if (near(b, 70)) drawSpeech({ x: b.x, y: b.y - 50 }, `${verb}: Collect milk, eggs and wool`);
+            continue;
+        }
+        if (b.id === 'coaster') {
+            ctx.strokeStyle = '#E04040'; ctx.lineWidth = 5; ctx.beginPath(); ctx.ellipse(b.x, b.y, 70, 110, 0, 0, Math.PI * 2); ctx.stroke();
+            ctx.strokeStyle = '#888'; ctx.lineWidth = 2; for (let k = 0; k < 8; k++) { ctx.beginPath(); ctx.moveTo(b.x + Math.cos(k * 0.8) * 70, b.y + Math.sin(k * 0.8) * 110); ctx.lineTo(b.x + Math.cos(k * 0.8) * 70, 560); ctx.stroke(); }
+        }
+        if (b.id === 'slide') {
+            ctx.strokeStyle = '#FFAA22'; ctx.lineWidth = 10; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(b.x, b.y - 20); ctx.quadraticCurveTo(b.x + 60, b.y + 40, b.x + 70, b.y + 130); ctx.stroke(); ctx.lineCap = 'butt';
+        }
+        if (b.id === 'trampoline') { ctx.fillStyle = '#222'; ctx.beginPath(); ctx.ellipse(b.x, b.y + 8, 34, 12, 0, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#3A8AE0'; ctx.lineWidth = 4; ctx.stroke(); }
+        else emoji(b.icon, b.x, b.y, b.id === 'castle' ? 70 : b.id === 'treehouse' ? 60 : 40);
+        if (b.id === 'pethouse') state.ownedPets.forEach((own, j) => { if (own && j !== state.activePet && j < 6) drawPetShape(PETS[j].id, b.x - 50 + (j % 3) * 50, b.y + 40 + Math.floor(j / 3) * 22, 0.8, 1); });
+        label(b.name, b.x, b.y + (b.id === 'castle' ? 50 : b.id === 'coaster' ? 125 : 40));
+        if (near(b, b.id === 'castle' ? 50 : 44)) drawSpeech({ x: b.x, y: b.y - 30 },
+            `${verb}: ${{ treehouse: 'Climb up', pethouse: 'Visit your pets', castle: 'Sit on the throne', trampoline: 'Bounce!', coaster: 'Ride!', slide: 'Slide!' }[b.id] || ''}`);
+    }
+}
+function drawSecretRoom2() {
+    if (state.room !== ROOM.SECRETROOM) return;
+    const P = place();
+    ctx.save(); ctx.font = '40px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(P.chest ? '📭' : '🧰', SECRET_CHEST.x, SECRET_CHEST.y); ctx.restore();
+    const n = Object.keys(awards.got || {}).length;
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`🏆 Your trophy shelf: ${n} awards!`, 400, 118);
+    ctx.fillText('🕵 Nobody knows about this room… except you!', 400, 300);
+    if (!P.chest && Math.hypot(player.x - SECRET_CHEST.x, player.y - SECRET_CHEST.y) < 40 && !menu) drawSpeech({ x: SECRET_CHEST.x, y: SECRET_CHEST.y - 20 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Open your secret chest`);
+}
+
 // ── PETS & RIDES: pet battles, golden eggs, ride trails, the hamster ball ──
 const WILD_PET_NAMES = ['Sir Fluffington', 'Mr Snuggles', 'Captain Whiskers', 'Princess Pickle', 'Big Bob', 'Tiny Tim'];
 let petBattle = null;   // { foe, you, them, turn, timer, cheer, result }
@@ -2383,7 +2551,7 @@ function updateSubplace() {
         const left = P.items.filter(i => !i.got).length;
         spawnFloatText(it.x, it.y - 20, left ? `${left} to go!` : 'GOT THEM ALL!', '#FFE066', 60);
     }
-    if (!P.prize && P.items.every(i => i.got)) {
+    if (!P.prize && P.items.length && P.items.every(i => i.got)) {
         P.prize = true; state.coins += 60; addScore(150); giveAward('collector'); sfx('win'); spawnConfettiAt(player.x, player.y);
         showToast(`🏆 You found all ${sp.count} ${sp.item}! +🪙60`, '#FFD700', 220);
     }
@@ -2405,6 +2573,7 @@ function drawSubplaces() {
     for (const [id, sp] of Object.entries(SUBPLACES)) {   // doors in the places you know
         if (state.room !== sp.parent) continue;
         const { x, y } = sp.door;
+        if (id === 'secretroom') { if (Math.sin(t * 3) > 0.6) drawStar(x, y, 4, '#FFE066'); continue; }   // 🕵 shhh — just a little twinkle
         ctx.save(); ctx.fillStyle = 'rgba(40,20,10,0.85)'; ctx.fillRect(x - 16, y - 22, 32, 40);
         ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(x + 9, y, 2.5, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
@@ -2421,6 +2590,7 @@ function drawSubplaces() {
     ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Go back', SUBPLACE_EXIT.x, 556);
     const left = P.items.filter(i => !i.got).length;
+    if (!P.items.length) return;
     ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(320, 76, 160, 20);
     ctx.fillStyle = '#FFE066'; ctx.font = 'bold 11px Arial'; ctx.fillText(left ? `Find ${left} more ${sp.item}` : `✅ All ${sp.item} found!`, 400, 90);
     if (state.room === ROOM.MUSEUM && P.night > 0) { ctx.fillStyle = '#665'; ctx.fillText(`The museum closes in ${Math.ceil(P.night / 60)}s… 🌙`, 400, 112); }
@@ -2582,8 +2752,8 @@ function updatePotions() {
     }
 }
 
-function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); updateRides(); }
-function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); drawRides(); }
+function updateFunExtras() { updateRingRace(); updateChickenRain(); updatePotions(); updateBattle(); updateMagicExtras(); updateGloop(); updateSubplace(); updateRides(); updateYard(); }
+function drawFunExtras()   { drawRingRace(); drawChickenRain(); drawBattle(); drawCreature(); drawSnitch(); drawMagicMap(); drawHeroAura(); drawGloop(); drawMiniBossLabels(); drawSubplaces(); drawRides(); drawYard(); drawSecretRoom2(); }
 
 // ── CONTROLS PANEL (bottom-left: which button does what) ─────
 let showControls = true;
@@ -3405,6 +3575,15 @@ const SUBPLACES = {
         enemies: () => [e0('dustbunny', 250, 250), e0('dustbunny', 550, 250), e0('dustbunny', 400, 450), e0('bedmonster', 600, 400, { r: 30, coinDrop: 30 })],
         paint: (g, R) => { fill(g, '#2A2438'); speckle(g, R, 500, r => `rgba(${120 + r * 60},${110 + r * 60},${130 + r * 60},0.35)`, 6, 6);
                            g.fillStyle = '#4A3A2A'; g.fillRect(0, 46, 800, 40); for (const x of [20, 760]) g.fillRect(x, 46, 20, 554); } },
+    backyard:     { parent: 'house', door: { x: 40, y: 320 }, name: '🏡 YOUR BACKYARD', doorLabel: '🚪 Backyard', song: 'house', item: '', count: 0,
+        enemies: () => [],
+        paint: (g, R) => { fill(g, '#7AC05A'); speckle(g, R, 900, r => `hsla(${95 + r * 25}, 50%, ${38 + r * 14}%, 0.6)`, 3, 3);
+                           g.strokeStyle = '#C8A070'; g.lineWidth = 4; g.strokeRect(10, 56, 780, 534);   // fence
+                           for (let x = 10; x < 790; x += 20) { g.fillStyle = '#D8B080'; g.fillRect(x, 50, 6, 14); g.fillRect(x, 584, 6, 14); } } },
+    secretroom:   { parent: 'house', door: { x: 762, y: 250 }, name: '🕵 YOUR SECRET ROOM', doorLabel: '✨', song: 'secret', item: '💎', count: 3,
+        enemies: () => [],
+        paint: (g, R) => { fill(g, '#3A2A4A'); speckle(g, R, 300, r => `rgba(${150 + r * 80},${120 + r * 60},${200 + r * 50},0.25)`, 4, 4);
+                           g.fillStyle = '#5A3A2A'; g.fillRect(150, 70, 500, 30); g.fillStyle = '#C8A040'; for (let k = 0; k < 10; k++) g.fillRect(170 + k * 48, 60, 24, 12); } },
 };
 const FACTORY_BELTS = [160, 330, 500];   // conveyor belts push you sideways
 const LOST_TOYS = ['🧸', '🚗', '🧦', '🎲', '🪀'];
@@ -3440,6 +3619,12 @@ function tryPlaceAction() {
     if (state.room === ROOM.CAMP && nearIt(QUEST_BOARD)) { openMenu('📜 QUEST BOARD', questItems); return true; }
     if (tryHeroAction(nearIt)) return true;
     if (state.room === ROOM.PARADISE && nearIt(GLOOP, 40)) { befriendGloop(); return true; }
+    if (state.room === ROOM.BACKYARD && tryYardAction(nearIt)) return true;
+    if (state.room === ROOM.SECRETROOM && !place().chest && nearIt(SECRET_CHEST, 40)) {
+        place().chest = true; const n = 20 + Math.floor(Math.random() * 30); state.coins += n; sfx('found'); spawnParticles(SECRET_CHEST.x, SECRET_CHEST.y, '#FFD700', 24);
+        showToast(`🕵 Your secret treasure chest: +🪙${n}!`, '#FFD700', 200); giveAward('secretRoom');
+        return true;
+    }
     if (state.room === ROOM.LIBRARY && !place().bookTaken && nearIt(GOLDEN_BOOK, 36)) {
         place().bookTaken = true; giveAward('spellbook'); sfx('found'); spawnParticles(GOLDEN_BOOK.x, GOLDEN_BOOK.y, '#FFD700', 30);
         const unknown = SPELLS.filter(sp => sp.school && !state.spells[sp.id]);
@@ -4253,6 +4438,8 @@ const PORTALS = {
     toyshop: [],
     museum: [],
     underbed: [],
+    backyard: [],
+    secretroom: [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
     toy:     [{ x: 740, y: 120, shape: 'star'    }],
     pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
@@ -4598,6 +4785,10 @@ const AWARDS = [
     { id: 'collector',   icon: '🧺', name: 'Collector',         desc: 'Find all the things in a secret place' },
     { id: 'petCostume',  icon: '🎀', name: 'Fashion Pet',       desc: 'Dress up your pet' },
     { id: 'petBattle',   icon: '🐾', name: 'Pet Champion',      desc: 'Win a Pet Battle' },
+    { id: 'builder',     icon: '🔨', name: 'Backyard Builder',  desc: 'Build something in your backyard' },
+    { id: 'royal',       icon: '🏰', name: 'King of the Castle', desc: 'Sit on your castle throne' },
+    { id: 'rollercoaster', icon: '🎢', name: 'Wheee!',          desc: 'Ride your rollercoaster' },
+    { id: 'secretRoom',  icon: '🕵', name: 'Secret Agent',      desc: 'Find the secret room in your house' },
     { id: 'hat',         icon: '🎩', name: 'Hat Fan',          desc: 'Buy a hat' },
     { id: 'party',       icon: '🎂', name: 'Party Time',       desc: 'Wish someone Happy Birthday' },
     { id: 'petMaster',   icon: '⭐', name: 'Pet Trainer',      desc: 'Get a pet to Level 5' },
@@ -4663,7 +4854,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -5510,7 +5701,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0, petCostume: null, petCostumes: {},
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0, petCostume: null, petCostumes: {}, yard: {}, magicGarden: [0, 0, 0], farmAt: 0,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -5659,6 +5850,7 @@ function changeRoom(dest) {
 // ── UPDATE: PLAYER ────────────────────────────────────────────
 function updatePlayer() {
     if (state.won || state.levelComplete || state.gamePhase !== 'playing') return;
+    if (updateYardRide()) return;   // 🎢 on a ride in the backyard
 
     const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1) * mountSpeed() * playerSpeedFactor()
               * (godPassive('fast') ? 1.3 : 1) * (godSpeedTimer > 0 ? 1.7 : 1) * (state.house === 'slytherin' ? 1.15 : 1)
