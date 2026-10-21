@@ -106,7 +106,7 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
     overlay.addEventListener('click',      dismiss);
     overlay.addEventListener('touchstart', e => { e.preventDefault(); dismiss(); }, { passive: false });
     document.addEventListener('keydown', function onKey(e) {
-        if (e.code === 'Space') { e.preventDefault(); dismiss(); document.removeEventListener('keydown', onKey); }
+        if (e.code === 'Space') { e.preventDefault(); e.stopImmediatePropagation(); dismiss(); document.removeEventListener('keydown', onKey); }   // the skip press shouldn't also pick a menu item
     });
 
     // Fallback: if video fails to load/play, still dismiss after a short wait
@@ -1468,6 +1468,7 @@ function handleTap(x, y) {
     if (Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < MUTE_BTN.r * 1.5) { toggleMute(); return true; }
     if (state.gamePhase === 'playing' && Math.hypot(x - SETTINGS_BTN.x, y - SETTINGS_BTN.y) < SETTINGS_BTN.r * 1.4) { openSettings(); return true; }
     if (state.gamePhase === 'intro') {
+        if (langPick.step) { langTap(x, y); return true; }
         if (savedGame && inRect(x, y, NEW_GAME_BTN)) startFromIntro(true);
         else startFromIntro();
         return true;
@@ -1526,6 +1527,8 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyO') menu = null;
         return;
     }
+    if (state.gamePhase === 'intro' && langPick.step) { langKey(e); return; }
+    if (state.gamePhase === 'intro' && e.code === 'KeyL') { langPick.step = 'continent'; langPick.cursor = Math.max(0, CONTINENTS.findIndex(c => c.langs.includes(lang))); return; }
     if (e.code === 'KeyB') toggleBuild();
     if (e.code === 'KeyP') toggleP2();
     if (e.code === 'KeyJ' && !e.repeat) meleePress();
@@ -3751,6 +3754,18 @@ function pollGamepad() {
         if (pressed(PAD.B) || pressed(PAD.Y)) menu = null;
         return;
     }
+    if (state.gamePhase === 'intro' && langPick.step) {
+        const sx = gp.axes[0] || 0, sy = gp.axes[1] || 0, stick = Math.abs(sx) > 0.6 || Math.abs(sy) > 0.6;
+        if (stick && !langPick.stickHeld) moveLangCursor(Math.abs(sx) > Math.abs(sy) ? Math.sign(sx) : 0, Math.abs(sy) >= Math.abs(sx) ? Math.sign(sy) : 0);
+        langPick.stickHeld = stick;
+        if (pressed(PAD.LEFT))  moveLangCursor(-1, 0);
+        if (pressed(PAD.RIGHT)) moveLangCursor(1, 0);
+        if (pressed(PAD.UP))    moveLangCursor(0, -1);
+        if (pressed(PAD.DOWN))  moveLangCursor(0, 1);
+        if (pressed(PAD.A) || pressed(PAD.START)) langSelect();
+        if (pressed(PAD.B))     langBack();
+        return;
+    }
     if (pressed(PAD.B) && !state.shopOpen && !state.awardsOpen) { if (state.buildMode) nextBlock(); else useGadget(); }
     if (pressed(PAD.L3)) toggleBuild();
     if (pressed(PAD.LT)) dash();
@@ -5973,6 +5988,7 @@ function rollBirthLuck() {
 }
 
 function startFromIntro(fresh = false) {
+    if (langPick.step) { langSelect(); return; }   // still picking a language
     if (fresh || !savedGame) {
         if (fresh) { clearSave(); worldBlocks = {}; saveWorld(); }
         state.gamePhase = 'playing';
@@ -9222,7 +9238,272 @@ function drawCoins(coinList) {
 }
 
 // ── DRAW: INTRO SCREEN ────────────────────────────────────────
+// ── LANGUAGES: pick your continent, then your language, before the game starts ──
+// Only the title screen is translated; messages during play are still in English.
+const LANG_KEY = 'lop_lang';
+const CONTINENTS = [
+    { name: 'Africa',        icon: '🌍', langs: ['sw', 'ar', 'ha', 'yo', 'am', 'zu', 'af', 'fr', 'en'] },
+    { name: 'Asia',          icon: '🌏', langs: ['zh', 'ja', 'ko', 'hi', 'ur', 'ar', 'bn', 'id', 'th', 'vi', 'fa', 'tl'] },
+    { name: 'Europe',        icon: '🌍', langs: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'tr', 'ru', 'uk', 'el', 'sv'] },
+    { name: 'North America', icon: '🌎', langs: ['en', 'es', 'fr', 'ht'] },
+    { name: 'South America', icon: '🌎', langs: ['es', 'pt', 'en', 'nl'] },
+    { name: 'Oceania',       icon: '🌏', langs: ['en', 'mi', 'fr'] },
+];
+// story: the 7 lines of the title-screen story; controls: the hint line at the bottom
+const LANGS = {
+    en: { name: 'English', english: 'English', title: 'The Light of Paradise',
+          story: ['The Devil stole the Golden Light', 'and hid it on Paradise Island!', 'Dig in the caves of Hell for Magic Power.', 'Use it to survive Monster Night', 'on Paradise Island and win 3 Light Crystals.', 'Collect them all to defeat the Devil', 'and save the world!'],
+          tip: "Tip: Hide in Hell's caves for 1 minute — dig deep for rare weapons, but watch out for moles!", begin: 'Tap, click, press SPACE or press A to Begin!',
+          cont: '▶ CONTINUE', fresh: '✦ NEW GAME', level: 'Level', back: '← Back',
+          controls: 'Move: WASD / Arrows  |  Shoot: Space  |  Dance: G  |  Fart: F  |  Mystery portals go anywhere!' },
+    es: { name: 'Español', english: 'Spanish', title: 'La Luz del Paraíso',
+          story: ['El Diablo robó la Luz Dorada', '¡y la escondió en la Isla Paraíso!', 'Excava en las cuevas del Infierno para tener Poder Mágico.', 'Úsalo para sobrevivir a la Noche de los Monstruos', 'en la Isla Paraíso y gana 3 Cristales de Luz.', 'Reúnelos todos para vencer al Diablo', '¡y salvar el mundo!'],
+          tip: 'Consejo: escóndete en las cuevas del Infierno 1 minuto — cava hondo para armas raras, ¡pero cuidado con los topos!', begin: '¡Toca, haz clic, pulsa ESPACIO o pulsa A para empezar!',
+          cont: '▶ CONTINUAR', fresh: '✦ JUEGO NUEVO', level: 'Nivel', back: '← Atrás',
+          controls: 'Moverse: WASD / Flechas  |  Disparar: Espacio  |  Bailar: G  |  Pedo: F  |  ¡Los portales misteriosos van a cualquier sitio!' },
+    fr: { name: 'Français', english: 'French', title: 'La Lumière du Paradis',
+          story: ["Le Diable a volé la Lumière d'Or", "et l'a cachée sur l'Île du Paradis !", "Creuse dans les grottes de l'Enfer pour trouver le Pouvoir Magique.", 'Utilise-le pour survivre à la Nuit des Monstres', "sur l'Île du Paradis et gagne 3 Cristaux de Lumière.", 'Ramasse-les tous pour battre le Diable', 'et sauver le monde !'],
+          tip: "Astuce : cache-toi 1 minute dans les grottes de l'Enfer — creuse profond pour des armes rares, mais attention aux taupes !", begin: 'Touche, clique, appuie sur ESPACE ou sur A pour commencer !',
+          cont: '▶ CONTINUER', fresh: '✦ NOUVELLE PARTIE', level: 'Niveau', back: '← Retour',
+          controls: 'Bouger : WASD / Flèches  |  Tirer : Espace  |  Danser : G  |  Prout : F  |  Les portails mystère vont partout !' },
+    de: { name: 'Deutsch', english: 'German', title: 'Das Licht des Paradieses',
+          story: ['Der Teufel hat das Goldene Licht gestohlen', 'und auf der Paradies-Insel versteckt!', 'Grabe in den Höhlen der Hölle nach Zauberkraft.', 'Damit überlebst du die Monsternacht', 'auf der Paradies-Insel und gewinnst 3 Lichtkristalle.', 'Sammle alle, um den Teufel zu besiegen', 'und die Welt zu retten!'],
+          tip: 'Tipp: Versteck dich 1 Minute in den Höhlen der Hölle — grab tief nach seltenen Waffen, aber pass auf die Maulwürfe auf!', begin: 'Tippe, klicke, drücke LEERTASTE oder A zum Starten!',
+          cont: '▶ WEITER', fresh: '✦ NEUES SPIEL', level: 'Level', back: '← Zurück',
+          controls: 'Laufen: WASD / Pfeile  |  Schießen: Leertaste  |  Tanzen: G  |  Pupsen: F  |  Geheimportale führen überallhin!' },
+    it: { name: 'Italiano', english: 'Italian', title: 'La Luce del Paradiso',
+          story: ["Il Diavolo ha rubato la Luce d'Oro", "e l'ha nascosta sull'Isola del Paradiso!", "Scava nelle grotte dell'Inferno per il Potere Magico.", 'Usalo per sopravvivere alla Notte dei Mostri', "sull'Isola del Paradiso e vinci 3 Cristalli di Luce.", 'Raccoglili tutti per sconfiggere il Diavolo', 'e salvare il mondo!'],
+          tip: "Consiglio: nasconditi nelle grotte dell'Inferno per 1 minuto — scava a fondo per armi rare, ma attento alle talpe!", begin: 'Tocca, clicca, premi SPAZIO o premi A per iniziare!',
+          cont: '▶ CONTINUA', fresh: '✦ NUOVA PARTITA', level: 'Livello', back: '← Indietro',
+          controls: 'Muoviti: WASD / Frecce  |  Spara: Spazio  |  Balla: G  |  Puzzetta: F  |  I portali misteriosi vanno ovunque!' },
+    pt: { name: 'Português', english: 'Portuguese', title: 'A Luz do Paraíso',
+          story: ['O Diabo roubou a Luz Dourada', 'e a escondeu na Ilha do Paraíso!', 'Cave nas cavernas do Inferno para ter Poder Mágico.', 'Use-o para sobreviver à Noite dos Monstros', 'na Ilha do Paraíso e ganhe 3 Cristais de Luz.', 'Junte todos para derrotar o Diabo', 'e salvar o mundo!'],
+          tip: 'Dica: esconda-se nas cavernas do Inferno por 1 minuto — cave fundo para armas raras, mas cuidado com as toupeiras!', begin: 'Toque, clique, aperte ESPAÇO ou aperte A para começar!',
+          cont: '▶ CONTINUAR', fresh: '✦ JOGO NOVO', level: 'Nível', back: '← Voltar',
+          controls: 'Andar: WASD / Setas  |  Atirar: Espaço  |  Dançar: G  |  Pum: F  |  Os portais mistério levam a qualquer lugar!' },
+    nl: { name: 'Nederlands', english: 'Dutch', title: 'Het Licht van het Paradijs',
+          story: ['De Duivel heeft het Gouden Licht gestolen', 'en het op het Paradijseiland verstopt!', 'Graaf in de grotten van de Hel naar Toverkracht.', 'Gebruik het om de Monsternacht te overleven', 'op het Paradijseiland en win 3 Lichtkristallen.', 'Verzamel ze allemaal om de Duivel te verslaan', 'en de wereld te redden!'],
+          tip: 'Tip: verstop je 1 minuut in de grotten van de Hel — graaf diep voor zeldzame wapens, maar pas op voor de mollen!', begin: 'Tik, klik, druk op SPATIE of druk op A om te beginnen!',
+          cont: '▶ VERDER', fresh: '✦ NIEUW SPEL', level: 'Level', back: '← Terug',
+          controls: 'Lopen: WASD / Pijltjes  |  Schieten: Spatie  |  Dansen: G  |  Scheet: F  |  Geheime portalen gaan overal heen!' },
+    pl: { name: 'Polski', english: 'Polish', title: 'Światło Raju',
+          story: ['Diabeł ukradł Złote Światło', 'i ukrył je na Rajskiej Wyspie!', 'Kop w jaskiniach Piekła, by zdobyć Magiczną Moc.', 'Użyj jej, by przetrwać Noc Potworów', 'na Rajskiej Wyspie i zdobyć 3 Kryształy Światła.', 'Zbierz je wszystkie, by pokonać Diabła', 'i uratować świat!'],
+          tip: 'Wskazówka: schowaj się w jaskiniach Piekła na 1 minutę — kop głęboko po rzadką broń, ale uważaj na krety!', begin: 'Dotknij, kliknij, naciśnij SPACJĘ albo A, aby zacząć!',
+          cont: '▶ GRAJ DALEJ', fresh: '✦ NOWA GRA', level: 'Poziom', back: '← Wstecz',
+          controls: 'Ruch: WASD / Strzałki  |  Strzał: Spacja  |  Taniec: G  |  Bąk: F  |  Tajemnicze portale prowadzą wszędzie!' },
+    tr: { name: 'Türkçe', english: 'Turkish', title: 'Cennetin Işığı',
+          story: ['Şeytan Altın Işığı çaldı', "ve onu Cennet Adası'na sakladı!", 'Sihirli Güç için Cehennem mağaralarında kaz.', "Onunla Canavar Gecesi'nden sağ çık", "ve Cennet Adası'nda 3 Işık Kristali kazan.", 'Şeytanı yenmek için hepsini topla', 've dünyayı kurtar!'],
+          tip: 'İpucu: Cehennem mağaralarında 1 dakika saklan — nadir silahlar için derin kaz ama köstebeklere dikkat!', begin: "Başlamak için dokun, tıkla, BOŞLUK'a ya da A'ya bas!",
+          cont: '▶ DEVAM ET', fresh: '✦ YENİ OYUN', level: 'Seviye', back: '← Geri',
+          controls: 'Yürü: WASD / Oklar  |  Ateş: Boşluk  |  Dans: G  |  Osur: F  |  Gizemli kapılar her yere gider!' },
+    ru: { name: 'Русский', english: 'Russian', title: 'Свет Рая',
+          story: ['Дьявол украл Золотой Свет', 'и спрятал его на Райском острове!', 'Копай в пещерах Ада, чтобы найти Волшебную Силу.', 'С ней ты переживёшь Ночь Монстров', 'на Райском острове и получишь 3 Кристалла Света.', 'Собери их все, чтобы победить Дьявола', 'и спасти мир!'],
+          tip: 'Совет: спрячься в пещерах Ада на 1 минуту — копай глубже, там редкое оружие, но берегись кротов!', begin: 'Нажми, кликни, нажми ПРОБЕЛ или A, чтобы начать!',
+          cont: '▶ ПРОДОЛЖИТЬ', fresh: '✦ НОВАЯ ИГРА', level: 'Уровень', back: '← Назад',
+          controls: 'Ходить: WASD / Стрелки  |  Стрелять: Пробел  |  Танец: G  |  Пук: F  |  Тайные порталы ведут куда угодно!' },
+    uk: { name: 'Українська', english: 'Ukrainian', title: 'Світло Раю',
+          story: ['Диявол украв Золоте Світло', 'і сховав його на Райському острові!', 'Копай у печерах Пекла, щоб знайти Чарівну Силу.', 'З нею ти переживеш Ніч Монстрів', 'на Райському острові й здобудеш 3 Кристали Світла.', 'Збери їх усі, щоб перемогти Диявола', 'і врятувати світ!'],
+          tip: 'Порада: сховайся в печерах Пекла на 1 хвилину — копай глибше, там рідкісна зброя, але стережися кротів!', begin: 'Торкнись, клацни, натисни ПРОБІЛ або A, щоб почати!',
+          cont: '▶ ДАЛІ', fresh: '✦ НОВА ГРА', level: 'Рівень', back: '← Назад',
+          controls: 'Ходити: WASD / Стрілки  |  Стріляти: Пробіл  |  Танець: G  |  Пук: F  |  Таємні портали ведуть будь-куди!' },
+    el: { name: 'Ελληνικά', english: 'Greek', title: 'Το Φως του Παραδείσου',
+          story: ['Ο Διάβολος έκλεψε το Χρυσό Φως', 'και το έκρυψε στο Νησί του Παραδείσου!', 'Σκάψε στις σπηλιές της Κόλασης για Μαγική Δύναμη.', 'Με αυτήν θα επιβιώσεις τη Νύχτα των Τεράτων', 'στο Νησί του Παραδείσου και θα κερδίσεις 3 Κρυστάλλους Φωτός.', 'Μάζεψέ τους όλους για να νικήσεις τον Διάβολο', 'και να σώσεις τον κόσμο!'],
+          tip: 'Συμβουλή: κρύψου στις σπηλιές της Κόλασης για 1 λεπτό — σκάψε βαθιά για σπάνια όπλα, αλλά πρόσεχε τους τυφλοπόντικες!', begin: 'Άγγιξε, κάνε κλικ, πάτα SPACE ή A για να αρχίσεις!',
+          cont: '▶ ΣΥΝΕΧΕΙΑ', fresh: '✦ ΝΕΟ ΠΑΙΧΝΙΔΙ', level: 'Επίπεδο', back: '← Πίσω',
+          controls: 'Κίνηση: WASD / Βελάκια  |  Βολή: Space  |  Χορός: G  |  Πορδή: F  |  Οι μυστηριώδεις πύλες πάνε παντού!' },
+    sv: { name: 'Svenska', english: 'Swedish', title: 'Paradisets Ljus',
+          story: ['Djävulen stal det Gyllene Ljuset', 'och gömde det på Paradisön!', 'Gräv i Helvetets grottor efter Magisk Kraft.', 'Använd den för att överleva Monsternatten', 'på Paradisön och vinn 3 Ljuskristaller.', 'Samla alla för att besegra Djävulen', 'och rädda världen!'],
+          tip: 'Tips: göm dig i Helvetets grottor i 1 minut — gräv djupt efter sällsynta vapen, men akta dig för mullvadarna!', begin: 'Tryck, klicka, tryck MELLANSLAG eller A för att börja!',
+          cont: '▶ FORTSÄTT', fresh: '✦ NYTT SPEL', level: 'Nivå', back: '← Tillbaka',
+          controls: 'Gå: WASD / Pilar  |  Skjut: Mellanslag  |  Dansa: G  |  Prutt: F  |  Mystiska portaler leder vart som helst!' },
+    zh: { name: '中文', english: 'Chinese', title: '天堂之光',
+          story: ['魔鬼偷走了金色之光', '把它藏在了天堂岛上！', '去地狱的洞穴里挖掘魔法力量。', '用它度过怪物之夜', '在天堂岛上赢得3颗光之水晶。', '把它们全部收集起来打败魔鬼', '拯救世界！'],
+          tip: '提示：在地狱的洞穴里躲1分钟——往深处挖能找到稀有武器，但要小心鼹鼠！', begin: '点一下、单击、按空格键或按A开始！',
+          cont: '▶ 继续', fresh: '✦ 新游戏', level: '关卡', back: '← 返回',
+          controls: '移动：WASD / 方向键  |  射击：空格  |  跳舞：G  |  放屁：F  |  神秘传送门可以去任何地方！' },
+    ja: { name: '日本語', english: 'Japanese', title: '楽園の光',
+          story: ['悪魔が黄金の光をぬすんで', '楽園の島にかくしてしまった！', '地獄のどうくつをほって魔法の力を手に入れよう。', 'その力でモンスターの夜を生きのびて', '楽園の島で光のクリスタルを3つ手に入れよう。', 'ぜんぶ集めて悪魔をたおし', '世界をすくおう！'],
+          tip: 'ヒント：地獄のどうくつに1分かくれよう — 深くほるとレアな武器があるよ。でもモグラに気をつけて！', begin: 'タップ、クリック、スペースかAでスタート！',
+          cont: '▶ つづける', fresh: '✦ はじめから', level: 'レベル', back: '← もどる',
+          controls: 'いどう：WASD / やじるし  |  うつ：スペース  |  ダンス：G  |  おなら：F  |  なぞのポータルはどこへでも行ける！' },
+    ko: { name: '한국어', english: 'Korean', title: '낙원의 빛',
+          story: ['악마가 황금빛을 훔쳐서', '낙원 섬에 숨겼어요!', '지옥 동굴을 파서 마법의 힘을 얻으세요.', '그 힘으로 괴물의 밤을 버티고', '낙원 섬에서 빛의 수정 3개를 얻으세요.', '모두 모아서 악마를 물리치고', '세상을 구하세요!'],
+          tip: '팁: 지옥 동굴에 1분 동안 숨어 보세요 — 깊이 파면 희귀한 무기가 있어요, 하지만 두더지를 조심하세요!', begin: '탭, 클릭, 스페이스나 A를 눌러 시작!',
+          cont: '▶ 계속하기', fresh: '✦ 새 게임', level: '레벨', back: '← 뒤로',
+          controls: '이동: WASD / 화살표  |  쏘기: 스페이스  |  춤: G  |  방귀: F  |  신비한 포털은 어디든 가요!' },
+    hi: { name: 'हिन्दी', english: 'Hindi', title: 'स्वर्ग की रोशनी',
+          story: ['शैतान ने सुनहरी रोशनी चुरा ली', 'और उसे स्वर्ग द्वीप पर छिपा दिया!', 'जादुई शक्ति के लिए नरक की गुफाओं में खोदो।', 'उससे राक्षसों की रात में बचो', 'और स्वर्ग द्वीप पर 3 रोशनी के क्रिस्टल जीतो।', 'शैतान को हराने के लिए सब इकट्ठा करो', 'और दुनिया को बचाओ!'],
+          tip: 'सुझाव: नरक की गुफाओं में 1 मिनट छिपो — दुर्लभ हथियारों के लिए गहरा खोदो, पर छछूंदरों से बचना!', begin: 'शुरू करने के लिए टैप करो, क्लिक करो, SPACE या A दबाओ!',
+          cont: '▶ जारी रखो', fresh: '✦ नया खेल', level: 'लेवल', back: '← वापस',
+          controls: 'चलो: WASD / तीर  |  गोली: Space  |  नाचो: G  |  पाद: F  |  रहस्यमय पोर्टल कहीं भी ले जाते हैं!' },
+    ur: { name: 'اردو', english: 'Urdu', rtl: true, title: 'جنت کی روشنی',
+          story: ['شیطان نے سنہری روشنی چرا لی', 'اور اسے جنت کے جزیرے پر چھپا دیا!', 'جادوئی طاقت کے لیے جہنم کے غاروں میں کھدائی کرو۔', 'اس سے راکشسوں کی رات میں بچو', 'اور جنت کے جزیرے پر روشنی کے 3 کرسٹل جیتو۔', 'شیطان کو ہرانے کے لیے سب جمع کرو', 'اور دنیا کو بچاؤ!'],
+          tip: 'مشورہ: جہنم کے غاروں میں 1 منٹ چھپو — نایاب ہتھیاروں کے لیے گہرا کھودو، مگر چھچھوندروں سے بچنا!', begin: 'شروع کرنے کے لیے ٹیپ کرو، کلک کرو، SPACE یا A دباؤ!',
+          cont: '▶ جاری رکھو', fresh: '✦ نیا کھیل', level: 'لیول', back: 'واپس',
+          controls: 'چلو: WASD / تیر  |  گولی: Space  |  ناچو: G  |  پاد: F  |  پراسرار دروازے کہیں بھی لے جاتے ہیں!' },
+    ar: { name: 'العربية', english: 'Arabic', rtl: true, title: 'نور الجنة',
+          story: ['سرق الشيطان النور الذهبي', 'وخبّأه في جزيرة الجنة!', 'احفر في كهوف الجحيم لتحصل على القوة السحرية.', 'استخدمها لتنجو من ليلة الوحوش', 'في جزيرة الجنة وتربح 3 بلورات نور.', 'اجمعها كلها لتهزم الشيطان', 'وتنقذ العالم!'],
+          tip: 'نصيحة: اختبئ في كهوف الجحيم لمدة دقيقة — احفر عميقًا لتجد أسلحة نادرة، لكن احذر من الخُلد!', begin: 'المس أو انقر أو اضغط SPACE أو A لتبدأ!',
+          cont: '▶ أكمل', fresh: '✦ لعبة جديدة', level: 'المستوى', back: 'رجوع',
+          controls: 'تحرّك: WASD / الأسهم  |  أطلق: Space  |  ارقص: G  |  ضرطة: F  |  البوابات الغامضة تأخذك إلى أي مكان!' },
+    bn: { name: 'বাংলা', english: 'Bengali', title: 'স্বর্গের আলো',
+          story: ['শয়তান সোনালি আলো চুরি করেছে', 'আর স্বর্গ দ্বীপে লুকিয়ে রেখেছে!', 'জাদুশক্তির জন্য নরকের গুহায় খোঁড়ো।', 'সেটা দিয়ে দানবের রাত পার করো', 'আর স্বর্গ দ্বীপে ৩টি আলোর স্ফটিক জেতো।', 'শয়তানকে হারাতে সবগুলো জোগাড় করো', 'আর পৃথিবীকে বাঁচাও!'],
+          tip: 'টিপ: নরকের গুহায় ১ মিনিট লুকিয়ে থাকো — দুর্লভ অস্ত্রের জন্য গভীরে খোঁড়ো, কিন্তু ছুঁচোদের থেকে সাবধান!', begin: 'শুরু করতে ট্যাপ করো, ক্লিক করো, SPACE বা A চাপো!',
+          cont: '▶ চালিয়ে যাও', fresh: '✦ নতুন খেলা', level: 'লেভেল', back: '← ফিরে যাও',
+          controls: 'চলো: WASD / তীর  |  গুলি: Space  |  নাচো: G  |  পাদ: F  |  রহস্যময় পোর্টাল যেকোনো জায়গায় নিয়ে যায়!' },
+    id: { name: 'Bahasa Indonesia', english: 'Indonesian', title: 'Cahaya Surga',
+          story: ['Iblis mencuri Cahaya Emas', 'dan menyembunyikannya di Pulau Surga!', 'Gali gua-gua Neraka untuk mendapat Kekuatan Ajaib.', 'Pakai untuk bertahan di Malam Monster', 'di Pulau Surga dan menangkan 3 Kristal Cahaya.', 'Kumpulkan semuanya untuk mengalahkan Iblis', 'dan selamatkan dunia!'],
+          tip: 'Tips: bersembunyilah di gua Neraka selama 1 menit — gali dalam-dalam untuk senjata langka, tapi awas tikus tanah!', begin: 'Sentuh, klik, tekan SPASI atau tekan A untuk mulai!',
+          cont: '▶ LANJUTKAN', fresh: '✦ PERMAINAN BARU', level: 'Level', back: '← Kembali',
+          controls: 'Jalan: WASD / Panah  |  Tembak: Spasi  |  Menari: G  |  Kentut: F  |  Portal misteri bisa ke mana saja!' },
+    th: { name: 'ไทย', english: 'Thai', title: 'แสงแห่งสวรรค์',
+          story: ['ปีศาจขโมยแสงสีทองไป', 'แล้วซ่อนไว้บนเกาะสวรรค์!', 'ขุดในถ้ำนรกเพื่อหาพลังเวทมนตร์', 'ใช้มันเอาตัวรอดในคืนสัตว์ประหลาด', 'บนเกาะสวรรค์ แล้วชนะคริสตัลแสง 3 ชิ้น', 'เก็บให้ครบเพื่อปราบปีศาจ', 'และช่วยโลก!'],
+          tip: 'เคล็ดลับ: ซ่อนในถ้ำนรก 1 นาที — ขุดลึกๆ จะเจออาวุธหายาก แต่ระวังตัวตุ่นด้วย!', begin: 'แตะ คลิก กด SPACE หรือกด A เพื่อเริ่ม!',
+          cont: '▶ เล่นต่อ', fresh: '✦ เกมใหม่', level: 'ด่าน', back: '← กลับ',
+          controls: 'เดิน: WASD / ลูกศร  |  ยิง: Space  |  เต้น: G  |  ตด: F  |  ประตูลึกลับพาไปได้ทุกที่!' },
+    vi: { name: 'Tiếng Việt', english: 'Vietnamese', title: 'Ánh Sáng Thiên Đường',
+          story: ['Quỷ dữ đã lấy trộm Ánh Sáng Vàng', 'và giấu nó trên Đảo Thiên Đường!', 'Hãy đào trong hang Địa Ngục để có Sức Mạnh Phép Thuật.', 'Dùng nó để sống sót qua Đêm Quái Vật', 'trên Đảo Thiên Đường và giành 3 Viên Pha Lê Ánh Sáng.', 'Gom đủ tất cả để đánh bại Quỷ dữ', 'và cứu thế giới!'],
+          tip: 'Mẹo: trốn trong hang Địa Ngục 1 phút — đào thật sâu để tìm vũ khí hiếm, nhưng coi chừng chuột chũi!', begin: 'Chạm, nhấp, bấm SPACE hoặc bấm A để bắt đầu!',
+          cont: '▶ CHƠI TIẾP', fresh: '✦ CHƠI MỚI', level: 'Màn', back: '← Quay lại',
+          controls: 'Đi: WASD / Mũi tên  |  Bắn: Space  |  Nhảy múa: G  |  Xì hơi: F  |  Cổng bí ẩn đi đến bất cứ đâu!' },
+    fa: { name: 'فارسی', english: 'Persian', rtl: true, title: 'نور بهشت',
+          story: ['شیطان نور طلایی را دزدید', 'و آن را در جزیرهٔ بهشت پنهان کرد!', 'برای نیروی جادویی در غارهای جهنم بکن.', 'با آن از شب هیولاها جان سالم به در ببر', 'و در جزیرهٔ بهشت ۳ کریستال نور ببر.', 'همه را جمع کن تا شیطان را شکست بدهی', 'و دنیا را نجات بدهی!'],
+          tip: 'نکته: ۱ دقیقه در غارهای جهنم قایم شو — برای سلاح‌های کمیاب عمیق بکن، ولی مواظب موش‌کورها باش!', begin: 'برای شروع ضربه بزن، کلیک کن، SPACE یا A را بزن!',
+          cont: '▶ ادامه', fresh: '✦ بازی جدید', level: 'مرحله', back: 'بازگشت',
+          controls: 'حرکت: WASD / فلش‌ها  |  شلیک: Space  |  رقص: G  |  گوز: F  |  دروازه‌های اسرارآمیز به هر جایی می‌روند!' },
+    tl: { name: 'Filipino', english: 'Filipino', title: 'Ang Liwanag ng Paraiso',
+          story: ['Ninakaw ng Diyablo ang Gintong Liwanag', 'at itinago ito sa Isla ng Paraiso!', 'Maghukay sa mga kuweba ng Impiyerno para sa Mahikang Lakas.', 'Gamitin ito para makaligtas sa Gabi ng mga Halimaw', 'sa Isla ng Paraiso at manalo ng 3 Kristal ng Liwanag.', 'Kolektahin lahat para talunin ang Diyablo', 'at iligtas ang mundo!'],
+          tip: 'Tip: magtago sa mga kuweba ng Impiyerno nang 1 minuto — maghukay nang malalim para sa bihirang armas, pero ingat sa mga nunal!', begin: 'I-tap, i-click, pindutin ang SPACE o A para magsimula!',
+          cont: '▶ ITULOY', fresh: '✦ BAGONG LARO', level: 'Level', back: '← Bumalik',
+          controls: 'Galaw: WASD / Arrow  |  Bumaril: Space  |  Sumayaw: G  |  Umutot: F  |  Ang mga misteryong portal ay pupunta kahit saan!' },
+    sw: { name: 'Kiswahili', english: 'Swahili', title: 'Mwanga wa Peponi',
+          story: ['Shetani aliiba Mwanga wa Dhahabu', 'na kuuficha kwenye Kisiwa cha Peponi!', 'Chimba katika mapango ya Jehanamu upate Nguvu za Uchawi.', 'Zitumie kuokoka Usiku wa Majitu', 'kwenye Kisiwa cha Peponi na ushinde Fuwele 3 za Mwanga.', 'Zikusanye zote umshinde Shetani', 'na uokoe dunia!'],
+          tip: 'Kidokezo: jifiche kwenye mapango ya Jehanamu kwa dakika 1 — chimba chini sana upate silaha adimu, lakini jihadhari na fuko!', begin: 'Gusa, bofya, bonyeza SPACE au A kuanza!',
+          cont: '▶ ENDELEA', fresh: '✦ MCHEZO MPYA', level: 'Kiwango', back: '← Rudi',
+          controls: 'Tembea: WASD / Mishale  |  Piga: Space  |  Cheza dansi: G  |  Jamba: F  |  Milango ya siri inaenda popote!' },
+    ha: { name: 'Hausa', english: 'Hausa', title: 'Hasken Aljanna',
+          story: ['Shaiɗan ya saci Hasken Zinare', 'ya ɓoye shi a Tsibirin Aljanna!', 'Ka haƙa a cikin kogunan Wuta don samun Ƙarfin Sihiri.', 'Ka yi amfani da shi ka tsira a Daren Dodanni', "a Tsibirin Aljanna ka ci Lu'ulu'u 3 na Haske.", 'Ka tattara su duka don ka kayar da Shaiɗan', 'ka ceci duniya!'],
+          tip: 'Shawara: ka ɓuya a kogunan Wuta na minti 1 — ka haƙa da zurfi don makamai masu wuya, amma ka kula da ɓeraye!', begin: 'Taɓa, danna, ko danna SPACE ko A don farawa!',
+          cont: '▶ CI GABA', fresh: '✦ SABON WASA', level: 'Mataki', back: '← Koma',
+          controls: "Tafiya: WASD / Kibiyoyi  |  Harbi: Space  |  Rawa: G  |  F: 💨  |  Ƙofofin sirri suna zuwa ko'ina!" },
+    yo: { name: 'Yorùbá', english: 'Yoruba', title: 'Ìmọ́lẹ̀ Párádísè',
+          story: ['Sàtánì jí Ìmọ́lẹ̀ Wúrà', 'ó sì fi pamọ́ sí Erékùṣù Párádísè!', 'Wa ilẹ̀ nínú ihò Ọ̀run Àpáàdì fún Agbára Idán.', 'Lò ó láti la Òru Àwọn Ẹranko Abàmì já', 'ní Erékùṣù Párádísè kí o sì gba Kírísítálì Ìmọ́lẹ̀ mẹ́ta.', 'Kó gbogbo wọn jọ láti ṣẹ́gun Sàtánì', 'kí o sì gba ayé là!'],
+          tip: 'Ìmọ̀ràn: farapamọ́ sínú ihò Ọ̀run Àpáàdì fún ìṣẹ́jú 1 — wa jìn fún ohun ìjà tí kò wọ́pọ̀, ṣùgbọ́n ṣọ́ra fún àwọn eku!', begin: 'Fọwọ́ kàn án, tẹ̀ ẹ́, tàbí tẹ SPACE tàbí A láti bẹ̀rẹ̀!',
+          cont: '▶ TẸ̀SÍWÁJÚ', fresh: '✦ ERÉ TUNTUN', level: 'Ìpele', back: '← Padà',
+          controls: 'Rìn: WASD / Ọfà  |  Yìnbọn: Space  |  Jó: G  |  F: 💨  |  Àwọn ilẹ̀kùn àdììtú ń lọ sí ibikíbi!' },
+    am: { name: 'አማርኛ', english: 'Amharic', title: 'የገነት ብርሃን',
+          story: ['ሰይጣን ወርቃማውን ብርሃን ሰረቀ', 'በገነት ደሴትም ደበቀው!', 'ለአስማት ኃይል በሲኦል ዋሻዎች ውስጥ ቆፍር።', 'በእሱ የጭራቆችን ሌሊት ተርፍ', 'በገነት ደሴት 3 የብርሃን ክሪስታሎችን አሸንፍ።', 'ሰይጣንን ለማሸነፍ ሁሉንም ሰብስብ', 'ዓለምንም አድን!'],
+          tip: 'ምክር: በሲኦል ዋሻዎች ውስጥ ለ1 ደቂቃ ተደበቅ — ለብርቅዬ መሳሪያዎች በጥልቀት ቆፍር፣ ግን ፍልፈሎችን ተጠንቀቅ!', begin: 'ለመጀመር ንካ፣ ጠቅ አድርግ፣ ወይም SPACE ወይም A ተጫን!',
+          cont: '▶ ቀጥል', fresh: '✦ አዲስ ጨዋታ', level: 'ደረጃ', back: '← ተመለስ',
+          controls: 'ተንቀሳቀስ: WASD / ቀስቶች  |  ተኩስ: Space  |  ደንስ: G  |  F: 💨  |  ሚስጥራዊ በሮች የትም ይወስዳሉ!' },
+    zu: { name: 'isiZulu', english: 'Zulu', title: 'Ukukhanya Kwepharadesi',
+          story: ['USathane weba Ukukhanya Kwegolide', 'wakufihla eSiqhingini sePharadesi!', 'Mba emihumeni yesiHogo uthole Amandla Omlingo.', 'Wasebenzise ukuze usinde ngoBusuku Bezilwane', 'eSiqhingini sePharadesi uwine amaKristalu Okukhanya angu-3.', 'Wabuthe wonke ukuze unqobe uSathane', 'futhi usindise umhlaba!'],
+          tip: 'Icebiso: casha emihumeni yesiHogo umzuzu o-1 — mba ujule uthole izikhali ezingavamile, kodwa qaphela izimvukuzane!', begin: 'Thinta, chofoza, cindezela u-SPACE noma u-A ukuze uqale!',
+          cont: '▶ QHUBEKA', fresh: '✦ UMDLALO OMUSHA', level: 'Izinga', back: '← Buyela',
+          controls: 'Hamba: WASD / Imicibisholo  |  Dubula: Space  |  Dansa: G  |  F: 💨  |  Iminyango eyimfihlakalo iya noma kuphi!' },
+    af: { name: 'Afrikaans', english: 'Afrikaans', title: 'Die Lig van die Paradys',
+          story: ['Die Duiwel het die Goue Lig gesteel', 'en dit op die Paradys-eiland weggesteek!', 'Grou in die grotte van die Hel vir Towerkrag.', 'Gebruik dit om die Monsternag te oorleef', 'op die Paradys-eiland en wen 3 Ligkristalle.', 'Versamel hulle almal om die Duiwel te verslaan', 'en die wêreld te red!'],
+          tip: 'Wenk: kruip 1 minuut in die Hel se grotte weg — grou diep vir skaars wapens, maar pasop vir die molle!', begin: 'Tik, klik, druk SPASIE of druk A om te begin!',
+          cont: '▶ GAAN VOORT', fresh: '✦ NUWE SPELETJIE', level: 'Vlak', back: '← Terug',
+          controls: 'Loop: WASD / Pyltjies  |  Skiet: Spasie  |  Dans: G  |  Poep: F  |  Geheime portale gaan oral heen!' },
+    ht: { name: 'Kreyòl', english: 'Haitian Creole', title: 'Limyè Paradi a',
+          story: ['Dyab la vòlè Limyè Lò a', 'li kache l sou Zile Paradi a!', 'Fouye nan gwòt Lanfè yo pou jwenn Pouvwa Majik.', 'Sèvi avè l pou siviv Nwit Monstre yo', 'sou Zile Paradi a epi genyen 3 Kristal Limyè.', 'Ranmase yo tout pou bat Dyab la', 'epi sove mond lan!'],
+          tip: 'Konsèy: kache nan gwòt Lanfè yo pandan 1 minit — fouye fon pou zam ki ra, men fè atansyon ak tòp yo!', begin: 'Touche, klike, peze ESPAS oswa A pou kòmanse!',
+          cont: '▶ KONTINYE', fresh: '✦ NOUVO JWÈT', level: 'Nivo', back: '← Retounen',
+          controls: 'Mache: WASD / Flèch  |  Tire: Espas  |  Danse: G  |  Pete: F  |  Pòtay mistè yo ale nenpòt kote!' },
+    mi: { name: 'Te Reo Māori', english: 'Māori', title: 'Te Marama o Pararaiha',
+          story: ['I tāhaetia e te Rēwera te Marama Koura', 'ā, i hunaia ki te Motu o Pararaiha!', 'Kerihia ngā ana o Rēinga mō te Mana Makutu.', 'Whakamahia hei ora i te Pō Taniwha', 'i te Motu o Pararaiha, ā, toaina ngā Karaihe Marama e 3.', 'Kohia katoatia hei patu i te Rēwera', 'ā, whakaorangia te ao!'],
+          tip: 'Tohutohu: huna ki ngā ana o Rēinga mō te 1 meneti — keria hōhonu mō ngā patu onge, engari kia tūpato ki ngā kiore!', begin: 'Pāwhiritia, pēhia te SPACE, te A rānei kia tīmata!',
+          cont: '▶ HAERE TONU', fresh: '✦ KĒMU HOU', level: 'Taumata', back: '← Hoki',
+          controls: 'Neke: WASD / Pere  |  Pupuhi: Space  |  Kanikani: G  |  F: 💨  |  Ka haere ngā tomokanga muna ki hea rānei!' },
+};
+let lang = 'en';
+try { const saved = localStorage.getItem(LANG_KEY); if (LANGS[saved]) lang = saved; } catch (e) {}
+const langPick = { step: 'continent', cursor: Math.max(0, CONTINENTS.findIndex(c => c.langs.includes(lang))), continent: 0 };   // step is null once you've picked
+const LANG_BACK_BTN = { x: 330, y: 528, w: 140, h: 40 };
+function T(key) { const L = LANGS[lang] || LANGS.en; return L[key] ?? LANGS.en[key]; }
+function langItems() { return langPick.step === 'continent' ? CONTINENTS : CONTINENTS[langPick.continent].langs; }
+function langCols()  { return langPick.step === 'continent' ? 3 : 4; }
+function langBox(i) {
+    const cols = langCols(), cont = langPick.step === 'continent';
+    const w = cont ? 220 : 170, h = cont ? 150 : 62, gap = cont ? 20 : 14;
+    const x0 = 400 - (cols * w + (cols - 1) * gap) / 2, y0 = cont ? 150 : 140;
+    return { x: x0 + (i % cols) * (w + gap), y: y0 + Math.floor(i / cols) * (h + gap), w, h };
+}
+function moveLangCursor(dx, dy) {
+    const n = langItems().length, cols = langCols();
+    let c = langPick.cursor + dx + dy * cols;
+    if (c < 0 || c >= n) c = dy ? langPick.cursor : (c + n) % n;   // don't fall off the top or bottom
+    langPick.cursor = c; sfx('pop');
+}
+function langSelect(i = langPick.cursor) {
+    if (langPick.step === 'continent') {
+        langPick.continent = i; langPick.step = 'language';
+        langPick.cursor = Math.max(0, CONTINENTS[i].langs.indexOf(lang));
+    } else {
+        lang = CONTINENTS[langPick.continent].langs[i]; langPick.step = null;
+        try { localStorage.setItem(LANG_KEY, lang); } catch (e) {}
+    }
+    sfx('coin');
+}
+function langBack() {
+    if (langPick.step !== 'language') return;
+    langPick.step = 'continent'; langPick.cursor = langPick.continent; sfx('pop');
+}
+function langTap(x, y) {
+    if (langPick.step === 'language' && inRect(x, y, LANG_BACK_BTN)) { langBack(); return; }
+    const i = langItems().findIndex((_, k) => inRect(x, y, langBox(k)));
+    if (i >= 0) { langPick.cursor = i; langSelect(i); }
+}
+function langKey(e) {
+    const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0], ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] }[e.code];
+    if (nav) { e.preventDefault(); moveLangCursor(nav[0], nav[1]); }
+    if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); langSelect(); }
+    if (e.code === 'Escape' || e.code === 'Backspace') { e.preventDefault(); langBack(); }
+}
+// Shrinks the font until the text fits (some languages are much longer than English)
+function fitText(text, x, y, maxW, size, weight = '') {
+    let s = size;
+    do { ctx.font = `${weight} ${s}px Arial`.trim(); } while (ctx.measureText(text).width > maxW && --s > 8);
+    ctx.fillText(text, x, y);
+}
+
+function drawLanguagePicker() {
+    ctx.fillStyle = '#080018'; ctx.fillRect(0, 0, 800, 600);
+    const t = Date.now() / 3000;
+    for (let i = 0; i < 35; i++) { ctx.fillStyle = `rgba(255,255,255,${0.25 + 0.4 * Math.sin(t * 2.5 + i)})`; ctx.fillRect(((i * 137 + 50) % 760) + 20, ((i * 97 + 30) % 520) + 40, 2, 2); }
+    const cont = langPick.step === 'continent';
+    ctx.save(); ctx.textAlign = 'center'; ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 20; ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 34px Arial'; ctx.fillText(cont ? '🌍 Pick your continent' : `${CONTINENTS[langPick.continent].icon} Pick your language`, 400, 90);
+    ctx.restore();
+    if (!cont) { ctx.fillStyle = 'rgba(210,210,255,0.8)'; ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.fillText(CONTINENTS[langPick.continent].name, 400, 118); }
+    const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 300);
+    langItems().forEach((it, i) => {
+        const b = langBox(i), on = i === langPick.cursor;
+        ctx.fillStyle = on ? 'rgba(70,50,140,0.95)' : 'rgba(30,20,70,0.9)'; ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 10); ctx.fill();
+        ctx.strokeStyle = on ? `rgba(255,255,80,${pulse})` : 'rgba(255,255,255,0.18)'; ctx.lineWidth = on ? 3 : 1; ctx.stroke();
+        ctx.textAlign = 'center'; ctx.fillStyle = '#FFFFFF';
+        if (cont) {
+            ctx.font = '54px Arial'; ctx.fillText(it.icon, b.x + b.w / 2, b.y + 78);
+            ctx.font = 'bold 20px Arial'; ctx.fillText(it.name, b.x + b.w / 2, b.y + 122);
+        } else {
+            const L = LANGS[it];
+            fitText(L.name, b.x + b.w / 2, b.y + 30, b.w - 16, 20, 'bold');
+            ctx.fillStyle = 'rgba(210,210,255,0.7)'; ctx.font = '12px Arial'; ctx.fillText(L.english, b.x + b.w / 2, b.y + 50);
+        }
+    });
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '12px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('Arrows / stick to choose  ·  SPACE, A or tap to pick' + (cont ? '' : '  ·  ESC or B to go back'), 400, 508);
+    if (!cont) {
+        const b = LANG_BACK_BTN;
+        ctx.fillStyle = 'rgba(30,20,70,0.9)'; ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 10); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = '#FFFF80'; ctx.font = 'bold 16px Arial'; ctx.fillText('← Back', b.x + b.w / 2, b.y + 26);
+    }
+}
+
 function drawIntro() {
+    if (langPick.step) { drawLanguagePicker(); return; }
     ctx.fillStyle = '#080018';
     ctx.fillRect(0, 0, 800, 600);
 
@@ -9240,33 +9521,23 @@ function drawIntro() {
     ctx.save();
     ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 30;
     ctx.fillStyle   = '#FFD700';
-    ctx.font = 'bold 40px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('The Light of Paradise', 400, 78);
+    ctx.textAlign = 'center'; ctx.direction = T('rtl') ? 'rtl' : 'ltr';
+    fitText(T('title'), 400, 78, 760, 40, 'bold');
     ctx.restore();
+    ctx.save(); ctx.direction = T('rtl') ? 'rtl' : 'ltr';
 
     // Story text
-    const lines = [
-        'The Devil stole the Golden Light',
-        'and hid it on Paradise Island!',
-        '',
-        'Dig in the caves of Hell for Magic Power.',
-        'Use it to survive Monster Night',
-        'on Paradise Island and win 3 Light Crystals.',
-        '',
-        'Collect them all to defeat the Devil',
-        'and save the world!',
-        'by Goldwinner games',
-    ];
-    ctx.font = '18px Arial'; ctx.textAlign = 'center';
+    const st = T('story');
+    const lines = [st[0], st[1], '', st[2], st[3], st[4], '', st[5], st[6], 'by Goldwinner games'];
+    ctx.textAlign = 'center';
     lines.forEach((line, i) => {
         ctx.fillStyle = line === '' ? 'transparent' : 'rgba(210,210,255,0.92)';
-        ctx.fillText(line, 400, 138 + i * 34);
+        fitText(line, 400, 138 + i * 34, 760, 18);
     });
 
     // Hint: Caves
     ctx.fillStyle = 'rgba(180,120,60,0.7)';
-    ctx.font = '13px Arial';
-    ctx.fillText('Tip: Hide in Hell\'s caves for 1 minute — dig deep for rare weapons, but watch out for moles!', 400, 460);
+    fitText(T('tip'), 400, 468, 780, 13);
 
     // Pulsing Press Space
     const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 400);
@@ -9275,17 +9546,17 @@ function drawIntro() {
     ctx.shadowColor = '#FFFF00'; ctx.shadowBlur = 16 * pulse;
     ctx.font = 'bold 22px Arial'; ctx.textAlign = 'center';
     if (!savedGame) {
-        ctx.fillText('Tap, click, press SPACE or press A to Begin!', 400, 508);
+        fitText(T('begin'), 400, 508, 760, 22, 'bold');
         ctx.restore();
     } else {
         ctx.restore();
         // Saved game: Continue or start again
-        for (const [b, label, sub] of [[CONTINUE_BTN, '▶ CONTINUE', `Level ${savedGame.level} · 🪙${savedGame.coins}  (SPACE / A)`],
-                                       [NEW_GAME_BTN, '✦ NEW GAME', '(N / X)']]) {
+        for (const [b, label, sub] of [[CONTINUE_BTN, T('cont'), `${T('level')} ${savedGame.level} · 🪙${savedGame.coins}  (SPACE / A)`],
+                                       [NEW_GAME_BTN, T('fresh'), '(N / X)']]) {
             ctx.fillStyle = 'rgba(30,20,70,0.9)'; ctx.fillRect(b.x, b.y, b.w, b.h);
             ctx.strokeStyle = `rgba(255,255,80,${pulse})`; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
             ctx.fillStyle = '#FFFF80'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
-            ctx.fillText(label, b.x + b.w / 2, b.y + 24);
+            fitText(label, b.x + b.w / 2, b.y + 24, b.w - 10, 16, 'bold');
             ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '10px Arial';
             ctx.fillText(sub, b.x + b.w / 2, b.y + b.h + 13);
         }
@@ -9293,7 +9564,10 @@ function drawIntro() {
 
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = '11px Arial';
-    ctx.fillText('Move: WASD / Arrows  |  Shoot: Space  |  Dance: G  |  Fart: F  |  Mystery portals go anywhere!', 400, 562);
+    fitText(T('controls'), 400, 562, 780, 11);
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '12px Arial'; ctx.direction = 'ltr';
+    ctx.fillText(`🌐 ${LANGS[lang].name}  (L to change)`, 400, 586);
+    ctx.restore();
 }
 
 // ── DRAW: PORTALS ─────────────────────────────────────────────
