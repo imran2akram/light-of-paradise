@@ -3351,8 +3351,9 @@ function updateCrossover(P) {
 function drawCrossover(P, verb) {
     const R = P.rover;
     if (R) {   // Rover: a big friendly purple monster dog
-        ctx.save(); ctx.font = '34px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.filter = 'hue-rotate(240deg) saturate(1.5)';
-        ctx.fillText('🐕', R.x, R.y + Math.sin(Date.now() / 100) * 2); ctx.restore();
+        drawGroundShadow(R.x + 2, R.y + 16, 16, 5, 0.3);
+        const spr = sculptedEmoji('🐕', 34, 'hue-rotate(240deg) saturate(1.5)', false);
+        ctx.drawImage(spr, R.x - spr.width / 2, R.y - spr.height / 2 + Math.sin(Date.now() / 100) * 2);
         ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('Rover', R.x, R.y + 26);
     }
     if (state.room === ROOM.STONEHEART) {
@@ -10194,6 +10195,32 @@ function drawEnemyInner(e, t) {
     drawEnemyBody(e, t);
 }
 
+// Emoji monsters are flat stickers: light them from above, shade them underneath and give them
+// a skin texture so they look solid. Each one is drawn once and kept.
+const sculptCache = new Map();
+function sculptedEmoji(char, size, filter, flash) {
+    const key = `${char}|${Math.round(size)}|${filter || ''}|${flash ? 1 : 0}`;
+    let c = sculptCache.get(key);
+    if (c) return c;
+    const n = Math.ceil(size * 1.4);
+    c = document.createElement('canvas'); c.width = c.height = n;
+    const g = c.getContext('2d');
+    g.font = `${size}px Arial`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    if (filter) g.filter = filter;
+    g.fillText(char, n / 2, n / 2); g.filter = 'none';
+    g.globalCompositeOperation = 'source-atop';
+    const light = g.createRadialGradient(n * 0.35, n * 0.28, 0, n * 0.5, n * 0.5, n * 0.62);   // light from the top left
+    light.addColorStop(0, 'rgba(255,255,240,0.32)'); light.addColorStop(0.45, 'rgba(255,255,255,0)'); light.addColorStop(1, 'rgba(10,0,20,0.5)');
+    g.fillStyle = light; g.fillRect(0, 0, n, n);
+    for (let i = 0; i < n * n / 18; i++) {   // bumpy skin
+        g.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.07)';
+        g.fillRect(Math.random() * n, Math.random() * n, 1 + Math.random() * 1.5, 1 + Math.random() * 1.5);
+    }
+    if (flash) { g.fillStyle = 'rgba(255,40,40,0.55)'; g.fillRect(0, 0, n, n); }
+    if (sculptCache.size > 400) sculptCache.clear();
+    sculptCache.set(key, c);
+    return c;
+}
 function drawEmojiEnemy(e, t) {
     const info = ENEMY_TYPES[e.type], size = e.r * 2.2;
     const bob = e.type === 'book' ? Math.sin(t * 8 + e.home.x) * 4 : 0;
@@ -10218,7 +10245,7 @@ function drawEmojiEnemy(e, t) {
         ctx.font = `${e.r * 1.1}px Arial`;
         [['🐲', -0.55, -0.45], ['👸', 0.55, -0.45], ['🐂', -0.6, 0.45], ['🤖', 0.6, 0.45], ['👹', 0, 0]].forEach(([em, ox, oy]) => ctx.fillText(em, ox * e.r, oy * e.r + Math.sin(t * 4 + ox * 3) * 2));
     } else if (e.type === 'cerberus') { ctx.font = `${size * 0.7}px Arial`; ctx.fillText('🐕', -e.r * 0.7, 4); ctx.fillText('🐕', e.r * 0.7, 4); ctx.fillText('🐕', 0, -e.r * 0.5); }   // three heads!
-    else ctx.fillText(info.emoji, 0, 0);
+    else { ctx.filter = 'none'; const spr = sculptedEmoji(info.emoji, size, info.filter, e.hitFlash > 0); ctx.drawImage(spr, -spr.width / 2, -spr.height / 2); }
     if (info.crown) { ctx.font = `${e.r * 0.8}px Arial`; ctx.fillText('👑', 0, -e.r * 1.05); }
     if (e.type === 'medusa') { ctx.font = `${e.r * 0.7}px Arial`; for (let k = 0; k < 5; k++) ctx.fillText('🐍', Math.cos(k * 0.8 - 1.6 - 0.4) * e.r * 0.9, -e.r * 0.6 + Math.sin(k * 0.8 - 2) * e.r * 0.5 + Math.sin(t * 6 + k) * 2); }
     ctx.restore();
@@ -11504,9 +11531,11 @@ function drawRoomBackground() {
 
 // Soft shadow on the ground under something
 function drawGroundShadow(x, y, rx, ry = rx * 0.35, alpha = 0.3) {
-    ctx.save();
-    ctx.fillStyle = `rgba(0,0,0,${alpha})`;
-    ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.save();   // soft-edged, darkest right under the feet, like a real shadow
+    ctx.translate(x, y); ctx.scale(1, ry / rx);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx * 1.25);
+    g.addColorStop(0, `rgba(0,0,0,${Math.min(0.6, alpha * 1.5)})`); g.addColorStop(0.55, `rgba(0,0,0,${alpha})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, rx * 1.25, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
 }
 
@@ -11771,6 +11800,12 @@ function drawHair(x, y, k, style, color) {
 
 // A person facing you. (x, y) is the middle of their body; k = size (1 = the player's size).
 // o: { shirt, pants, shoes, skin, hair, hairStyle, walk, noFace, beard }
+// Makes a flat limb look round: light down one side, shadow down the other
+function roundShade(x, y, w, h, r = 0) {
+    const g = ctx.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0.16)'); g.addColorStop(0.35, 'rgba(255,255,255,0.05)'); g.addColorStop(1, 'rgba(0,0,0,0.32)');
+    ctx.save(); ctx.fillStyle = g; if (r) { pathRoundRect(x, y, w, h, r); ctx.fill(); } else ctx.fillRect(x, y, w, h); ctx.restore();
+}
 function drawHuman(x, y, k, o) {
     const walk = o.walk || 0, step = Math.sin(walk) * 3.5 * k, swing = Math.sin(walk) * 3 * k;
     const skin = o.skin || '#F2C49B';
@@ -11778,13 +11813,15 @@ function drawHuman(x, y, k, o) {
     ctx.fillStyle = o.pants || '#2E3A5A';
     ctx.fillRect(x - 6 * k, y + 4 * k, 5 * k, 12 * k - Math.max(0, step));
     ctx.fillRect(x + 1 * k, y + 4 * k, 5 * k, 12 * k - Math.max(0, -step));
+    roundShade(x - 6 * k, y + 4 * k, 5 * k, 12 * k - Math.max(0, step));
+    roundShade(x + 1 * k, y + 4 * k, 5 * k, 12 * k - Math.max(0, -step));
     ctx.fillStyle = o.shoes || '#3A2616';
     pathRoundRect(x - 7 * k, y + 14.5 * k - Math.max(0, step), 6.5 * k, 3.5 * k, 1.5 * k); ctx.fill();
     pathRoundRect(x + 0.5 * k, y + 14.5 * k - Math.max(0, -step), 6.5 * k, 3.5 * k, 1.5 * k); ctx.fill();
     // Arms swing while walking
     ctx.fillStyle = o.sleeves || o.shirt;
-    pathRoundRect(x - 11.5 * k, y - 7 * k + swing, 4.5 * k, 11 * k, 2 * k); ctx.fill();
-    pathRoundRect(x + 7 * k,    y - 7 * k - swing, 4.5 * k, 11 * k, 2 * k); ctx.fill();
+    pathRoundRect(x - 11.5 * k, y - 7 * k + swing, 4.5 * k, 11 * k, 2 * k); ctx.fill(); roundShade(x - 11.5 * k, y - 7 * k + swing, 4.5 * k, 11 * k, 2 * k);
+    pathRoundRect(x + 7 * k,    y - 7 * k - swing, 4.5 * k, 11 * k, 2 * k); ctx.fill(); roundShade(x + 7 * k,    y - 7 * k - swing, 4.5 * k, 11 * k, 2 * k);
     ctx.fillStyle = o.hands || skin;
     ctx.beginPath(); ctx.arc(x - 9.2 * k, y + 5 * k + swing, 2.4 * k, 0, Math.PI * 2); ctx.arc(x + 9.2 * k, y + 5 * k - swing, 2.4 * k, 0, Math.PI * 2); ctx.fill();
     // Body
@@ -11793,29 +11830,45 @@ function drawHuman(x, y, k, o) {
     const shade = ctx.createLinearGradient(x - 8 * k, 0, x + 8 * k, 0);
     shade.addColorStop(0, 'rgba(255,255,255,0.18)'); shade.addColorStop(1, 'rgba(0,0,0,0.22)');
     ctx.fillStyle = shade; pathRoundRect(x - 8 * k, y - 8.5 * k, 16 * k, 14 * k, 3.5 * k); ctx.fill();
+    const drape = ctx.createLinearGradient(0, y - 8.5 * k, 0, y + 5.5 * k);   // light on the shoulders, shadow at the waist
+    drape.addColorStop(0, 'rgba(255,255,255,0.12)'); drape.addColorStop(0.6, 'rgba(0,0,0,0)'); drape.addColorStop(1, 'rgba(0,0,0,0.2)');
+    ctx.fillStyle = drape; pathRoundRect(x - 8 * k, y - 8.5 * k, 16 * k, 14 * k, 3.5 * k); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 0.7 * k;   // shirt folds and collar
+    ctx.beginPath(); ctx.moveTo(x - 3 * k, y - 8.3 * k); ctx.lineTo(x, y - 5 * k); ctx.lineTo(x + 3 * k, y - 8.3 * k);
+    ctx.moveTo(x - 4 * k, y + 1 * k); ctx.quadraticCurveTo(x - 2 * k, y + 3 * k, x - 3 * k, y + 5 * k); ctx.moveTo(x + 4.5 * k, y); ctx.quadraticCurveTo(x + 3 * k, y + 2.5 * k, x + 3.5 * k, y + 5 * k); ctx.stroke();
     // Neck, head and ears
     const hk = k * (mod('bigHead') ? 1.8 : 1);   // 🗿 Big Heads mod
     const hy = y - 16 * k - (hk - k) * 6;
     ctx.fillStyle = skin;
     ctx.fillRect(x - 2 * k, y - 11 * k, 4 * k, 3 * k);
+    ctx.fillStyle = 'rgba(90,40,20,0.3)'; ctx.fillRect(x - 2 * k, y - 11 * k, 4 * k, 1.6 * k);   // shadow under the chin
     ctx.beginPath(); ctx.arc(x - 6.4 * hk, hy + 0.5 * hk, 1.7 * hk, 0, Math.PI * 2); ctx.arc(x + 6.4 * hk, hy + 0.5 * hk, 1.7 * hk, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(x, hy, 6.4 * hk, 7.2 * hk, 0, 0, Math.PI * 2); ctx.fill();
     const face = ctx.createRadialGradient(x - 2 * hk, hy - 2 * hk, 1, x, hy, 7.5 * hk);
-    face.addColorStop(0, 'rgba(255,255,255,0.15)'); face.addColorStop(1, 'rgba(120,60,30,0.18)');
+    face.addColorStop(0, 'rgba(255,255,255,0.22)'); face.addColorStop(0.6, 'rgba(0,0,0,0)'); face.addColorStop(1, 'rgba(110,50,25,0.3)');
     ctx.fillStyle = face; ctx.beginPath(); ctx.ellipse(x, hy, 6.4 * hk, 7.2 * hk, 0, 0, Math.PI * 2); ctx.fill();
     drawHair(x, hy, hk, o.hairStyle, o.hair || '#5A3A1E');
+    if (o.hairStyle) { ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 1.1 * hk; ctx.beginPath(); ctx.arc(x - 0.5 * hk, hy - 1 * hk, 5.6 * hk, -2.5, -1.4); ctx.stroke(); }   // shiny hair
     if (o.noFace) return;
     // Face: eyes with whites, eyebrows, nose, smile, rosy cheeks
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath(); ctx.ellipse(x - 2.6 * hk, hy - 0.5 * hk, 1.8 * hk, 1.4 * hk, 0, 0, Math.PI * 2); ctx.ellipse(x + 2.6 * hk, hy - 0.5 * hk, 1.8 * hk, 1.4 * hk, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = o.eyes || '#3A2A1A';
-    ctx.beginPath(); ctx.arc(x - 2.4 * hk, hy - 0.4 * hk, 1 * hk, 0, Math.PI * 2); ctx.arc(x + 2.8 * hk, hy - 0.4 * hk, 1 * hk, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = o.eyes || '#5A3A20';   // coloured iris, dark pupil, a shine of light
+    ctx.beginPath(); ctx.arc(x - 2.4 * hk, hy - 0.4 * hk, 1.1 * hk, 0, Math.PI * 2); ctx.arc(x + 2.8 * hk, hy - 0.4 * hk, 1.1 * hk, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#100808';
+    ctx.beginPath(); ctx.arc(x - 2.4 * hk, hy - 0.4 * hk, 0.55 * hk, 0, Math.PI * 2); ctx.arc(x + 2.8 * hk, hy - 0.4 * hk, 0.55 * hk, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath(); ctx.arc(x - 2.75 * hk, hy - 0.8 * hk, 0.35 * hk, 0, Math.PI * 2); ctx.arc(x + 2.45 * hk, hy - 0.8 * hk, 0.35 * hk, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(60,30,20,0.55)'; ctx.lineWidth = 0.5 * hk;   // eyelids
+    ctx.beginPath(); ctx.ellipse(x - 2.6 * hk, hy - 0.5 * hk, 1.8 * hk, 1.4 * hk, 0, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(x + 2.6 * hk, hy - 0.5 * hk, 1.8 * hk, 1.4 * hk, 0, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
     ctx.strokeStyle = o.hair || '#5A3A1E'; ctx.lineWidth = 0.9 * hk;
     ctx.beginPath(); ctx.moveTo(x - 4.2 * hk, hy - 2.6 * hk); ctx.lineTo(x - 1.2 * hk, hy - 2.9 * hk); ctx.moveTo(x + 1.2 * hk, hy - 2.9 * hk); ctx.lineTo(x + 4.2 * hk, hy - 2.6 * hk); ctx.stroke();
     ctx.strokeStyle = 'rgba(150,80,50,0.6)'; ctx.lineWidth = 0.8 * hk;
     ctx.beginPath(); ctx.moveTo(x + 0.2 * hk, hy + 0.5 * hk); ctx.lineTo(x + 0.8 * hk, hy + 2.3 * hk); ctx.lineTo(x - 0.4 * hk, hy + 2.4 * hk); ctx.stroke();
     ctx.strokeStyle = '#8A3A2A'; ctx.lineWidth = 1 * hk;
     ctx.beginPath(); ctx.arc(x, hy + 3 * hk, 2 * hk, 0.2, Math.PI - 0.2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(200,90,90,0.45)'; ctx.lineWidth = 0.8 * hk; ctx.beginPath(); ctx.arc(x, hy + 3.6 * hk, 1.4 * hk, 0.5, Math.PI - 0.5); ctx.stroke();   // bottom lip
     ctx.fillStyle = 'rgba(255,120,120,0.25)';
     ctx.beginPath(); ctx.arc(x - 4 * hk, hy + 2.2 * hk, 1.5 * hk, 0, Math.PI * 2); ctx.arc(x + 4 * hk, hy + 2.2 * hk, 1.5 * hk, 0, Math.PI * 2); ctx.fill();
     if (o.beard) {
