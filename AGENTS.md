@@ -56,6 +56,10 @@ There is no test framework. Validate changes by:
 - **Audio** — Web Audio synth: `SFX` table, `sfx(name)`, and per-room `SONGS`.
 - **Saving** — `SAVE_FIELDS` (the list of `state` keys saved to `localStorage`), plus `lop_world` (blocks), `lop_awards`, `lop_highscore`, `lop_muted`. Old saves are patched in `startFromIntro()`.
 - **Awards** — `AWARDS` list, `giveAward(id)`, `countStat()`.
+- **Planet** — `PLANET` grid of rooms (wraps east–west; over a pole lands on the far side). `tryPlanetEdge()` moves you to the neighbour when you push into an edge; `drawPlanetSigns()` labels each edge. Heaven, Hell, the Void, space and door-only places are not on it.
+- **Missions & quests** — `MISSIONS[level-1].steps` (a step has `check()` or is marked with `missionMark(id)`); `devilOpen()` gates hurting the Devil. Villager quests are `VILLAGER_QUESTS`; progress goes through `questProgress(kinds)` with kinds like `kills`, `kill:<type>`, `visit:<room>`, `fish`, `farts`, `collect`, `race`.
+- **Languages** — `CONTINENTS` / `LANGS` and `T(key)`; only the title screen is translated. `langPick.step` is non-null while the picker shows.
+- **Atmosphere** — `WORLD_AIR[room]` lists per-frame effects drawn by `drawWorldAir()`; `sculptedEmoji()` caches lit, textured emoji sprites for monsters.
 
 ### Main loop
 
