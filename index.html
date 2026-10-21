@@ -6801,6 +6801,82 @@ function changeRoom(dest) {
     if (state.gamePhase === 'playing') maybeMiniBoss();
 }
 
+// ── PLANET PARADISE: the worlds sit side by side on one little planet ──
+// Walk off the edge of a world into the next one. East and west wrap all the way round;
+// walking over the North or South Pole brings you down the other side of the planet.
+// (Heaven, Hell, the Void, space and the places behind doors aren't on the planet's surface.)
+const PLANET = [
+    ['viking',     'ice',    'icecave',   'haunted', 'medieval', 'stoneheart'],   // ❄ the cold north
+    ['greece',     'candy',  'paradise',  'mall',    'toy',      'lastkids'],     // 🏝 the middle
+    ['piratecove', 'jungle', 'treehouse', 'dino',    'volcano',  'pyramid'],      // 🔥 the hot south
+];   // an even number of columns, so going over a pole and straight back brings you home
+const PLANET_PUSH = 10;   // frames of walking into an edge before you go over it (so you don't fall out by accident)
+let planetPush = 0;
+let planetPoleLock = null;   // after going over a pole you're upside down: let go of that direction before it counts again
+function planetCell(room = state.room) {
+    for (let r = 0; r < PLANET.length; r++) { const c = PLANET[r].indexOf(room); if (c >= 0) return { r, c }; }
+    return null;
+}
+// Where walking off an edge takes you: { room, pole } (pole = you went over the top or bottom of the planet)
+function planetNeighbour(dir, room = state.room) {
+    const at = planetCell(room); if (!at) return null;
+    const cols = PLANET[0].length, rows = PLANET.length;
+    if (dir === 'e' || dir === 'w') return { room: PLANET[at.r][(at.c + (dir === 'e' ? 1 : cols - 1)) % cols], pole: false };
+    const r = at.r + (dir === 's' ? 1 : -1);
+    if (r < 0 || r >= rows) return { room: PLANET[at.r][(at.c + Math.floor(cols / 2)) % cols], pole: true };
+    return { room: PLANET[r][at.c], pole: false };
+}
+function worldName(room) { return room === ROOM.PARADISE ? '🏝 PARADISE ISLAND' : (PLACES[room] ? PLACES[room].name : room); }
+// Walking into an edge: dx/dy is which way you're pushing
+function tryPlanetEdge(dx, dy) {
+    if (!planetCell() || state.mount === 'yard' || state.buildMode) { planetPush = 0; return false; }
+    const dir = player.x <= 19 && dx < -0.3 ? 'w' : player.x >= GAME_W - 19 && dx > 0.3 ? 'e'
+              : player.y <= 53 && dy < -0.3 ? 'n' : player.y >= GAME_H - 19 && dy > 0.3 ? 's' : null;
+    const pushing = { n: dy < -0.3, s: dy > 0.3 }[planetPoleLock];
+    if (planetPoleLock && !pushing) planetPoleLock = null;
+    if (!dir || (planetPoleLock && dir === planetPoleLock)) { planetPush = 0; return false; }
+    if (++planetPush < PLANET_PUSH) return false;
+    planetPush = 0;
+    const nb = planetNeighbour(dir), { x, y } = player;
+    changeRoom(nb.room);
+    if (dir === 'e') { player.x = 34; player.y = y; }
+    if (dir === 'w') { player.x = GAME_W - 34; player.y = y; }
+    if (dir === 'n') { player.x = nb.pole ? GAME_W - x : x; player.y = nb.pole ? 74 : 540; }
+    if (dir === 's') { player.x = nb.pole ? GAME_W - x : x; player.y = nb.pole ? 540 : 74; }
+    planetPoleLock = nb.pole ? dir : null;
+    planetSafeSpot(...{ e: [1, 0], w: [-1, 0], n: [0, nb.pole ? 1 : -1], s: [0, nb.pole ? -1 : 1] }[dir]);   // which way is "further in" 
+    placePetBesidePlayer();
+    for (const f of activeFriends()) { f.x = player.x + 30 * (f.n - 1); f.y = player.y; }
+    showToast(nb.pole ? `🪐 Over the ${dir === 'n' ? 'North' : 'South'} Pole to ${worldName(nb.room)}!` : `🪐 ${worldName(nb.room)}`, '#AADDFF', 160);
+    return true;
+}
+// Don't arrive standing in lava, a pit or a wall
+function planetSafeSpot(ix, iy) {
+    const bad = () => playerHitsBlock(player.x, player.y)
+        || (state.room === ROOM.JUNGLE && inRectXY(player.x, player.y, JUNGLE_PIT))
+        || (state.room === ROOM.VOLCANO && LAVA_RIVERS.some(r => inRectXY(player.x, player.y, { x: r.x - 16, y: r.y - 16, w: r.w + 32, h: r.h + 32 })));
+    for (let k = 0; k < 40 && bad(); k++) {
+        if (state.room === ROOM.JUNGLE && inRectXY(player.x, player.y, JUNGLE_PIT)) { player.x = JUNGLE_PIT.x - 30; continue; }
+        player.x = Math.max(18, Math.min(GAME_W - 18, player.x + ix * 12));
+        player.y = Math.max(52, Math.min(GAME_H - 18, player.y + iy * 12));
+    }
+}
+// Little signposts at the edges so you know where each way goes
+function drawPlanetSigns() {
+    if (!planetCell() || state.gamePhase !== 'playing' || menu || state.shopOpen) return;
+    const sign = (dir, x, y, arrow) => {
+        const nb = planetNeighbour(dir), text = nb.pole ? `${arrow} ${dir === 'n' ? 'North' : 'South'} Pole → ${worldName(nb.room)}` : `${arrow} ${worldName(nb.room)}`;
+        ctx.font = 'bold 10px Arial'; const w = ctx.measureText(text).width + 12;
+        const bx = Math.max(4, Math.min(GAME_W - w - 4, x - w / 2));
+        ctx.fillStyle = 'rgba(10,20,40,0.6)'; ctx.beginPath(); ctx.roundRect(bx, y - 11, w, 16, 6); ctx.fill();
+        ctx.fillStyle = '#CDE8FF'; ctx.textAlign = 'left'; ctx.fillText(text, bx + 6, y + 1);
+    };
+    ctx.save();
+    sign('w', 70, 384, '◀'); sign('e', GAME_W - 70, 384, '▶');
+    sign('n', 560, 62, '▲'); sign('s', 610, 574, '▼');
+    ctx.restore();
+}
+
 // ── UPDATE: PLAYER ────────────────────────────────────────────
 function updatePlayer() {
     if (state.won || state.levelComplete || state.gamePhase !== 'playing') return;
@@ -6859,6 +6935,7 @@ function updatePlayer() {
         }
     }
     if (updatePlaceExits()) return;
+    if (tryPlanetEdge(dx, dy)) return;
     // Out through your front door, back to the house you came in by
     if (state.room === ROOM.HOUSE && player.y > 560 && Math.abs(player.x - HOUSE_DOOR.x) < 24) {
         const door = houseDoors().find(d => d.id === state.houseFrom) || houseDoors()[0];
@@ -12558,6 +12635,7 @@ function draw() {
     else if (state.room === ROOM.HELL && isPlayerPhysicallyInCave() && !state.won && !state.levelComplete) drawInsideCave();
     else if (!state.won && !state.levelComplete) drawVignette();
     drawFloatTexts();
+    drawPlanetSigns();
     drawJoinProgress();
     drawControlsPanel();
     drawHUD();
