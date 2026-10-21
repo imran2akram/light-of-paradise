@@ -121,7 +121,8 @@ const ROOM  = { VOID: 'void', HELL: 'hell', PARADISE: 'paradise', SECRET: 'secre
                 GREECE: 'greece', MAZE: 'maze', GORGON: 'gorgon', UNDERWORLD: 'underworld', VIKING: 'viking',
                 CANDYVOLCANO: 'candyvolcano', SEACITY: 'seacity', MOONBASE: 'moonbase', CLOUDCASTLE: 'cloudcastle', ICECAVE: 'icecave',
                 TREEHOUSE: 'treehouse', FACTORY: 'factory', TOYSHOP: 'toyshop', MUSEUM: 'museum', UNDERBED: 'underbed',
-                BACKYARD: 'backyard', SECRETROOM: 'secretroom', STADIUM: 'stadium', SNOWFORT: 'snowfort', MEDIEVAL: 'medieval', MICROWORLD: 'microworld' };
+                BACKYARD: 'backyard', SECRETROOM: 'secretroom', STADIUM: 'stadium', SNOWFORT: 'snowfort', MEDIEVAL: 'medieval', MICROWORLD: 'microworld',
+                LASTKIDS: 'lastkids', STONEHEART: 'stoneheart' };
 const MAIN_ROOMS = [ROOM.VOID, ROOM.HELL, ROOM.PARADISE, ROOM.HEAVEN];   // where mystery portals can take you
 
 // ── SECRET ROOMS ─────────────────────────────────────────────
@@ -223,6 +224,9 @@ const ENEMY_TYPES = {
     ant:       { name: 'Giant Ant',    hp: 2,  weakTo: POWER.WATER,     color: '#442222', emoji: '🐜' },   // Micro World
     snowkid:   { name: 'Snowball Kid', hp: 3,  weakTo: POWER.BRIMSTONE, color: '#AADDFF', emoji: '🧒' },   // Snowball Fight
     penguinpal:{ name: 'Ice Penguin',  hp: 3,  weakTo: POWER.BRIMSTONE, color: '#222233', emoji: '🐧', filter: 'hue-rotate(180deg)' },   // grumpy penguins
+    blarg:     { name: 'Blarg',        hp: 30, weakTo: POWER.LIGHTNING, color: '#7A3AAA', emoji: '🦖', filter: 'hue-rotate(200deg) saturate(1.6)' },   // Last Kids' Town boss
+    taint:     { name: 'Stone Taint',  hp: 4,  weakTo: POWER.WATER,     color: '#888888', emoji: '👺', filter: 'grayscale(1) brightness(1.1)' },   // living gargoyle statues
+    stonedragon:{ name: 'Stone Dragon', hp: 32, weakTo: POWER.WATER,    color: '#999999', emoji: '🐉', filter: 'grayscale(1) brightness(1.3)' },   // Stoneheart London boss
 };
 const CREEPER_FUSE = 50;   // frames of hissing before it explodes
 const SHADOW_CHANCE = 0.3;   // chance Shadow You is waiting in Hell
@@ -1285,6 +1289,7 @@ let state = {
     creature:           null,            // 🐣 magic creature you look after
     creatureFood:       0,               // 0-100, goes down slowly
     trials:             {},              // ⚡ hero trials beaten (hydra, minotaur, medusa, cerberus)
+    crossover:          {},              // 🧟🗿 crossover bosses beaten (lastkids, stoneheart)
     fleece:             false,           // 🐑 the Golden Fleece
     fullGod:            false,           // finished every hero trial!
     stoned:             0,               // 🗿 frames left as a statue
@@ -2263,6 +2268,14 @@ function moveNewBoss(e, chase) {
     if (['chocoblob', 'snake', 'dustbunny', 'penguinpal'].includes(e.type)) { chase(1.2); return true; }
     if (e.type === 'minibot' || e.type === 'bonesaur' || e.type === 'knight') { chase(1.1); return true; }
     if (e.type === 'ant') { chase(1.5); e.x += Math.sin(Date.now() / 90 + e.home.x) * 0.8; return true; }
+    if (e.type === 'taint') { chase(1.3); e.y += Math.sin(Date.now() / 120 + e.home.x) * 1.2; return true; }   // flaps its stone wings
+    if (e.type === 'blarg') {
+        chase(0.8);
+        if (Math.random() < 0.008) { spawnFloatText(e.x, e.y - e.r - 10, 'BLARG!', '#CC88FF', 50); triggerShake(6); sfx('dragonRoar'); }
+        if (Math.random() < 0.01) enemyShoot(e, 4, '#88FF44', [-0.3, 0, 0.3]);   // monster goo
+        return true;
+    }
+    if (e.type === 'stonedragon') { chase(0.5); if (Math.random() < 0.012) { enemyShoot(e, 4.5, '#AAAAAA', [-0.4, -0.2, 0, 0.2, 0.4]); sfx('dragonRoar'); } return true; }
     if (e.type === 'dragonking') { chase(0.6); if (Math.random() < 0.012) { enemyShoot(e, 4.5, '#FF5522', [-0.3, 0, 0.3]); sfx('dragonRoar'); } return true; }
     if (e.type === 'snowkid') {   // pops up behind its snow fort and throws snowballs
         e.x = e.home.x + Math.sin(Date.now() / 700 + e.home.y) * 60;
@@ -3214,11 +3227,229 @@ function updateSubplace() {
         for (let k = 0; k < 4; k++) P.coins.push({ x: 300 + Math.random() * 200, y: 120 + Math.random() * 300, picked: false });
         spawnParticles(400, 70, '#FF66AA', 20); triggerShake(4);
     }
+    if (CROSSOVER_ROOMS.includes(state.room)) updateCrossover(P);
     if (state.room === ROOM.MUSEUM && P.night > 0 && --P.night === 0) {   // 🌙 the museum comes alive!
         P.enemies.push(e0('bonesaur', 180, 160), e0('bonesaur', 620, 160), e0('bonesaur', 180, 440), e0('bonerex', 620, 440, { r: 36, coinDrop: 30 }));
         showToast('🌙 NIGHT AT THE MUSEUM! The dinosaurs came ALIVE!', '#CCCCFF', 240); sfx('dragonRoar'); triggerShake(14);
     }
 }
+// 🧟🗿 CROSSOVER: Rover the monster dog runs at bad guys; the Gunner statue gives advice in London
+const CROSSOVER_ROOMS = ['lastkids', 'stoneheart'];
+const GUNNER          = { x: 160, y: 210 };   // stands on his plinth in London
+const ROVER_BITE      = 40;                   // frames between Rover's chomps
+const CROSSOVER_BOSS  = { lastkids: 'blarg', stoneheart: 'stonedragon' };
+function updateCrossover(P) {
+    if (!P.rover) P.rover = { x: player.x - 40, y: player.y, bite: 0 };
+    const R = P.rover;
+    const foe = P.enemies.filter(e => e.alive && !(e.emerge > 0))
+                         .sort((a, b) => Math.hypot(a.x - R.x, a.y - R.y) - Math.hypot(b.x - R.x, b.y - R.y))[0];
+    const goal = foe && Math.hypot(foe.x - player.x, foe.y - player.y) < 260 ? foe : { x: player.x - 36, y: player.y + 10 };
+    const d = Math.hypot(goal.x - R.x, goal.y - R.y);
+    if (d > 6) { R.x += (goal.x - R.x) / d * 2.4; R.y += (goal.y - R.y) / d * 2.4; }
+    if (R.bite > 0) R.bite--;
+    if (foe && goal === foe && d < foe.r + 16 && !R.bite) {
+        R.bite = ROVER_BITE; damageEnemy(foe, POWER.NONE); sfx('hit');
+        spawnFloatText(R.x, R.y - 24, ['CHOMP!', 'WOOF!', 'GRRR!'][Math.floor(Math.random() * 3)], '#FFCC66', 40);
+    }
+    const boss = CROSSOVER_BOSS[state.room];
+    if (!P.bossBeaten && !P.enemies.some(e => e.alive && e.type === boss)) {
+        P.bossBeaten = true; state.coins += 50; addScore(300); sfx('win'); spawnConfettiAt(player.x, player.y);
+        showToast(state.room === ROOM.LASTKIDS ? '🧟 You beat BLARG! The Last Kids cheer! +🪙50' : '🗿 The STONE DRAGON crumbles! London is safe! +🪙50', '#FFD700', 240);
+        state.crossover = { ...(state.crossover || {}), [state.room]: true };
+        if (CROSSOVER_ROOMS.every(r => state.crossover[r])) { giveAward('crossover'); showToast('🧟🗿 CROSSOVER HERO! Jack, Rover and the Gunner say THANKS!', '#FFD700', 300); }
+    }
+}
+function drawCrossover(P, verb) {
+    const R = P.rover;
+    if (R) {   // Rover: a big friendly purple monster dog
+        ctx.save(); ctx.font = '34px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.filter = 'hue-rotate(240deg) saturate(1.5)';
+        ctx.fillText('🐕', R.x, R.y + Math.sin(Date.now() / 100) * 2); ctx.restore();
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('Rover', R.x, R.y + 26);
+    }
+    if (state.room === ROOM.STONEHEART) {
+        drawGunnerStatue(GUNNER.x, GUNNER.y);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('The Gunner', GUNNER.x, GUNNER.y + 22);
+        if (Math.hypot(player.x - GUNNER.x, player.y - GUNNER.y) < 60) drawSpeech({ x: GUNNER.x, y: GUNNER.y - 56 }, `${verb}: Talk to the Gunner`);
+    }
+}
+function talkToGunner() {
+    const lines = ['I\'m the Gunner! A good statue. 💂', 'The bad statues are TAINTS. Water melts them!', 'Beat the STONE DRAGON to save London!', 'Rover is a good boy. He bites stone!'];
+    const P = place(); P.gunnerLine = ((P.gunnerLine ?? -1) + 1) % lines.length;
+    showToast(`💂 ${lines[P.gunnerLine]}`, '#DDDDDD', 200); sfx('pop');
+}
+
+// The crossover worlds are painted with lots of light and shadow so they feel like being really there
+const LONDON_LAMPS   = [[60, 172], [280, 172], [520, 172], [200, 488], [600, 488]];   // Victorian gas lamps
+const LONDON_PLINTHS = [[GUNNER.x, GUNNER.y], [400, 214], [640, 214]];                  // the Gunner's, and two empty ones
+const TOWN_FIRES     = [[150, 470], [690, 250]];                                        // burning barrels in the Last Kids' town
+function shadeRect(g, x, y, w, h, top, bottom) { const gr = g.createLinearGradient(0, y, 0, y + h); gr.addColorStop(0, top); gr.addColorStop(1, bottom); g.fillStyle = gr; g.fillRect(x, y, w, h); }
+function glowAt(g, x, y, r, col) { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2); }
+
+function paintStoneheart(g, R) {
+    shadeRect(g, 0, 0, 800, 600, '#2A3038', '#1C2228');
+    for (let y = 176; y < 492; y += 16) for (let x = -((y / 16) % 2) * 14; x < 800; x += 28) {   // wet cobbles: each stone lit from above
+        const v = 58 + R() * 30, w = 26, h = 14;
+        const gr = g.createLinearGradient(0, y, 0, y + h); gr.addColorStop(0, `rgb(${v + 22},${v + 26},${v + 32})`); gr.addColorStop(1, `rgb(${v - 18},${v - 16},${v - 10})`);
+        g.fillStyle = gr; g.beginPath(); g.roundRect(x + 1, y + 1, w, h, 4); g.fill();
+        if (R() < 0.25) { g.fillStyle = 'rgba(200,215,235,0.18)'; g.fillRect(x + 5, y + 3, 10, 2); }   // rain shine
+    }
+    for (let i = 0; i < 7; i++) { g.fillStyle = 'rgba(140,160,190,0.12)'; g.beginPath(); g.ellipse(80 + R() * 640, 220 + R() * 240, 30 + R() * 40, 8 + R() * 8, 0, 0, Math.PI * 2); g.fill(); }   // puddles
+    // Old London houses: soot-dark brick, white window frames, warm lights inside
+    for (let x = 0; x < 690; x += 115) {
+        const hue = 10 + R() * 20, top = 46 + R() * 12;
+        shadeRect(g, x, top, 113, 150 - top, `hsl(${hue},30%,26%)`, `hsl(${hue},28%,14%)`);
+        for (let by = top + 4; by < 146; by += 6) { g.fillStyle = 'rgba(0,0,0,0.15)'; g.fillRect(x, by, 113, 1); }   // brick lines
+        g.fillStyle = '#1A1412'; g.fillRect(x, top - 6, 113, 8);                               // roof edge
+        g.fillStyle = '#3A2A24'; g.fillRect(x + 80, top - 22, 14, 18);                         // chimney
+        for (const wx of [14, 46, 78]) for (const wy of [top + 14, top + 58]) {
+            if (wy + 30 > 146) continue;
+            const lit = R() < 0.6;
+            g.fillStyle = '#D8D0C0'; g.fillRect(x + wx - 2, wy - 2, 24, 34);
+            g.fillStyle = lit ? '#E8B860' : '#1A2230'; g.fillRect(x + wx, wy, 20, 30);
+            if (lit) glowAt(g, x + wx + 10, wy + 15, 26, 'rgba(255,190,90,0.25)');
+            g.fillStyle = '#D8D0C0'; g.fillRect(x + wx + 9, wy, 2, 30); g.fillRect(x + wx, wy + 14, 20, 2);
+        }
+        g.fillStyle = '#101418'; g.fillRect(x + 44, 118, 26, 32); g.fillStyle = '#C8A040'; g.fillRect(x + 64, 134, 3, 3);   // front door
+    }
+    shadeRect(g, 0, 150, 800, 26, '#6A6E74', '#4A4E54');                                       // pavement and kerb
+    for (let x = 0; x < 800; x += 40) { g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x, 150, 1, 26); }
+    g.fillStyle = '#2A2C30'; g.fillRect(0, 174, 800, 3);
+    // Big Ben: tall golden-stone tower with a glowing clock
+    shadeRect(g, 700, 46, 64, 130, '#B09060', '#5A4A30');
+    for (let y = 60; y < 176; y += 12) { g.fillStyle = 'rgba(40,30,10,0.35)'; g.fillRect(700, y, 64, 1); }
+    for (let x = 706; x < 764; x += 10) { g.fillStyle = 'rgba(40,30,10,0.3)'; g.fillRect(x, 120, 2, 56); }
+    glowAt(g, 732, 84, 48, 'rgba(255,240,180,0.35)');
+    g.fillStyle = '#F4ECCC'; g.beginPath(); g.arc(732, 84, 22, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#3A3020'; g.lineWidth = 2; g.stroke();
+    for (let k = 0; k < 12; k++) { const a = k * Math.PI / 6; g.fillStyle = '#3A3020'; g.fillRect(732 + Math.cos(a) * 17 - 1, 84 + Math.sin(a) * 17 - 1, 2, 2); }
+    g.beginPath(); g.moveTo(732, 84); g.lineTo(732, 70); g.moveTo(732, 84); g.lineTo(743, 88); g.stroke();
+    // Stone plinths (the statues climbed off them!)
+    for (const [x, y] of LONDON_PLINTHS) {
+        g.fillStyle = 'rgba(0,0,0,0.35)'; g.beginPath(); g.ellipse(x + 6, y + 10, 40, 10, 0, 0, Math.PI * 2); g.fill();
+        shadeRect(g, x - 32, y - 18, 64, 26, '#9A9A96', '#5E5E5A'); shadeRect(g, x - 36, y + 4, 72, 8, '#7A7A76', '#4A4A46');
+        g.fillStyle = '#B89A50'; g.fillRect(x - 14, y - 10, 28, 9);                             // brass plaque
+    }
+    // The River Thames behind a stone wall with a balustrade
+    shadeRect(g, 0, 492, 800, 16, '#8A8680', '#56524C');
+    for (let x = 6; x < 800; x += 18) { g.fillStyle = '#6E6A64'; g.fillRect(x, 486, 8, 10); }
+    shadeRect(g, 0, 508, 800, 92, '#1E3444', '#0C1820');
+    for (let i = 0; i < 70; i++) { g.fillStyle = `rgba(170,200,220,${0.05 + R() * 0.12})`; g.fillRect(R() * 800, 512 + R() * 86, 14 + R() * 30, 1.5); }   // ripples
+    for (const [lx] of LONDON_LAMPS) for (let k = 0; k < 8; k++) { g.fillStyle = `rgba(255,200,110,${0.25 - k * 0.025})`; g.fillRect(lx - 4 + (R() - 0.5) * 6, 514 + k * 10, 8 + R() * 6, 2); }   // lamp light on the water
+    // Gas lamp posts
+    for (const [x, y] of LONDON_LAMPS) {
+        g.fillStyle = 'rgba(0,0,0,0.35)'; g.beginPath(); g.ellipse(x + 10, y + 2, 14, 4, 0, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#14181C'; g.fillRect(x - 2, y - 46, 4, 48); g.fillRect(x - 6, y - 4, 12, 6);
+        g.fillStyle = '#1E2428'; g.beginPath(); g.moveTo(x - 8, y - 46); g.lineTo(x + 8, y - 46); g.lineTo(x + 5, y - 60); g.lineTo(x - 5, y - 60); g.fill();
+        g.fillStyle = '#FFE0A0'; g.fillRect(x - 5, y - 58, 10, 11);
+        glowAt(g, x, y - 52, 90, 'rgba(255,200,110,0.28)');
+        glowAt(g, x, y + 6, 60, 'rgba(255,200,110,0.12)');                                     // warm pool on the cobbles
+    }
+}
+
+function paintLastKids(g, R) {
+    shadeRect(g, 0, 0, 800, 600, '#4A3A30', '#2A2420');
+    speckle(g, R, 1400, r => `rgba(${70 + r * 50},${60 + r * 40},${45 + r * 30},0.55)`, 3, 3);   // dirt and grit
+    for (let i = 0; i < 160; i++) { const x = R() * 800, y = 200 + R() * 400; g.strokeStyle = `hsla(${70 + R() * 40},45%,${25 + R() * 15}%,0.8)`; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x, y); g.lineTo(x + (R() - 0.5) * 6, y - 6 - R() * 8); g.stroke(); }   // weeds
+    // Broken road with faded lines, cracks and potholes
+    shadeRect(g, 0, 300, 800, 72, '#3A3A3C', '#262628');
+    speckle(g, R, 500, r => `rgba(${80 + r * 40},${80 + r * 40},${82 + r * 40},0.35)`, 2, 2);
+    for (let x = 10; x < 800; x += 60) if (R() < 0.8) { g.fillStyle = 'rgba(210,180,60,0.55)'; g.fillRect(x, 334, 30, 4); }
+    g.strokeStyle = 'rgba(10,10,10,0.8)'; g.lineWidth = 1.5;
+    for (let i = 0; i < 16; i++) { let x = R() * 800, y = 300 + R() * 72; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < 4; k++) { x += 8 + R() * 14; y += (R() - 0.5) * 14; g.lineTo(x, y); } g.stroke(); }
+    for (const [x, y] of [[180, 320], [520, 352], [660, 316]]) { g.fillStyle = '#16161A'; g.beginPath(); g.ellipse(x, y, 18, 7, 0, 0, Math.PI * 2); g.fill(); g.fillStyle = 'rgba(120,140,160,0.25)'; g.fillRect(x - 8, y - 2, 10, 2); }
+    // Wrecked houses: boarded windows, holes in the roof
+    for (const [x, c] of [[90, 28], [250, 200], [560, 45], [720, 330]]) {
+        g.fillStyle = 'rgba(0,0,0,0.4)'; g.fillRect(x - 36, 192, 84, 10);
+        shadeRect(g, x - 40, 118, 80, 76, `hsl(${c},22%,40%)`, `hsl(${c},20%,22%)`);
+        for (let by = 122; by < 194; by += 7) { g.fillStyle = 'rgba(0,0,0,0.12)'; g.fillRect(x - 40, by, 80, 1); }   // siding
+        g.fillStyle = '#2A1E1A'; g.beginPath(); g.moveTo(x - 48, 122); g.lineTo(x - 12, 86); g.lineTo(x + 6, 100); g.lineTo(x + 14, 92); g.lineTo(x + 48, 122); g.fill();
+        g.fillStyle = '#120C0A'; g.beginPath(); g.moveTo(x + 2, 108); g.lineTo(x + 18, 104); g.lineTo(x + 12, 116); g.fill();   // roof hole
+        for (const wx of [x - 30, x + 12]) { g.fillStyle = '#0E0E10'; g.fillRect(wx, 132, 18, 18); g.fillStyle = '#8A6A44'; g.save(); g.translate(wx + 9, 141); g.rotate(0.4); g.fillRect(-12, -2, 24, 4); g.rotate(-0.8); g.fillRect(-12, -2, 24, 4); g.restore(); }
+        g.fillStyle = '#1A1210'; g.fillRect(x - 9, 164, 18, 30);
+    }
+    // Abandoned car on the road, rusty and smashed
+    g.fillStyle = 'rgba(0,0,0,0.45)'; g.beginPath(); g.ellipse(452, 296, 58, 10, 0, 0, Math.PI * 2); g.fill();
+    shadeRect(g, 400, 262, 104, 30, '#8A3A2A', '#4A1E16'); shadeRect(g, 420, 244, 60, 22, '#7A3424', '#4A1E16');
+    g.fillStyle = '#2A3640'; g.fillRect(426, 248, 22, 14); g.fillRect(452, 248, 22, 14);
+    g.strokeStyle = 'rgba(220,230,240,0.5)'; g.lineWidth = 1; g.beginPath(); g.moveTo(430, 250); g.lineTo(444, 260); g.moveTo(440, 250); g.lineTo(434, 260); g.stroke();   // cracked glass
+    for (const wx of [420, 484]) { g.fillStyle = '#111'; g.beginPath(); g.arc(wx, 292, 10, 0, Math.PI * 2); g.fill(); g.fillStyle = '#555'; g.beginPath(); g.arc(wx, 292, 4, 0, Math.PI * 2); g.fill(); }
+    for (let i = 0; i < 30; i++) { g.fillStyle = `rgba(150,${70 + R() * 40},30,0.5)`; g.fillRect(400 + R() * 104, 262 + R() * 30, 3, 2); }   // rust
+    // The Last Kids' treehouse fort: planks, ladder, flag
+    g.fillStyle = 'rgba(0,0,0,0.4)'; g.beginPath(); g.ellipse(410, 258, 50, 10, 0, 0, Math.PI * 2); g.fill();
+    shadeRect(g, 388, 150, 24, 108, '#6A4A2A', '#3A2614');
+    for (let y = 160; y < 256; y += 9) { g.fillStyle = '#A07840'; g.fillRect(414, y, 14, 3); }   // ladder rungs
+    g.fillStyle = '#7A5A30'; g.fillRect(414, 152, 2, 104); g.fillRect(428, 152, 2, 104);
+    const canopy = g.createRadialGradient(390, 92, 10, 400, 110, 70); canopy.addColorStop(0, '#5A9A3A'); canopy.addColorStop(1, '#1E4A1A');
+    g.fillStyle = canopy; g.beginPath(); g.arc(400, 110, 66, Math.PI, 0); g.fill();
+    for (let y = 112; y < 154; y += 7) shadeRect(g, 346, y, 108, 6, '#A07040', '#6A4424');   // planks
+    g.fillStyle = '#2A1A10'; g.fillRect(384, 124, 32, 22);
+    g.fillStyle = '#F0E8D0'; g.font = 'bold 10px Arial'; g.textAlign = 'center'; g.fillText('LAST KIDS', 400, 120);
+    g.fillStyle = '#3A2A1A'; g.fillRect(452, 64, 2, 50); g.fillStyle = '#C03030'; g.beginPath(); g.moveTo(454, 64); g.lineTo(478, 72); g.lineTo(454, 80); g.fill();
+    // Purple monster vines creeping out of the ground, with glowing tips
+    for (let i = 0; i < 7; i++) {
+        const x = R() * 800, ty = 420 + R() * 80;
+        g.strokeStyle = '#3A1A4A'; g.lineWidth = 8; g.beginPath(); g.moveTo(x, 600); g.quadraticCurveTo(x + 40, 520, x - 20, ty); g.stroke();
+        g.strokeStyle = '#7A3AAA'; g.lineWidth = 4; g.stroke();
+        glowAt(g, x - 20, ty, 18, 'rgba(200,120,255,0.6)');
+    }
+    // Burning barrels
+    for (const [x, y] of TOWN_FIRES) { g.fillStyle = 'rgba(0,0,0,0.4)'; g.beginPath(); g.ellipse(x + 4, y + 16, 16, 5, 0, 0, Math.PI * 2); g.fill(); shadeRect(g, x - 12, y - 10, 24, 26, '#5A5A60', '#2A2A30'); g.fillStyle = '#7A3A20'; g.fillRect(x - 12, y - 2, 24, 2); g.fillRect(x - 12, y + 8, 24, 2); }
+}
+
+// Drawn on top every frame: drifting fog, flickering lamps, fire glow, floating sparks
+function drawCrossoverAir() {
+    const t = Date.now() / 1000;
+    ctx.save();
+    if (state.room === ROOM.STONEHEART) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (const [x, y] of LONDON_LAMPS) glowAt(ctx, x, y - 52, 34 + Math.sin(t * 9 + x) * 3, 'rgba(255,190,100,0.22)');
+        ctx.globalCompositeOperation = 'source-over';
+        for (let i = 0; i < 6; i++) {   // London fog rolling past
+            const x = ((t * (10 + i * 4) + i * 170) % 1100) - 150, y = 200 + i * 55 + Math.sin(t * 0.3 + i) * 20;
+            glowAt(ctx, x, y, 170, 'rgba(170,185,200,0.16)');
+        }
+        for (let i = 0; i < 40; i++) {   // light rain
+            const x = (i * 97 + t * 60) % 800, y = (i * 53 + t * 420) % 600;
+            ctx.strokeStyle = 'rgba(180,200,230,0.22)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 2, y + 10); ctx.stroke();
+        }
+    } else {
+        for (const [x, y] of TOWN_FIRES) {   // flames dancing in the barrels
+            ctx.globalCompositeOperation = 'lighter';
+            glowAt(ctx, x, y - 12, 70 + Math.sin(t * 11 + x) * 6, 'rgba(255,130,40,0.25)');
+            ctx.globalCompositeOperation = 'source-over';
+            for (let k = 0; k < 5; k++) {
+                const fx = x - 8 + k * 4, fh = 10 + Math.abs(Math.sin(t * 8 + k * 1.7)) * 12;
+                ctx.fillStyle = k % 2 ? '#FFB030' : '#FF5A10'; ctx.beginPath(); ctx.moveTo(fx - 4, y - 10); ctx.quadraticCurveTo(fx, y - 10 - fh * 1.4, fx + 4, y - 10); ctx.fill();
+            }
+        }
+        const haze = ctx.createLinearGradient(0, 46, 0, 600); haze.addColorStop(0, 'rgba(255,120,40,0.16)'); haze.addColorStop(1, 'rgba(90,30,120,0.12)');   // end-of-the-world sky glow
+        ctx.fillStyle = haze; ctx.fillRect(0, 46, 800, 554);
+        for (let i = 0; i < 24; i++) {   // floating embers and monster spores
+            const x = (i * 131 + Math.sin(t + i) * 30) % 800, y = 600 - ((t * (14 + i % 5 * 6) + i * 73) % 554);
+            ctx.fillStyle = i % 3 ? `rgba(255,${150 + (i % 4) * 20},60,0.8)` : 'rgba(200,140,255,0.8)';
+            ctx.beginPath(); ctx.arc(x, y, 1.5 + (i % 3) * 0.6, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+    ctx.restore();
+}
+
+// The Gunner: a stone soldier in a long greatcoat and tin hat, drawn with light and shadow
+function drawGunnerStatue(x, y) {
+    const sway = Math.sin(Date.now() / 900) * 1.5;   // he's alive — he breathes!
+    ctx.save(); ctx.translate(x, y - 18);
+    const coat = ctx.createLinearGradient(-14, 0, 14, 0); coat.addColorStop(0, '#C4C2BC'); coat.addColorStop(0.5, '#9A9892'); coat.addColorStop(1, '#5E5C58');
+    ctx.fillStyle = coat; ctx.beginPath(); ctx.moveTo(-10, -30); ctx.lineTo(10, -30); ctx.lineTo(16, 0); ctx.lineTo(-16, 0); ctx.fill();   // greatcoat
+    ctx.fillStyle = '#7A7874'; ctx.fillRect(-12, -22, 24, 3);                                                                          // belt
+    ctx.fillStyle = '#8A8884'; ctx.fillRect(-15, -30, 5, 18); ctx.fillRect(10, -30, 5, 18);                                            // arms
+    ctx.fillStyle = '#6A6864'; ctx.fillRect(14, -40 + sway, 3, 36);                                                                    // rifle
+    const face = ctx.createRadialGradient(-2, -38, 1, 0, -36, 8); face.addColorStop(0, '#D4D2CC'); face.addColorStop(1, '#84827E');
+    ctx.fillStyle = face; ctx.beginPath(); ctx.arc(0, -37 + sway * 0.3, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#6E6C68'; ctx.beginPath(); ctx.ellipse(0, -42 + sway * 0.3, 12, 4, 0, 0, Math.PI * 2); ctx.fill();               // tin hat brim
+    ctx.fillStyle = '#8A8884'; ctx.beginPath(); ctx.arc(0, -43 + sway * 0.3, 7, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = 'rgba(255,220,120,0.9)'; ctx.fillRect(-4, -38 + sway * 0.3, 2, 2); ctx.fillRect(2, -38 + sway * 0.3, 2, 2);       // eyes glow a little
+    ctx.restore();
+}
+
 function drawSubplaces() {
     const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
     const t = Date.now() / 1000;
@@ -3239,6 +3470,7 @@ function drawSubplaces() {
         ctx.save(); ctx.font = '22px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.shadowColor = '#FFE066'; ctx.shadowBlur = 10;
         ctx.fillText(it.icon, it.x, it.y + Math.sin(t * 3 + it.x) * 3); ctx.restore();
     }
+    if (CROSSOVER_ROOMS.includes(state.room)) drawCrossover(P, verb);
     ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Go back', SUBPLACE_EXIT.x, 556);
     const left = P.items.filter(i => !i.got).length;
@@ -3997,7 +4229,7 @@ const ARENA_GATE  = { x: 270, y: 545 };
 const ARENA_EXIT  = { x: 400, y: 578 };
 const BOSS_TYPES  = ['king', 'ghostking', 'frostgiant', 'thunderbird', 'dragon', 'mothership', 'octopus', 'firedragon',
                      'wizard', 'mummyking', 'candymonster', 'bigdevil', 'queen', 'hydra', 'medusa', 'minotaur', 'cerberus',
-                     'megarobot', 'kraken', 'yeti', 'zombieking', 'alienqueen', 'lasershark', 'spiderqueen', 'megaboss', 'bedmonster', 'bonerex', 'dragonking'];
+                     'megarobot', 'kraken', 'yeti', 'zombieking', 'alienqueen', 'lasershark', 'spiderqueen', 'megaboss', 'bedmonster', 'bonerex', 'dragonking', 'blarg', 'stonedragon'];
 const BOSS_RUSH   = [
     () => e0('king',        400, 250, { r: 40, coinDrop: 5 }),
     () => e0('ghostking',   400, 220, { r: 34, coinDrop: 5, phase: 0 }),
@@ -4253,6 +4485,15 @@ const SUBPLACES = {
         enemies: () => [],
         paint: (g, R) => { fill(g, '#3A2A4A'); speckle(g, R, 300, r => `rgba(${150 + r * 80},${120 + r * 60},${200 + r * 50},0.25)`, 4, 4);
                            g.fillStyle = '#5A3A2A'; g.fillRect(150, 70, 500, 30); g.fillStyle = '#C8A040'; for (let k = 0; k < 10; k++) g.fillRect(170 + k * 48, 60, 24, 12); } },
+    // 🧟🗿 CROSSOVER: The Last Kids on Earth meets Stoneheart (Rover the monster dog helps in both)
+    lastkids:     { parent: 'paradise', door: { x: 440, y: 480 }, name: '🧟 THE LAST KIDS\' TOWN', doorLabel: '🧟 Monster Town', song: 'haunted', item: '🧃', count: 5,
+        enemies: () => [e0('minizombie', 220, 260), e0('minizombie', 560, 240), e0('minizombie', 300, 450), e0('minizombie', 620, 430), e0('taint', 450, 330),
+                        e0('blarg', 640, 180, { r: 36, coinDrop: 30 })],
+        paint: (g, R) => paintLastKids(g, R) },
+    stoneheart:   { parent: 'lastkids', door: { x: 80, y: 250 }, name: '🗿 STONEHEART LONDON', doorLabel: '🗿 Statue Portal', song: 'mall', item: '🪨', count: 4,
+        enemies: () => [e0('taint', 220, 220), e0('taint', 560, 260), e0('taint', 380, 440), e0('minizombie', 620, 460),
+                        e0('stonedragon', 400, 170, { r: 36, coinDrop: 30 })],
+        paint: (g, R) => paintStoneheart(g, R) },
 };
 const FACTORY_BELTS = [160, 330, 500];   // conveyor belts push you sideways
 const LOST_TOYS = ['🧸', '🚗', '🧦', '🎲', '🪀'];
@@ -4290,6 +4531,7 @@ function tryPlaceAction() {
         return true;
     }
     if (state.room === ROOM.CAMP && nearIt(QUEST_BOARD)) { openMenu('📜 QUEST BOARD', questItems); return true; }
+    if (state.room === ROOM.STONEHEART && nearIt(GUNNER, 60)) { talkToGunner(); return true; }
     if (tryHeroAction(nearIt)) return true;
     if (state.room === ROOM.PARADISE && nearIt(GLOOP, 40)) { befriendGloop(); return true; }
     if (state.room === ROOM.BACKYARD && tryYardAction(nearIt)) return true;
@@ -5124,6 +5366,8 @@ const PORTALS = {
     snowfort: [],
     medieval: [],
     microworld: [],
+    lastkids:   [],
+    stoneheart: [],
     underwater: [{ x: 740, y: 120, shape: 'circle' }],
     toy:     [{ x: 740, y: 120, shape: 'star'    }],
     pyramid: [{ x: 740, y: 120, shape: 'diamond' }],
@@ -5467,6 +5711,7 @@ const AWARDS = [
     { id: 'fullGod',     icon: '🌟', name: 'YOU ARE A GOD!',    desc: 'Finish all the Hero Trials' },
     { id: 'gloop',       icon: '👾', name: 'Monster Friend',    desc: 'Make friends with Gloop' },
     { id: 'collector',   icon: '🧺', name: 'Collector',         desc: 'Find all the things in a secret place' },
+    { id: 'crossover',   icon: '🧟', name: 'Crossover Hero',    desc: 'Beat Blarg AND the Stone Dragon' },
     { id: 'petCostume',  icon: '🎀', name: 'Fashion Pet',       desc: 'Dress up your pet' },
     { id: 'petBattle',   icon: '🐾', name: 'Pet Champion',      desc: 'Win a Pet Battle' },
     { id: 'builder',     icon: '🔨', name: 'Backyard Builder',  desc: 'Build something in your backyard' },
@@ -5547,7 +5792,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt', 'mirrorShield', 'saberColor', 'heroSuit'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'crossover', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt', 'mirrorShield', 'saberColor', 'heroSuit'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -6394,7 +6639,7 @@ function resetGame() {
         buildMode: false, hotbar: 0, inv: { dirt: 10, planks: 10, stone: 5, glass: 5 }, armor: 0, diamondPickaxe: false,
         furniture: { bed: true }, garden: [0, 0, 0, 0], lessons: {}, hats: {}, hat: null, houseFrom: null, placesSeen: {}, treasure: null,
         spells: {}, spell: null, spellCooldown: 0, mounts: {}, mount: null, lastMount: null,
-        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0, petCostume: null, petCostumes: {}, yard: {}, magicGarden: [0, 0, 0], farmAt: 0, mirrorShield: false, saberColor: 0, heroSuit: null,
+        hogwarts: false, demigod: undefined, godCooldown: 0, godTurn: 0, house: null, invisible: 0, giant: 0, tiny: 0, quest: null, questsDone: 0, wand: 'oak', wands: {}, creature: null, creatureFood: 0, trials: {}, crossover: {}, fleece: false, fullGod: false, stoned: 0, gloop: 0, petCostume: null, petCostumes: {}, yard: {}, magicGarden: [0, 0, 0], farmAt: 0, mirrorShield: false, saberColor: 0, heroSuit: null,
     });
     player.x = 400; player.y = 300;
     hell             = makeHell();
@@ -12033,6 +12278,7 @@ function draw() {
     drawBolts();
     drawEnemyProjectiles();
     drawParticles();
+    if (CROSSOVER_ROOMS.includes(state.room) && !state.won && !state.levelComplete) drawCrossoverAir();
     if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawWeather();
     if (state.room === ROOM.UNDERGROUND) drawCaveDarkness();
     else if (state.room === ROOM.HELL && isPlayerPhysicallyInCave() && !state.won && !state.levelComplete) drawInsideCave();
