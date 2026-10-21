@@ -3523,6 +3523,82 @@ function drawCrossoverAir() {
     ctx.restore();
 }
 
+// 🌤 Living air for the other worlds: each room picks a few effects, drawn fresh every frame
+const WORLD_AIR = {
+    paradise: ['sunrays', 'clouds', 'sparkle'], void: ['dust'], hell: ['heat', 'embers'], heaven: ['godrays', 'sparkle'],
+    candy: ['sunrays', 'sparkle'], ice: ['snow', 'cold'], icecave: ['cold', 'dust'], haunted: ['fog', 'dark'], jungle: ['shafts', 'fireflies'],
+    treehouse: ['shafts', 'fireflies'], dino: ['sunrays', 'clouds'], volcano: ['heat', 'embers'], pyramid: ['heat', 'sand'],
+    greece: ['sunrays', 'clouds'], viking: ['snow', 'cold', 'fog'], piratecove: ['sunrays', 'clouds', 'sparkle'],
+    medieval: ['sunrays', 'clouds'], mall: ['dust'], toy: ['sparkle'], underground: ['dust'], underworld: ['fog', 'dark'],
+};
+function drawWorldAir() {
+    const fx = WORLD_AIR[state.room];
+    if (!fx) return;
+    const t = Date.now() / 1000;
+    const night = state.room === ROOM.PARADISE && paradise.phase !== 'day';
+    ctx.save();
+    for (const f of fx) {
+        if (f === 'sunrays' && !night) {   // warm light slanting in from the top left
+            ctx.globalCompositeOperation = 'lighter';
+            for (let i = 0; i < 4; i++) {
+                const a = 0.05 + 0.025 * Math.sin(t * 0.4 + i * 1.7), x0 = -120 + i * 170;
+                const g = ctx.createLinearGradient(x0, 0, x0 + 300, 600); g.addColorStop(0, `rgba(255,240,190,${a})`); g.addColorStop(1, 'rgba(255,240,190,0)');
+                ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(x0, 46); ctx.lineTo(x0 + 70, 46); ctx.lineTo(x0 + 420, 600); ctx.lineTo(x0 + 260, 600); ctx.fill();
+            }
+            ctx.globalCompositeOperation = 'source-over';
+        }
+        if (f === 'clouds' && !night) for (let i = 0; i < 3; i++) {   // shadows of clouds sliding over the ground
+            const x = ((t * 12 + i * 330) % 1300) - 250, y = 150 + i * 160;
+            glowAt(ctx, x, y, 160, 'rgba(20,30,40,0.12)');
+        }
+        if (f === 'godrays') {
+            ctx.globalCompositeOperation = 'lighter';
+            for (let i = 0; i < 6; i++) { const x = 400 + Math.sin(t * 0.2 + i) * 300; const g = ctx.createLinearGradient(0, 46, 0, 600); g.addColorStop(0, 'rgba(255,250,210,0.1)'); g.addColorStop(1, 'rgba(255,250,210,0)'); ctx.fillStyle = g; ctx.fillRect(x - 20, 46, 40, 554); }
+            ctx.globalCompositeOperation = 'source-over';
+        }
+        if (f === 'sparkle') for (let i = 0; i < 14; i++) {   // little glints of light
+            const tw = Math.sin(t * 3 + i * 2.3); if (tw < 0.7) continue;
+            drawStar((i * 157) % 780 + 10, 60 + (i * 89) % 520, 2 + (tw - 0.7) * 6, `rgba(255,255,230,${tw - 0.4})`);
+        }
+        if (f === 'dust') for (let i = 0; i < 30; i++) {   // dust floating in the light
+            const x = (i * 97 + Math.sin(t * 0.5 + i) * 20) % 800, y = 60 + (i * 53 + t * 6) % 540;
+            ctx.fillStyle = 'rgba(255,255,240,0.22)'; ctx.beginPath(); ctx.arc(x, y, 1.2, 0, Math.PI * 2); ctx.fill();
+        }
+        if (f === 'heat') {   // the air glows red from below
+            const g = ctx.createLinearGradient(0, 600, 0, 200); g.addColorStop(0, `rgba(255,80,20,${0.16 + 0.04 * Math.sin(t * 2)})`); g.addColorStop(1, 'rgba(255,80,20,0)');
+            ctx.fillStyle = g; ctx.fillRect(0, 200, 800, 400);
+        }
+        if (f === 'embers') for (let i = 0; i < 26; i++) {
+            const x = (i * 131 + Math.sin(t * 1.3 + i) * 25) % 800, y = 600 - ((t * (25 + i % 4 * 10) + i * 61) % 554);
+            ctx.fillStyle = `rgba(255,${120 + (i % 5) * 25},40,0.85)`; ctx.beginPath(); ctx.arc(x, y, 1.4 + (i % 3) * 0.5, 0, Math.PI * 2); ctx.fill();
+        }
+        if (f === 'snow') for (let i = 0; i < 60; i++) {
+            const x = (i * 73 + Math.sin(t + i) * 30 + t * 10) % 800, y = 46 + (i * 41 + t * (30 + i % 3 * 15)) % 554;
+            ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(x, y, 1 + (i % 3) * 0.7, 0, Math.PI * 2); ctx.fill();
+        }
+        if (f === 'cold') { ctx.fillStyle = 'rgba(150,190,255,0.08)'; ctx.fillRect(0, 46, 800, 554); }
+        if (f === 'fog') for (let i = 0; i < 5; i++) {
+            const x = ((t * (8 + i * 3) + i * 200) % 1100) - 150, y = 180 + i * 80 + Math.sin(t * 0.3 + i) * 20;
+            glowAt(ctx, x, y, 160, 'rgba(200,205,215,0.14)');
+        }
+        if (f === 'dark') { const v = ctx.createRadialGradient(player.x, player.y, 80, player.x, player.y, 520); v.addColorStop(0, 'rgba(0,0,10,0)'); v.addColorStop(1, 'rgba(0,0,10,0.45)'); ctx.fillStyle = v; ctx.fillRect(0, 46, 800, 554); }
+        if (f === 'shafts') {   // sunlight breaking through the leaves
+            ctx.globalCompositeOperation = 'lighter';
+            for (let i = 0; i < 5; i++) { const x = 80 + i * 160 + Math.sin(t * 0.3 + i) * 20; const g = ctx.createLinearGradient(x, 46, x + 80, 600); g.addColorStop(0, 'rgba(230,255,180,0.12)'); g.addColorStop(1, 'rgba(230,255,180,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(x, 46); ctx.lineTo(x + 30, 46); ctx.lineTo(x + 120, 600); ctx.lineTo(x + 60, 600); ctx.fill(); }
+            ctx.globalCompositeOperation = 'source-over';
+        }
+        if (f === 'fireflies') for (let i = 0; i < 12; i++) {
+            const x = 60 + (i * 151) % 700 + Math.sin(t * 0.8 + i) * 30, y = 120 + (i * 83) % 440 + Math.cos(t * 0.6 + i * 2) * 20, a = 0.4 + 0.5 * Math.sin(t * 4 + i);
+            if (a > 0.1) glowAt(ctx, x, y, 8, `rgba(220,255,120,${a})`);
+        }
+        if (f === 'sand') for (let i = 0; i < 40; i++) {   // sand blowing past
+            const x = (i * 89 + t * (120 + i % 4 * 40)) % 820 - 10, y = 60 + (i * 67) % 540;
+            ctx.fillStyle = 'rgba(230,200,140,0.5)'; ctx.fillRect(x, y, 6, 1.2);
+        }
+    }
+    ctx.restore();
+}
+
 // The Gunner: a stone soldier in a long greatcoat and tin hat, drawn with light and shadow
 function drawGunnerStatue(x, y) {
     const sway = Math.sin(Date.now() / 900) * 1.5;   // he's alive — he breathes!
@@ -12777,6 +12853,7 @@ function draw() {
     drawEnemyProjectiles();
     drawParticles();
     if (CROSSOVER_ROOMS.includes(state.room) && !state.won && !state.levelComplete) drawCrossoverAir();
+    if (!state.won && !state.levelComplete) drawWorldAir();
     if (state.room === ROOM.PARADISE && !state.won && !state.levelComplete) drawWeather();
     if (state.room === ROOM.UNDERGROUND) drawCaveDarkness();
     else if (state.room === ROOM.HELL && isPlayerPhysicallyInCave() && !state.won && !state.levelComplete) drawInsideCave();
