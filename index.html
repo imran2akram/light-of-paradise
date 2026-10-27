@@ -12069,7 +12069,7 @@ function draw() {
 // ── ERROR REPORTS ─────────────────────────────────────────────
 // A bug on a player's screen is sent to a small Cloudflare Worker (see worker/README.md)
 // so it can be fixed later. Empty URL = reports are only logged to the console.
-const ERROR_LOG_URL      = '';   // e.g. 'https://lop-errors.<you>.workers.dev/report'
+const ERROR_LOG_URL      = 'https://lop-errors.imran2akram.workers.dev/report';   // empty = console only
 const MAX_ERROR_REPORTS  = 5;    // per page load: the same bug every frame is reported once, not 3600 times a minute
 const reportedErrors     = new Set();
 function reportError(where, e) {
