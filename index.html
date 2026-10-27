@@ -12066,13 +12066,40 @@ function draw() {
     ctx.restore();
 }
 
+// ── ERROR REPORTS ─────────────────────────────────────────────
+// A bug on a player's screen is sent to a small Cloudflare Worker (see worker/README.md)
+// so it can be fixed later. Empty URL = reports are only logged to the console.
+const ERROR_LOG_URL      = '';   // e.g. 'https://lop-errors.<you>.workers.dev/report'
+const MAX_ERROR_REPORTS  = 5;    // per page load: the same bug every frame is reported once, not 3600 times a minute
+const reportedErrors     = new Set();
+function reportError(where, e) {
+    console.error(where + ' error', e);
+    if (!ERROR_LOG_URL) return;
+    const message = String(e && e.message || e || 'unknown').slice(0, 500);
+    const key = where + '|' + message;
+    if (reportedErrors.has(key) || reportedErrors.size >= MAX_ERROR_REPORTS) return;
+    reportedErrors.add(key);
+    const body = JSON.stringify({
+        where, message, stack: String(e && e.stack || '').slice(0, 4000),
+        room: state.room, phase: state.gamePhase, level: state.level, input: lastInput,
+        build: document.lastModified,   // GitHub Pages sets this to the deploy time: which version of the game
+        ua: navigator.userAgent,
+    });
+    // text/plain keeps this a "simple" request, so the browser sends it without a CORS preflight
+    try { fetch(ERROR_LOG_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body, keepalive: true }).catch(() => {}); }
+    catch (err) { /* reporting must never cause another error */ }
+}
+// Errors outside the frame loop (key presses, taps, audio callbacks) are reported too
+window.addEventListener('error', ev => reportError('window', ev.error || ev.message));
+window.addEventListener('unhandledrejection', ev => reportError('promise', ev.reason));
+
 // If one frame throws, log it and carry on: an uncaught error here would stop
 // requestAnimationFrame from being re-armed and freeze the game until a reload.
 function loop() {
     try { pollGamepad(); update(); }
-    catch (e) { console.error('update error', e); }
+    catch (e) { reportError('update', e); }
     try { draw(); }
-    catch (e) { console.error('draw error', e); fitCanvas(); }   // resizing the canvas also resets any half-finished ctx.save()/clip
+    catch (e) { reportError('draw', e); fitCanvas(); }   // resizing the canvas also resets any half-finished ctx.save()/clip
     requestAnimationFrame(loop);
 }
 

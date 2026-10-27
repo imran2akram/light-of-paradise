@@ -12,8 +12,8 @@ const fs = require('fs'), path = require('path'), vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
 
-function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile = path.join(ROOT, 'index.html') }) {
-    const html = fs.readFileSync(gameFile, 'utf8');
+function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile = path.join(ROOT, 'index.html'), html = null }) {
+    if (html === null) html = fs.readFileSync(gameFile, 'utf8');   // or pass the page's text directly (e.g. patched)
     const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
 
     // Seeded Math.random so every run can be replayed
@@ -69,6 +69,8 @@ function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile =
     g.setInterval = f => { h.intervals.push(f); return h.intervals.length; };
     g.clearInterval = () => {};
     g.alert = () => {};
+    h.fetches = [];
+    g.fetch = (url, opts) => { h.fetches.push({ url, opts }); return Promise.resolve({ ok: true }); };   // no network from tests
 
     // Web Audio: checks the same argument rules a browser enforces
     const chk = (v, t) => { if (!Number.isFinite(v) || !Number.isFinite(t)) throw new TypeError(`non-finite audio param ${v} @ ${t}`); if (t < 0) throw new RangeError('negative audio time'); };

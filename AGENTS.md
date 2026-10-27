@@ -28,7 +28,7 @@ There is no test framework, but `test/` has a headless harness (no dependencies)
 
 `test/headless.js` is the fake browser underneath both scripts (stub DOM, Web Audio, `localStorage`, gamepads). Because the game script uses top-level `let`/`const`, test code is run as a "driver" string in the same scope rather than imported.
 
-`loop()` catches errors from `update()` / `draw()` and logs them with `console.error` instead of stopping, so a bug shows up in the browser console rather than as a frozen screen. Never call `changeRoom()` from inside an index loop over an array it resets (`projectiles`, `enemyProjectiles`, `heartPickups`, `bolts`, `gadgetObjs`, ...); respawning defers its room change to the end of `update()` for this reason.
+`loop()` catches errors from `update()` / `draw()` and passes them to `reportError()`, which logs to the console and, when `ERROR_LOG_URL` is set, sends a small report to the Cloudflare Worker in `worker/` (see `worker/README.md`) so bugs on players' screens can be read later. `node test/worker.js` tests the Worker with a fake database and `node test/reporter.js` the game side. Never call `changeRoom()` from inside an index loop over an array it resets (`projectiles`, `enemyProjectiles`, `heartPickups`, `bolts`, `gadgetObjs`, ...); respawning defers its room change to the end of `update()` for this reason.
 
 ---
 

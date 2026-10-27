@@ -1,0 +1,16 @@
+# Cloudflare Worker that collects error reports from the game.
+# Deploy steps are in worker/README.md.
+name = "lop-errors"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# Only reports from these pages are accepted (comma-separated). Add http://localhost:8000 while testing locally.
+ALLOWED_ORIGINS = "https://imran2akram.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lop-errors"
+database_id = "REPLACE_WITH_THE_ID_FROM_wrangler_d1_create"
+
+# Secret (set with `npx wrangler secret put READ_TOKEN`): the password for viewing the reports page.
