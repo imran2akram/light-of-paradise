@@ -11,6 +11,6 @@ ALLOWED_ORIGINS = "https://imran2akram.github.io"
 [[d1_databases]]
 binding = "DB"
 database_name = "lop-errors"
-database_id = "REPLACE_WITH_THE_ID_FROM_wrangler_d1_create"
+database_id = "e9ae748d-389f-4198-98e9-ee37c887ee93"
 
 # Secret (set with `npx wrangler secret put READ_TOKEN`): the password for viewing the reports page.

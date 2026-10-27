@@ -7,7 +7,7 @@ const { loadGame } = require('./headless');
 
 let html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const before = html;
-html = html.replace("const ERROR_LOG_URL      = '';", "const ERROR_LOG_URL      = 'https://lop-errors.example.workers.dev/report';");
+html = html.replace(/const ERROR_LOG_URL\s*=\s*'[^']*';/, "const ERROR_LOG_URL      = 'https://lop-errors.example.workers.dev/report';");   // whatever it is set to
 assert.notStrictEqual(html, before, 'could not find the ERROR_LOG_URL line in index.html');
 
 const driver = String.raw`
