@@ -10,7 +10,7 @@ A browser action-adventure game written in **vanilla JavaScript** using the **HT
 
 Features are requested by a young player, so they come often and should be playful and kid-friendly. Keep text on screen short and simple.
 
-Live site: `https://imran2akram.github.io/light-of-paradise/`. GitHub Pages deploys from the `main` branch directly; `.github/workflows/deploy.yml` targets `master` and never runs.
+Live site: `https://imran2akram.github.io/light-of-paradise/`. GitHub Pages deploys from the `main` branch directly; `.github/workflows/deploy.yml` targets `master` and never runs. `.github/workflows/test.yml` runs the headless checks below on every pull request and push to `main`.
 
 ---
 

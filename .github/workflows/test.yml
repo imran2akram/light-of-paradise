@@ -1,0 +1,39 @@
+name: Tests
+
+# Runs the headless checks on every pull request and every push to main,
+# so a crash is caught before it reaches the live site.
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax check the game script
+        run: |
+          sed -n '/<script>/,/<\/script>/p' index.html | sed '1d;$d' > /tmp/game.js
+          node --check /tmp/game.js
+
+      - name: Regression scenarios
+        run: node test/regress.js
+
+      - name: Fuzz play (3 seeds, 30k frames each)
+        run: |
+          for seed in 1 2 3; do
+            node test/fuzz.js --seed "$seed" --frames 30000 || exit 1
+          done
