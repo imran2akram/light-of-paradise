@@ -32,6 +32,9 @@ jobs:
       - name: Regression scenarios
         run: node test/regress.js
 
+      - name: Error reporting (Worker and game side)
+        run: node test/worker.js && node test/reporter.js
+
       - name: Fuzz play (3 seeds, 30k frames each)
         run: |
           for seed in 1 2 3; do
