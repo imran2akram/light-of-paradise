@@ -33,6 +33,7 @@ startFromIntro(true);
 state.coins = 5000;
 const held = new Set();
 let early = 0n, late = 0n;
+const WIN = Math.max(1, Math.min(5000, Math.floor(__h.frames / 4)));   // frames timed at the start and at the end
 for (frame = 0; frame < __h.frames; frame++) {
     const r = Math.random();
     if (r < 0.05) { const c = CODES[Math.floor(Math.random() * CODES.length)]; held.add(c); act('keydown ' + c, () => fire('keydown', ev({ code: c }))); }
@@ -62,12 +63,12 @@ for (frame = 0; frame < __h.frames; frame++) {
     const t0 = process.hrtime.bigint();
     try { cb(); } catch (e) { report('loop', e); }
     const dt = process.hrtime.bigint() - t0;
-    if (frame < 5000) early += dt; else if (frame >= __h.frames - 5000) late += dt;
+    if (frame < WIN) early += dt; else if (frame >= __h.frames - WIN) late += dt;
 }
 const sizes = { particles, floatTexts, projectiles, enemyProjectiles, heartPickups, bolts, gadgetObjs, clones, chickens, fightFx: fight.fx,
                 roomEnemies: roomEnemies(), bgCache: Object.keys(bgCache), saveBytes: JSON.stringify(Object.fromEntries(SAVE_FIELDS.map(k => [k, state[k]]))) };
 console.log('sizes at end: ' + JSON.stringify(Object.fromEntries(Object.entries(sizes).map(([k, v]) => [k, v.length]))));
-console.log('frame time: first 5000 avg ' + (Number(early) / 5000 / 1000 | 0) + 'us, last 5000 avg ' + (Number(late) / 5000 / 1000 | 0) + 'us');
+console.log('frame time: first ' + WIN + ' avg ' + (Number(early) / WIN / 1000 | 0) + 'us, last ' + WIN + ' avg ' + (Number(late) / WIN / 1000 | 0) + 'us');
 console.log('seed ' + __h.seed + (__h.realCanvas ? ' (real canvas)' : '') + ': ' + frame + ' frames, ' + errCount + ' errors, ' + Object.keys(errors).length + ' distinct');
 for (const [k, n] of Object.entries(errors)) console.log('  x' + n + '  ' + k.slice(0, 220));
 process.exitCode = errCount ? 1 : 0;
