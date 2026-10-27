@@ -6366,17 +6366,23 @@ function damagePlayer() {
     if (state.playerHp <= 0) respawnPlayer();
 }
 
+// Losing your last heart sends you back to the Void. The room change itself
+// waits until the end of the frame: damagePlayer() can be called from inside
+// loops over the room's projectiles and enemies, and changeRoom() replaces
+// those arrays, so switching rooms mid-loop crashed the game (a frozen screen).
+let pendingRespawn = false;
 function respawnPlayer() {
     const maxHp = fullHearts();
     state.power           = POWER.NONE;
     state.powerTier       = 1;
     state.playerHp        = maxHp;
     state.playerInvincible = 120;
-    changeRoom(ROOM.VOID);
+    pendingRespawn = true;
 }
 
 function resetGame() {
     const cfg = LEVEL_CONFIGS[0];
+    pendingRespawn = false;
     Object.assign(state, {
         room: ROOM.VOID, lightCrystals: 0, power: POWER.NONE, powerTier: 1,
         won: false, levelComplete: false, screenShake: 0, playerFlash: 0,
@@ -11974,6 +11980,7 @@ function update() {
         updateAmmo();
     }
     updateParticles();
+    if (pendingRespawn) { pendingRespawn = false; changeRoom(ROOM.VOID); }
     if (state.screenShake > 0) state.screenShake--;
 
     // Fire confetti once on win or level complete
@@ -12059,10 +12066,13 @@ function draw() {
     ctx.restore();
 }
 
+// If one frame throws, log it and carry on: an uncaught error here would stop
+// requestAnimationFrame from being re-armed and freeze the game until a reload.
 function loop() {
-    pollGamepad();
-    update();
-    draw();
+    try { pollGamepad(); update(); }
+    catch (e) { console.error('update error', e); }
+    try { draw(); }
+    catch (e) { console.error('draw error', e); fitCanvas(); }   // resizing the canvas also resets any half-finished ctx.save()/clip
     requestAnimationFrame(loop);
 }
 
