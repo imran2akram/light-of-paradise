@@ -11,3 +11,8 @@ desktop.ini
 
 # Logs
 *.log
+
+# Optional node-canvas for test/fuzz.js --canvas
+node_modules/
+package.json
+package-lock.json

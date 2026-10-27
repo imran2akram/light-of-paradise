@@ -20,10 +20,15 @@ Live site: `https://imran2akram.github.io/light-of-paradise/`. GitHub Pages depl
 python3 -m http.server 8000   # then open http://localhost:8000
 ```
 
-There is no test framework. Validate changes by:
+There is no test framework, but `test/` has a headless harness (no dependencies). Validate changes by:
 1. Syntax check: extract the `<script>` block and run `node --check` on it.
-2. Headless simulation: load the script in Node with a stub DOM (a `Proxy` canvas context, a fake `AudioContext`, `localStorage`, `navigator.getGamepads`) and call `update()` / `draw()` in a loop. `node-canvas` (`npm i canvas`) gives real screenshots. Chromium/Playwright may not launch under WSL (missing `libnspr4`).
-3. Play it in a browser (desktop, touch and a game controller).
+2. `node test/regress.js` — deterministic scenarios for bugs that once froze the game (exit code 1 on failure). Add a scenario here whenever you fix a crash.
+3. `node test/fuzz.js --seed 1 --frames 30000` — plays the game with random keys, taps, controller input, menus, room changes and deaths, and fails if any frame throws or the loop stops. Run a few seeds; bigger `--frames` finds rarer bugs. `--canvas` draws for real through `node-canvas` (`npm i canvas`, keep `node_modules` out of git), so drawing calls that throw in a browser throw here too.
+4. Play it in a browser (desktop, touch and a game controller).
+
+`test/headless.js` is the fake browser underneath both scripts (stub DOM, Web Audio, `localStorage`, gamepads). Because the game script uses top-level `let`/`const`, test code is run as a "driver" string in the same scope rather than imported.
+
+`loop()` catches errors from `update()` / `draw()` and logs them with `console.error` instead of stopping, so a bug shows up in the browser console rather than as a frozen screen. Never call `changeRoom()` from inside an index loop over an array it resets (`projectiles`, `enemyProjectiles`, `heartPickups`, `bolts`, `gadgetObjs`, ...); respawning defers its room change to the end of `update()` for this reason.
 
 ---
 
