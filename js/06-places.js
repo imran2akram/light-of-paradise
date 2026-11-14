@@ -75,11 +75,11 @@ function makeParadise() {
         enemies.push(makeEnemy('slime', 200 + i * 250, 300 + i * 50, 0, 0));
     }
     // The King Slime only comes on Monster Night 3
-    const king = makeEnemy('king', 400, 330, 0, 0);
+    const king = makeEnemy('king', 580, 430, 0, 0);
     Object.assign(king, { r: 40, minNight: 3, coinDrop: 15 });
     enemies.push(king);
     // The Ghost King haunts Monster Night 2
-    const ghostKing = makeEnemy('ghostking', 400, 250, 0, 0);
+    const ghostKing = makeEnemy('ghostking', 220, 180, 0, 0);
     Object.assign(ghostKing, { r: 34, minNight: 2, onlyNight: 2, coinDrop: 12, phase: 0 });
     enemies.push(ghostKing);
     // Minecraft monsters come out every Monster Night

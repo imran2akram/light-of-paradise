@@ -19,6 +19,8 @@ function respawnParadiseWave() {
         Object.assign(e, { alive, hp: e.maxHp, hitFlash: 0, hopTimer: 0, frozen: 0, hidden: false, phase: 0,
                            x: spot.x, y: spot.y, dx: e.home.dx, dy: e.home.dy, emerge: 30 + Math.random() * 60 });
     }
+    // A boss's home may be next to you if you stand in the square: it comes up a safe distance away
+    if (state.room === ROOM.PARADISE) keepMonstersAwayFromArrival(paradise.enemies);
 }
 
 // Daytime surprise: a few monsters pop out of the ground somewhere
@@ -85,7 +87,6 @@ function changeRoom(dest) {
     if (PLACES[dest]) {
         placeState[dest] = PLACES[dest].make();
         [player.x, player.y] = PLACES[dest].spawn;
-        keepMonstersAwayFromArrival(placeState[dest].enemies);
         if (dest !== ROOM.SHIP) {
             state.placesSeen = state.placesSeen || {};
             state.placesSeen[dest] = true;
@@ -97,20 +98,36 @@ function changeRoom(dest) {
         ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
     placePetBesidePlayer();
     for (const f of activeFriends()) { f.x = player.x + 30 * (f.n - 1); f.y = player.y; }   // friends come along through portals
+    keepAllMonstersAwayFromArrival();
     if (state.gamePhase === 'playing') maybeMiniBoss();
     state.playerInvincible = Math.max(state.playerInvincible, ENTRY_SAFE_FRAMES);
 }
 
-// Slide any monster that starts too close to the arrival point straight away from it (inside the room)
+// Slide any monster that is too close to the player straight away from them (inside the room).
+// If that spot is outside the room (you stand by a wall) it tries other directions, so the gap is always real.
 function keepMonstersAwayFromArrival(list) {
     for (const e of list || []) {
         let dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy);
         if (d >= ENTRY_SAFE_DISTANCE) continue;
         if (d < 1) { dx = 0; dy = -1; d = 1; }   // exactly on top of you: up
-        const nx = Math.max(40, Math.min(760, player.x + dx / d * ENTRY_SAFE_DISTANCE)), ny = Math.max(80, Math.min(560, player.y + dy / d * ENTRY_SAFE_DISTANCE));
+        const base = Math.atan2(dy, dx);
+        let nx = e.x, ny = e.y;
+        for (let k = 0; k < 24; k++) {   // 0, +15, -15, +30 ... degrees from the straight-away direction
+            const a = base + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * Math.PI / 12;
+            const tx = player.x + Math.cos(a) * ENTRY_SAFE_DISTANCE, ty = player.y + Math.sin(a) * ENTRY_SAFE_DISTANCE;
+            if (tx >= 40 && tx <= 760 && ty >= 80 && ty <= 560) { nx = tx; ny = ty; break; }
+        }
         if (e.home) { e.home.x += nx - e.x; e.home.y += ny - e.y; }   // its patrol spot moves with it
         e.x = nx; e.y = ny;
     }
+}
+
+// Every monster of the room you are in, standing or waiting to climb out: bosses, wave monsters, ambushers, the Devil
+function keepAllMonstersAwayFromArrival() {
+    if (state.room === ROOM.PARADISE)    keepMonstersAwayFromArrival([...paradise.enemies, ...paradise.ambushers]);
+    if (state.room === ROOM.HELL)        keepMonstersAwayFromArrival([...hell.enemies, hell.devil]);
+    if (state.room === ROOM.UNDERGROUND) keepMonstersAwayFromArrival(underground.enemies);
+    if (PLACES[state.room] && place())   keepMonstersAwayFromArrival(place().enemies);
 }
 
 // ── UPDATE: PLAYER ────────────────────────────────────────────
