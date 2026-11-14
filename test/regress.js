@@ -657,6 +657,46 @@ check('football: a still ball under a pile of players is popped loose', () => {
     }
     return 'ball stayed stuck';
 });
+check('football: the ball bounces off placed blocks (even the hardest shot) and is pushed out of a block placed on it', () => {
+    const out = [];
+    const G = footballStart();
+    const wall = [];   // a wall of stone, one block thick, across the pitch at x 480-504
+    for (let cy = 4; cy < 24; cy++) wall.push(cellKey(20, cy));
+    const put = keys => { for (const k of keys) roomBlocks()[k] = { type: 'stone', hits: 0 }; };
+    const clear = keys => { for (const k of keys) delete roomBlocks()[k]; };
+    const parked = () => { G.opps.forEach(o => { o.x = 120; o.y = 150; o.recover = 9999; }); G.mate.x = 120; G.mate.y = 520; G.mate.recover = 9999; G.held = false; G.mateShot = 0; player.x = 60; player.y = 330; };
+    put(wall);
+    try {
+        for (const speed of [FB_KICK_SPEED, FB_SHOT_SPEED, 14, 40]) for (const vy of [0, 3]) {
+            parked(); Object.assign(G.ball, { x: 440, y: 330 - vy * 6, vx: speed, vy });
+            let bounced = false, maxX = 0;
+            for (let i = 0; i < 80 && miniGame === G; i++) {
+                parked(); loop();
+                maxX = Math.max(maxX, G.ball.x); if (G.ball.vx < 0) bounced = true;
+                if (footballBallHits(G.ball.x, G.ball.y)) { out.push('speed ' + speed + ': ball sits inside a block'); break; }
+            }
+            if (maxX > 480) out.push('speed ' + speed + '/' + vy + ': ball went through the wall (x ' + Math.round(maxX) + ')');
+            if (!bounced) out.push('speed ' + speed + '/' + vy + ': ball did not bounce');
+        }
+        // the goal still counts with no wall in the way
+        clear(wall); const before = G.goals; parked();
+        Object.assign(G.ball, { x: 700, y: 330, vx: 6, vy: 0 }); G.keeper = 270; player.x = 60;
+        for (let i = 0; i < 40 && miniGame === G && G.goals === before; i++) { parked(); loop(); }
+        if (G.goals !== before + 1) out.push('no goal after the wall was removed');
+        // a block placed right on the ball (and one on the kick-off spot)
+        parked(); Object.assign(G.ball, { x: 300, y: 300, vx: 0, vy: 0 });
+        const around = []; for (let cx = 11; cx <= 14; cx++) for (let cy = 11; cy <= 14; cy++) around.push(cellKey(cx, cy));
+        put(around); loop();
+        if (footballBallHits(G.ball.x, G.ball.y)) out.push('a ball under a new block stayed inside it');
+        if (Math.hypot(G.ball.x - 300, G.ball.y - 300) > 70) out.push('the ball was pushed too far (' + Math.round(Math.hypot(G.ball.x - 300, G.ball.y - 300)) + ' px)');
+        clear(around);
+        const spot = []; for (let cx = 15; cx <= 18; cx++) for (let cy = 12; cy <= 15; cy++) spot.push(cellKey(cx, cy));
+        put(spot); footballKickoff(G);
+        if (footballBallHits(G.ball.x, G.ball.y)) out.push('the ball restarted inside a block');
+        clear(spot);
+    } finally { clear(wall); }
+    return out.slice(0, 5).join('; ');
+});
 check('football: computer players never end up inside a block', () => {
     const G = footballStart(), key = cellKey(Math.floor(580 / CELL), Math.floor(330 / CELL));
     roomBlocks()[key] = { type: 'stone' };
@@ -743,6 +783,117 @@ check('football: SAVED! shows once per save, even if the ball keeps sitting in t
         Object.assign(G.ball, { x: 745, y: G.keeper, vx: 0, vy: 0 }); loop();
         return said === 2 ? '' : 'a second save said nothing (' + said + ')';
     } finally { spawnFloatText = real; }
+});
+
+check('awards board: every word is 12 px or more, every award is reachable by paging with keys, controller and taps; it opens and closes as before', () => {
+    const out = [];
+    startPlaying(); changeRoom(ROOM.VOID); menu = null; state.shopOpen = false; state.awardsOpen = false;
+    awards.got = {}; for (const a of AWARDS.slice(0, 5)) awards.got[a.id] = true;
+    const seen = new Set(), pages = awardsPageCount();
+    const read = () => {
+        const lines = recordText(drawAwards);
+        for (const l of lines) if (l.size < 12) out.push('page ' + (awardsPage + 1) + ': "' + l.t.slice(0, 24) + '" is ' + l.size + ' px');
+        const bad = sideways(lines, AWARDS_BOARD.X, AWARDS_BOARD.X + AWARDS_BOARD.W); if (bad) out.push('page ' + (awardsPage + 1) + ' too wide: ' + bad);
+        AWARDS.forEach((a, i) => { if (lines.some(l => l.t.includes(a.name))) seen.add(i); });   // (by position: three ids are used twice)
+        return lines;
+    };
+    const walk = (how, open, next, close) => {
+        seen.clear(); open(); if (!state.awardsOpen) { out.push(how + ': did not open'); return; }
+        if (awardsPage !== 0) out.push(how + ': did not open on page 1');
+        for (let i = 0; i < pages; i++) { read(); next(); }
+        if (seen.size !== AWARDS.length) out.push(how + ': reached ' + seen.size + ' of ' + AWARDS.length + ' awards, missing ' + AWARDS.filter((a, i) => !seen.has(i)).map(a => a.name).join('/'));
+        if (awardsPage !== 0) out.push(how + ': paging did not wrap round');
+        close(); if (state.awardsOpen) out.push(how + ': did not close');
+    };
+    const lines = (() => { state.awardsOpen = true; awardsPage = 0; return read(); })();
+    if (!lines.some(l => l.t.includes('1 / ' + pages))) out.push('the page "1 / ' + pages + '" is not shown');
+    if (!lines.some(l => l.t.includes('5/' + AWARDS.length))) out.push('total earned is not shown');
+    state.awardsOpen = false;
+    walk('keyboard', () => { fire('keydown', keyEv('KeyH')); fire('keyup', keyEv('KeyH')); },
+        () => { fire('keydown', keyEv('ArrowRight')); fire('keyup', keyEv('ArrowRight')); },
+        () => { fire('keydown', keyEv('Escape')); fire('keyup', keyEv('Escape')); });
+    walk('keyboard back', () => { fire('keydown', keyEv('KeyH')); fire('keyup', keyEv('KeyH')); },
+        () => { fire('keydown', keyEv('ArrowLeft')); fire('keyup', keyEv('ArrowLeft')); },
+        () => { fire('keydown', keyEv('KeyH')); fire('keyup', keyEv('KeyH')); });
+    walk('controller', () => { padWith(PAD.X); padWith(-1); },
+        () => { padWith(PAD.RIGHT); padWith(-1); },
+        () => { padWith(PAD.B); padWith(-1); });
+    walk('controller stick', () => { padWith(PAD.X); padWith(-1); },
+        () => { padWith(-1, 0.9, 0); padWith(-1); },
+        () => { padWith(PAD.X); padWith(-1); });
+    for (const [w, h] of [[844, 390], [667, 375]]) {
+        phoneMode(w, h); startPlaying(); changeRoom(ROOM.VOID); lastInput = 'touch';
+        for (const [name, r] of [['previous', awardsPrevRect()], ['next', awardsNextRect()]]) {
+            const t = tapRect(r);
+            if (t.w * view.fit < 47.5 || t.h * view.fit < 47.5) out.push(w + 'x' + h + ': the ' + name + ' arrow is only ' + Math.round(t.w * view.fit) + 'x' + Math.round(t.h * view.fit) + ' px');
+        }
+        walk('tap ' + w + 'x' + h, () => { handleTap(AWARDS_BTN.x + AWARDS_BTN.w / 2, AWARDS_BTN.y + AWARDS_BTN.h / 2); },
+            () => { const r = awardsNextRect(); handleTap(r.x + r.w / 2, r.y + r.h / 2); },
+            () => { handleTap(AWARDS_BOARD.X + 20, AWARDS_BOARD.Y + 20); });
+        const p = awardsPrevRect(); state.awardsOpen = true; awardsPage = 0; handleTap(p.x + p.w / 2, p.y + p.h / 2);
+        if (!state.awardsOpen || awardsPage !== pages - 1) out.push('the previous arrow did not go back');
+        state.awardsOpen = false; lastInput = 'keyboard';
+    }
+    desktopMode(); startPlaying(); lastInput = 'keyboard'; state.awardsOpen = false;
+    return out.slice(0, 6).join('; ');
+});
+check('title screen and HUD key tags: no text under 12 px, and the HUD slots do not overlap', () => {
+    const out = [];
+    state.gamePhase = 'intro';
+    for (const l of recordText(drawIntro)) if (l.size < 12) out.push('title: "' + l.t.slice(0, 24) + '" is ' + l.size + ' px');
+    startPlaying(); lastInput = 'keyboard';
+    state.hasDash = true; state.spell = SPELLS[0].id; state.gadget = GADGETS[0].id; state.demigod = GOD_PARENTS[0].id;
+    const hud = recordText(drawGadgetHud);
+    if (!hud.length) out.push('no HUD slots drawn');
+    for (const l of hud) if (l.size < 12) out.push('HUD: "' + l.t + '" is ' + l.size + ' px');
+    const tags = hud.filter(l => l.size === 12).sort((a, b) => a.x0 - b.x0);
+    for (let i = 1; i < tags.length; i++) if (tags[i].x0 < tags[i - 1].x1) out.push('HUD key tags overlap: ' + tags[i - 1].t + ' / ' + tags[i].t);
+    state.hasDash = false; state.spell = null; state.gadget = null; state.demigod = undefined;
+    return out.join('; ');
+});
+
+check('a toast never covers the title or hint of an open menu, the shop or the awards board, and still shows', () => {
+    const out = [];
+    startPlaying(); changeRoom(ROOM.VOID);
+    const toastLine = () => recordText(drawToast).find(l => l.t.includes('Not enough coins'));
+    const cases = [
+        ['menu', () => openMenu('TEST MENU', () => [{ icon: '?', name: 'x', desc: 'costs', cost: 5, status: null, action() {} }]), () => { menu = null; }, MENU.Y + 4, MENU.Y + 52],
+        ['shop', () => { state.shopOpen = true; }, () => { state.shopOpen = false; }, SHOP.Y + 4, SHOP.Y + 40],
+        ['awards', () => { state.awardsOpen = true; }, () => { state.awardsOpen = false; }, AWARDS_BOARD.Y + 4, AWARDS_BOARD.Y + 56],
+    ];
+    for (const [name, open, close, top, bottom] of cases) {
+        open(); showToast('Not enough coins — you need 🪙5', '#FF8888', 120);
+        const t = toastLine();
+        if (!t) { out.push(name + ': the toast was not drawn'); close(); continue; }
+        const y0 = toastY(), y1 = y0 + TOAST_H;
+        if (y1 > top && y0 < bottom) out.push(name + ': toast box ' + y0 + '-' + y1 + ' covers the title/hint rows ' + top + '-' + bottom);
+        if (y0 < 0 || y1 > 600) out.push(name + ': toast is off the screen');
+        close(); toast = null;
+    }
+    showToast('hello', '#FFE066', 60);
+    if (toastY() !== TOAST_Y) out.push('with nothing open the toast moved');
+    toast = null;
+    return out.join('; ');
+});
+
+check('a live mole is drawn on top of the dark while you hide in a Hell cave (and nothing is drawn for a defeated one)', () => {
+    startPlaying(); changeRoom(ROOM.HELL); const c = HELL_CAVES[0];
+    player.x = c.x + c.w / 2; player.y = c.y + c.h / 2;
+    const far = { x: c.x + c.w + 150, y: c.y + c.h / 2 };
+    const mole = alive => ({ type: 'mole', x: far.x, y: far.y, alive, r: 15, hp: 5, maxHp: 5, hitFlash: 0, frozen: 0, warn: 0, emerge: 0 });
+    const arcsAtMole = () => {
+        const real = ctx.arc, realFill = ctx.fill; let darkAt = -1, n = 0; const hits = [];
+        ctx.arc = (x, y, ...r) => { n++; if (Math.hypot(x - far.x, y - far.y) < 1) hits.push(n); return real.call(ctx, x, y, ...r); };
+        ctx.fill = (...a) => { if (a[0] === 'evenodd') darkAt = n; return realFill.apply(ctx, a); };
+        try { drawInsideCave(); } finally { ctx.arc = real; ctx.fill = realFill; }
+        return { hits, darkAt };
+    };
+    hell.enemies = [mole(true)];
+    const live = arcsAtMole();
+    if (!live.hits.length) return 'the mole was not drawn';
+    if (!live.hits.some(h => h > live.darkAt)) return 'the mole was drawn only under the dark';
+    hell.enemies = [mole(false)];
+    return arcsAtMole().hits.length ? 'a defeated mole was drawn' : '';
 });
 
 const failed = results.filter(([, p]) => p).length;

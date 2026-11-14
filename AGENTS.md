@@ -91,7 +91,7 @@ The scripts are classic scripts sharing one global scope, so a top-level `let`/`
 - **Player 2** — `p2`, `updateP2()`, `drawP2()`.
 - **Audio** — Web Audio synth: `SFX` table, `sfx(name)`, and per-room `SONGS`.
 - **Saving** — `SAVE_FIELDS` (the list of `state` keys saved to `localStorage`; it includes `hotbar` and `job`), saved every few seconds and on `pagehide` / when the tab is hidden. New Game asks first (`askNewGame()`). Also `lop_world` (blocks), `lop_awards`, `lop_highscore`, `lop_muted`. Old saves are patched in `startFromIntro()`.
-- **Awards** — `AWARDS` list, `giveAward(id)`, `countStat()`.
+- **Awards** — `AWARDS` list, `giveAward(id)`, `countStat()`. The board (`drawAwards()`) shows `AWARDS_PER_PAGE` big cells at a time; `awardsTurn(±1)` pages it (keys, D-pad/stick, `awardsPrevRect()` / `awardsNextRect()` taps), `setAwardsOpen()` opens it on page 1.
 
 ### Main loop
 

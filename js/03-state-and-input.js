@@ -127,6 +127,15 @@ const SHOP_SLOTS = 16;                                       // 0-7 skins, 8 Shi
 const SHOP_CLOSE = { x: SHOP.X + SHOP.W - 20, y: SHOP.Y + 20, r: 13 };
 const SHOP_BTN   = { x: 270, y: 392, w: 120, h: 32 };        // on-screen SHOP button in the Void
 const AWARDS_BTN = { x: 410, y: 392, w: 120, h: 32 };        // …and the AWARDS button next to it
+// The awards board shows a few big cells at a time (every word 12 px or more); arrows turn the pages
+const AWARDS_BOARD = { X: 90, Y: 48, W: 620, H: 540, COLS: 2, ROWS: 6, GRID_Y: 62, ROW_H: 66, ARROW_W: 72, ARROW_H: 40, ARROW_Y: 470 };
+const AWARDS_PER_PAGE = AWARDS_BOARD.COLS * AWARDS_BOARD.ROWS;
+let   awardsPage = 0;
+function awardsPageCount() { return Math.max(1, Math.ceil(AWARDS.length / AWARDS_PER_PAGE)); }
+function awardsTurn(d) { awardsPage = (awardsPage + d + awardsPageCount()) % awardsPageCount(); sfx('clink'); }   // (wraps round, so any arrow always does something)
+function awardsPrevRect() { const B = AWARDS_BOARD; return { x: B.X + 90, y: B.Y + B.ARROW_Y, w: B.ARROW_W, h: B.ARROW_H }; }
+function awardsNextRect() { const B = AWARDS_BOARD; return { x: B.X + B.W - 90 - B.ARROW_W, y: B.Y + B.ARROW_Y, w: B.ARROW_W, h: B.ARROW_H }; }
+function setAwardsOpen(on) { if (on && !state.awardsOpen) awardsPage = 0; state.awardsOpen = on; }
 const NEW_GAME_BTN = { x: 420, y: 488, w: 170, h: 38 };      // title screen, when there's a saved game
 const CONTINUE_BTN = { x: 210, y: 488, w: 170, h: 38 };
 const END_BTN    = { x: 300, y: 420, w: 200, h: 55 };        // Next Level / Play Again button
@@ -333,7 +342,12 @@ function handleTap(x, y) {
     if (tvShow) { nextTvChannel(); return true; }
     if (danceBattle) { danceTap(x, y); return true; }
     if (lastInput !== 'touch' && state.gamePhase === 'playing' && !menu && !state.shopOpen && inRect(x, y, BUILD_BTN)) { toggleBuild(); return true; }
-    if (state.awardsOpen) { state.awardsOpen = false; return true; }
+    if (state.awardsOpen) {
+        if (inRect(x, y, tapRect(awardsPrevRect()))) awardsTurn(-1);
+        else if (inRect(x, y, tapRect(awardsNextRect()))) awardsTurn(1);
+        else state.awardsOpen = false;   // a tap anywhere else closes it, as before
+        return true;
+    }
     if (menu) {
         if (Math.hypot(x - MENU_CLOSE.x, y - MENU_CLOSE.y) < MENU_CLOSE.hitR) { menu = null; return true; }   // the ✕
         const list = menu.items();
@@ -355,7 +369,7 @@ function handleTap(x, y) {
         if (inBtn(x, y, VGADGET)) { useGadget(); return true; }
         if (inBtn(x, y, VDASH))   { dash();      return true; }
     }
-    if (!state.shopOpen && canOpenShop() && inRect(x, y, tapRect(AWARDS_BTN))) { state.awardsOpen = true; return true; }
+    if (!state.shopOpen && canOpenShop() && inRect(x, y, tapRect(AWARDS_BTN))) { setAwardsOpen(true); return true; }
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
         if (inBtn(x, y, VDANCE)) { dance(); return true; }
         if (inBtn(x, y, VFART))  { fart();  return true; }
@@ -407,13 +421,17 @@ document.addEventListener('keydown', e => {
         const nav = KEY_NAV[e.code];
         if (nav) { e.preventDefault(); moveShopCursor(nav[0], nav[1]); }
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); shopSelect(state.shopCursor); }
+    } else if (state.awardsOpen) {   // the awards board: arrows (or A / D, W / S) turn the pages, SPACE goes on to the next
+        const nav = KEY_NAV[e.code];
+        if (nav) { e.preventDefault(); awardsTurn(nav[0] + nav[1]); }
+        if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); if (!e.repeat) awardsTurn(1); }
     } else {
         if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) pressAction(); }   // hold for a charge shot
         if (e.code === 'Enter' && !p2.active) pressStart();
         if (e.code === 'Enter' && p2.active && (state.won || state.levelComplete)) pressStart();
     }
     if (e.code === 'KeyE' || (e.code === 'Escape' && state.shopOpen)) toggleShop();
-    if (e.code === 'KeyH' && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
+    if (e.code === 'KeyH' && canOpenShop() && !state.shopOpen) setAwardsOpen(!state.awardsOpen);
     if (e.code === 'Escape') state.awardsOpen = false;
     if (e.code === 'KeyN' && state.gamePhase === 'intro') askNewGame();
     if (e.code === 'KeyG') dance();
@@ -657,7 +675,7 @@ const PAD_COMBOS = [
     { btn: PAD.A,  label: 'God power', run: () => { if (godParent()) useGodPower(); else showToast('⚡ Only demigods have god powers!', '#FFE680', 100); } },
     { btn: PAD.X,  label: 'Dance',     run: () => dance() },
     { btn: PAD.B,  label: 'Fart',      run: () => fart() },
-    { btn: PAD.Y,  label: 'Awards',    run: () => { if (canOpenShop()) state.awardsOpen = !state.awardsOpen; } },
+    { btn: PAD.Y,  label: 'Awards',    run: () => { if (canOpenShop()) setAwardsOpen(!state.awardsOpen); } },
     { btn: PAD.RB, label: 'Burp',      run: () => burp() },
     { btn: PAD.LT, label: 'Sneeze',    run: () => sneeze() },
     { btn: PAD.LB, label: 'Hide help', run: () => toggleControlsPanel() },
