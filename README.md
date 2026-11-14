@@ -20,18 +20,27 @@ Mystery portals take you to a random place: the **Void**, **Hell**, **Paradise I
 | | Keyboard / mouse | Controller | Touch |
 |---|---|---|---|
 | Move | WASD / arrows | Stick / D-pad | Joystick |
-| Shoot, dig, talk, mine | Space | A (hold for autofire) | SHOOT / DIG / TALK button |
-| Build mode | B or the BUILD button | Left stick click | 🧱 |
-| Mine / place a block | Left click / right click | A | Tap BUILD |
-| Pick a block | 1-9 or Q (in build mode) | B | 🔄 |
-| Gadget | Q | B | ⚙ |
+| Shoot, dig, talk, mine (hold for a charge shot) | Space | A or RT | the big button (SHOOT / DIG / TALK) |
+| Punch (hold to swing) / block | J / X | RB / LB | 👊 / 🛡 |
+| Jump | C | Y | 🦘 |
+| Build mode | B or the BUILD button | Left stick click | 🧱 (⚔ to leave) |
+| Mine / place a block | Left click / right click, or Space | A | tap the ground |
+| Pick a block | 1-9 or Q (in build mode) | B | tap the block bar, or 🔄 |
+| Gadget | Q | B | the gadget button |
+| Spell / god power / ride | R / T / V | X / View + A / right stick click | the spell, god and ride buttons |
 | Dash | Shift | LT | ⚡ |
-| Dance / fart | G / F | LB / RB | 💃 / 💨 |
-| Shop / awards | E / H (in the Void) | Y / X | tap the buttons |
-| Player 2 | P to join; P2 uses arrows + Enter | Start on a 2nd controller | — |
-| Sound | M | Back | 🔊 |
+| Dance / fart | G / F | View + X / View + B | 💃 / 💨 |
+| Burp / sneeze | U / I | View + RB / View + LT | 🫢 / 🤧 (one button, takes turns) |
+| Shop / awards (in the Void) | E / H | Y / X | tap the SHOP and AWARDS buttons |
+| Weapon chart (in the Void) | walk up to the sign, then Space | A | the big button |
+| Close a menu | E, O or Escape | B | ✕ |
+| Settings | O | Start | ⚙ |
+| Sound | M | tap View | 🔊 |
+| Player 2 | P to join (P2 uses arrows + Enter; P1 keeps WASD) | hold any button on a new controller for 1 s; hold Start for 2 s to leave | — |
 
-The game saves by itself every few seconds. The title screen offers **Continue** or **New Game**.
+View is the small button left of Start. Hold it and press another button for the extra moves above.
+
+The game saves by itself every few seconds and when you close the tab. The title screen offers **Continue** or **New Game** (which asks first). On a phone, hold it sideways; there is a full-screen button on the title screen.
 
 ## Places
 
@@ -51,7 +60,7 @@ The game saves by itself every few seconds. The title screen offers **Continue**
 
 ## Weapons, gadgets and pets
 
-- **Weapons** come from digging: Ice ❄, Fire 🔥, Lightning ⚡, Water 💧, then **Super** (3 shots) and rarely **Rainbow** 🌈. Every weapon hurts every monster a little, and its matching monsters a lot (the chart in the Void shows which). Ice freezes, Lightning jumps between monsters.
+- **Weapons** come from digging: Ice ❄, Fire 🔥, Lightning ⚡, Water 💧, then **Super** (3 shots) and rarely **Rainbow** 🌈. Every weapon hurts every monster a little, and its matching monsters a lot (the Weapon chart sign in the Void shows which). Ice freezes, Lightning jumps between monsters.
 - **The Blacksmith's Forge**: bigger ammo bag, weapon levels, Super Dash, and gadgets (Boomerang, Bombs, Frog Wand, Tornado).
 - **Pets** (Shop): Puppy, Kitten, Owl, Baby Dragon, Penguin, Unicorn and T-Rex. Each has its own power, and they level up to 5.
 - **Minecraft-style building**: mine trees, rocks, blocks and the ground; place blocks anywhere; craft planks, bricks, glass, TNT, a diamond pickaxe, a diamond sword and armor at the Crafting Table.
@@ -72,9 +81,11 @@ python3 -m http.server 8000
 
 ```
 light-of-paradise/
-├── index.html                    # The entire game (HTML + CSS + JS, ~7,500 lines)
+├── index.html                    # The entire game (HTML + CSS + JS, ~13,000 lines)
 ├── Light of paradise opening.mp4 # Intro cinematic
-├── .github/workflows/deploy.yml  # Unused (see Deployment)
+├── test/                         # Headless tests: regress.js, fuzz.js, reporter.js, worker.js (+ headless.js, a fake browser)
+├── worker/                       # Cloudflare Worker that collects error reports from players' screens
+├── .github/workflows/test.yml    # Runs the tests on every pull request and push to main
 ├── README.md
 └── AGENTS.md                     # Notes for AI coding assistants
 ```
@@ -83,4 +94,4 @@ All code is in one `<script>` block, split into sections with `// ── SECTION
 
 ## Deployment
 
-GitHub Pages is set to **Deploy from a branch: `main`**, so every push to `main` updates the live site. The `deploy.yml` workflow triggers on `master`, which doesn't exist, so it never runs.
+GitHub Pages is set to **Deploy from a branch: `main`**, so every push to `main` updates the live site. There is no deploy workflow. `test.yml` only checks the game: run the same checks yourself with `node test/regress.js` and `node test/fuzz.js --seed 1`.
