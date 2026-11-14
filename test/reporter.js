@@ -1,14 +1,16 @@
-// Checks that reportError() in index.html sends a report when ERROR_LOG_URL is set,
+// Checks that reportError() in js/ sends a report when ERROR_LOG_URL is set,
 // sends each distinct error once, and stops after MAX_ERROR_REPORTS.
 //   node test/reporter.js
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert');
 const { loadGame } = require('./headless');
 
-let html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const before = html;
-html = html.replace(/const ERROR_LOG_URL\s*=\s*'[^']*';/, "const ERROR_LOG_URL      = 'https://lop-errors.example.workers.dev/report';");   // whatever it is set to
-assert.notStrictEqual(html, before, 'could not find the ERROR_LOG_URL line in index.html');
+// whatever ERROR_LOG_URL is set to in js/, run the game with a test URL
+function withErrorUrl(source) {
+    const patched = source.replace(/const ERROR_LOG_URL\s*=\s*'[^']*';/, "const ERROR_LOG_URL      = 'https://lop-errors.example.workers.dev/report';");
+    assert.notStrictEqual(patched, source, 'could not find the ERROR_LOG_URL line in js/');
+    return patched;
+}
 
 const driver = String.raw`
 console.error = () => {};   // quiet
@@ -32,4 +34,4 @@ assert.strictEqual(__h.rafCb, loop, 'the loop is still alive after all those err
 console.log('reporter: all checks passed');
 `;
 global.assert = assert;
-loadGame({ driver, html });
+loadGame({ driver, patch: withErrorUrl });

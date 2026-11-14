@@ -70,7 +70,7 @@ The game saves by itself every few seconds and when you close the tab. The title
 
 ## Running locally
 
-No build step. The whole game is one HTML file.
+No build step. The game is `index.html` plus plain scripts in `js/`; serve the folder as it is.
 
 ```bash
 python3 -m http.server 8000
@@ -81,16 +81,17 @@ python3 -m http.server 8000
 
 ```
 light-of-paradise/
-├── index.html                    # The entire game (HTML + CSS + JS, ~13,000 lines)
+├── index.html                    # The page: HTML, CSS and the <script> tags for js/
+├── js/                           # The game: 14 plain scripts loaded in order (~13,000 lines in all)
 ├── Light of paradise opening.mp4 # Intro cinematic
-├── test/                         # Headless tests: regress.js, fuzz.js, reporter.js, worker.js (+ headless.js, a fake browser)
+├── test/                         # Headless tests: scripts.js, regress.js, fuzz.js, reporter.js, worker.js (+ headless.js, a fake browser)
 ├── worker/                       # Cloudflare Worker that collects error reports from players' screens
 ├── .github/workflows/test.yml    # Runs the tests on every pull request and push to main
 ├── README.md
 └── AGENTS.md                     # Notes for AI coding assistants
 ```
 
-All code is in one `<script>` block, split into sections with `// ── SECTION ─` banner comments. `AGENTS.md` describes the main systems.
+The scripts share one global scope, so they must stay in the order `index.html` loads them (a file can only use at load time what earlier files defined). Code is split into sections with `// ── SECTION ─` banner comments. To add a file, add its `<script>` tag to `index.html` in order. `AGENTS.md` has a table of what each file holds and describes the main systems.
 
 ## Deployment
 

@@ -1,8 +1,9 @@
 // Headless browser stand-in for Light of Paradise.
 //
-// The game is one <script> in index.html with top-level let/const, so test
-// code can't import it: loadGame() runs the game script and a "driver" script
-// in the same scope, with just enough of a fake browser underneath.
+// The game is the <script src> files that index.html loads, in order (js/*.js),
+// sharing one global scope with top-level let/const, so test code can't import
+// it: loadGame() runs those files joined together, then a "driver" script in the
+// same scope, with just enough of a fake browser underneath.
 //
 // If the optional `canvas` npm package (node-canvas) is installed and
 // options.realCanvas is set, real 2D contexts are used, so drawing calls that
@@ -12,9 +13,45 @@ const fs = require('fs'), path = require('path'), vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
 
-function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile = path.join(ROOT, 'index.html'), html = null }) {
-    if (html === null) html = fs.readFileSync(gameFile, 'utf8');   // or pass the page's text directly (e.g. patched)
-    const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
+// The scripts a page loads, in the page's order: [{ src, file, text }] where src
+// is null for an inline <script>. Missing files are listed with text === null.
+function pageScripts(htmlFile) {
+    const html = fs.readFileSync(htmlFile, 'utf8'), dir = path.dirname(htmlFile), out = [];
+    const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/g;
+    let m;
+    while ((m = re.exec(html))) {
+        const src = /\bsrc\s*=\s*["']([^"']+)["']/.exec(m[1]);
+        if (!src) { out.push({ src: null, file: htmlFile, text: m[2] }); continue; }
+        const file = path.join(dir, src[1]);
+        out.push({ src: src[1], file, text: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null });
+    }
+    return out;
+}
+
+// What the page loads is exactly the js/ folder: no missing file, no file loaded
+// twice, no js/*.js left out. Returns a list of problems ('' list when fine).
+function checkScripts(htmlFile) {
+    const problems = [], seen = new Set();
+    for (const s of pageScripts(htmlFile)) {
+        if (s.src === null) continue;
+        if (s.text === null) problems.push('index.html loads a missing file: ' + s.src);
+        if (seen.has(s.src)) problems.push('index.html loads ' + s.src + ' more than once');
+        seen.add(s.src);
+    }
+    const jsDir = path.join(path.dirname(htmlFile), 'js');
+    if (fs.existsSync(jsDir)) for (const f of fs.readdirSync(jsDir)) {
+        if (f.endsWith('.js') && !seen.has('js/' + f)) problems.push('js/' + f + ' exists but index.html does not load it');
+    }
+    return problems;
+}
+
+// patch(source) may rewrite the joined game source before it runs (e.g. to set a constant)
+function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile = path.join(ROOT, 'index.html'), patch = null }) {
+    const scripts = pageScripts(gameFile);
+    const missing = scripts.filter(s => s.text === null);
+    if (missing.length) throw new Error('index.html loads a missing file: ' + missing.map(s => s.src).join(', '));
+    let script = scripts.map(s => s.text.endsWith('\n') ? s.text : s.text + '\n').join('');
+    if (patch) script = patch(script);
 
     // Seeded Math.random so every run can be replayed
     let s = (seed >>> 0) || 1;
@@ -83,7 +120,7 @@ function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile =
     g.__h = h;
     g.canvasListeners = gameCanvas.listeners;
 
-    vm.runInThisContext(script + '\n' + driver, { filename: 'index.html' });
+    vm.runInThisContext(script + '\n' + driver, { filename: 'game.js' });
     return h;
 }
 
@@ -99,4 +136,4 @@ function parseArgs(argv, defaults) {
     return out;
 }
 
-module.exports = { loadGame, parseArgs };
+module.exports = { loadGame, parseArgs, pageScripts, checkScripts };
