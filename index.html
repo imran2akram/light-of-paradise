@@ -1528,7 +1528,7 @@ const MENU_CLOSE = { x: MENU.X + MENU.W - 26, y: MENU.Y + 20, r: 17, hitR: 36 };
 const MENU_WIDE = { PAD: 14, TOP: 56, GAP: 4, HEAD: 22, LINE: 14, BOTTOM: 8, TEXT_X: 54, MAX_LINES: 5 };
 function wideDescLines(it) {
     ctx.save(); ctx.font = '12px Arial';
-    const lines = wrapText(it.desc, MENU.W - 2 * MENU_WIDE.PAD - MENU_WIDE.TEXT_X - 4, MENU_WIDE.MAX_LINES);
+    const lines = wrapText(it.desc, MENU.W - 2 * MENU_WIDE.PAD - MENU_WIDE.TEXT_X - 14, MENU_WIDE.MAX_LINES);
     ctx.restore();
     return lines;
 }
