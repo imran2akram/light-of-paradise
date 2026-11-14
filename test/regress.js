@@ -2,8 +2,15 @@
 // Each scenario sets up an exact situation and runs a frame or two.
 //   node test/regress.js [--canvas] [--game path/to/old/index.html]
 'use strict';
-const { loadGame, parseArgs } = require('./headless');
+const path = require('path');
+const { loadGame, parseArgs, checkScripts } = require('./headless');
 const opts = parseArgs(process.argv.slice(2), { seed: 1, realCanvas: false });
+
+// index.html and js/ must agree: every js/*.js loaded exactly once, every loaded file present
+const scriptProblems = checkScripts(opts.gameFile || path.join(__dirname, '..', 'index.html'));
+for (const p of scriptProblems) console.log('FAIL scripts  (' + p + ')');
+if (scriptProblems.length) { console.log(scriptProblems.length + ' script problem(s)'); process.exit(1); }
+console.log('ok   index.html and js/ agree');
 
 const driver = String.raw`
 const results = [];

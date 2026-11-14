@@ -24,10 +24,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Syntax check the game script
-        run: |
-          sed -n '/<script>/,/<\/script>/p' index.html | sed '1d;$d' > /tmp/game.js
-          node --check /tmp/game.js
+      - name: Check scripts (index.html matches js/, every file parses)
+        run: node test/scripts.js
 
       - name: Regression scenarios
         run: node test/regress.js
