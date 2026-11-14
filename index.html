@@ -129,38 +129,13 @@ window.addEventListener('orientationchange', fitCanvas);
 fitCanvas();
 
 // ── VIDEO INTRO ───────────────────────────────────────────────
-let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
+const VOID_BG_COLOR = '#a0a0a0';   // light grey, darker than the white player
 
 const introVideo = (function setupVideoIntro() {
     const overlay = document.getElementById('videoOverlay');
     const video   = document.getElementById('introVideo');
     const hint    = document.getElementById('skipHint');
     let dismissed = false;
-
-    function captureLastFrameColor() {
-        try {
-            const oc   = document.createElement('canvas');
-            oc.width   = video.videoWidth  || 640;
-            oc.height  = video.videoHeight || 360;
-            const octx = oc.getContext('2d');
-            octx.drawImage(video, 0, 0, oc.width, oc.height);
-            // Sample a 5×5 grid across the frame
-            let r = 0, g = 0, b = 0, n = 0;
-            for (let sx = 0.1; sx <= 0.95; sx += 0.2) {
-                for (let sy = 0.1; sy <= 0.95; sy += 0.2) {
-                    const d = octx.getImageData(
-                        Math.floor(sx * oc.width),
-                        Math.floor(sy * oc.height), 1, 1).data;
-                    r += d[0]; g += d[1]; b += d[2]; n++;
-                }
-            }
-            // Darken the average so it works as a subtle game background
-            r = Math.floor(r / n * 0.32);
-            g = Math.floor(g / n * 0.32);
-            b = Math.floor(b / n * 0.32);
-            voidBgColor = `rgb(${r},${g},${b})`;
-        } catch (e) { /* keep default if CORS/decode fails */ }
-    }
 
     function dismiss() {
         initAudio();   // a tap or key press: the moment browsers allow sound (does nothing twice)
@@ -349,7 +324,6 @@ const LEVEL_CONFIGS = [
 ];
 const MAX_LEVELS       = 3;
 const DEVIL_BULLET_SPEED = 7.5;   // px/frame (player moves 4)
-const CAVE_MAX_FRAMES  = 3600;  // 1 minute at 60 fps — same for all levels
 
 // ── AVATAR SKINS ─────────────────────────────────────────────
 const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700', '#2A2A2A', '#B8C4CC', '#44BB55', '#3AB0C0'];
@@ -1248,7 +1222,6 @@ const SETTINGS_BTN = { x: 26, y: 534, r: 16 };
 // ── PARADISE ISLAND TOWN ─────────────────────────────────────
 // Daytime is peaceful: talk to the townspeople, do jobs, buy houses.
 // Then MONSTER NIGHT comes — beat the Paradise-only monsters to win a Light Crystal.
-const DAY_FRAMES        = 1800;           // 30 s of daytime (only counts while you're in town)
 const DUSK_FRAMES       = 180;            // 3 s "Monster Night is coming!" warning
 const HEAL_COST         = 3;              // Doctor
 const AMMO_UPGRADE_COST = [10, 15, 20];   // Blacksmith: +1 ammo each
@@ -1710,7 +1683,6 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Enter' && p2.active && (state.won || state.levelComplete)) pressStart();
     }
     if (e.code === 'KeyE' || (e.code === 'Escape' && state.shopOpen)) toggleShop();
-    if (e.code === 'KeyC' && state.room === ROOM.PARADISE && !state.shopOpen) { /* handled by walking up to the table */ }
     if (e.code === 'KeyH' && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
     if (e.code === 'Escape') state.awardsOpen = false;
     if (e.code === 'KeyN' && state.gamePhase === 'intro') askNewGame();
@@ -1821,7 +1793,6 @@ function hurtFriend(f) {
     spawnParticles(f.x, f.y, '#FF4444', 8); sfx('hurt');
     if (f.hp <= 0) { f.down = P2_DOWN_FRAMES; showToast(`Player ${f.n} needs a rest… back in 10 s!`, '#FFAA88', 150); }
 }
-function hurtP2() { hurtFriend(p2); }
 
 function friendShoot(f) {
     if (battle && !battle.result) { battleHit(f.n, f); return; }   // ⚔ Battle Mode: bonk each other
@@ -1944,11 +1915,8 @@ function stickNavStep(gp) {
     stickNav.held++;
     return stickNav.held >= STICK_NAV_REPEAT_FIRST && (stickNav.held - STICK_NAV_REPEAT_FIRST) % STICK_NAV_REPEAT_EVERY === 0 ? [dx, dy] : null;
 }
-const PAD_AUTOFIRE    = 10;    // frames between shots while A is held
 let   lastInput       = 'keyboard';   // 'keyboard' | 'touch' | 'pad' — picks which hints to show
 let   padPrev         = [];
-let   pad2StartHeld   = false;
-let   padHold         = 0;
 const padMove         = { x: 0, y: 0 };
 let   padComboUsed    = false;
 // Not enough buttons, so: hold View (⧉) + another button
@@ -4437,7 +4405,6 @@ const CAPTAIN = { id: 'captain', name: 'Captain Salty', x: 705, y: 545, coat: '#
 const DOCK    = { x: 70, y: 540 };    // on each island: sail back to Paradise
 const SKY_STAIRS = { x: 650, y: 170 };   // in Heaven
 const ROCKET  = { x: 70, y: 470 };    // in the Void
-const ISLANDS = [ROOM.CANDY, ROOM.ICE, ROOM.HAUNTED];
 
 const e0 = (type, x, y, extra = {}) => ({ type, x, y, r: 15, hp: ENEMY_TYPES[type].hp, maxHp: ENEMY_TYPES[type].hp, alive: true,
                                            hitFlash: 0, frozen: 0, dx: 0, dy: 0, emerge: 40, hopTimer: 0,
@@ -5070,7 +5037,6 @@ function drawNewPlaces() {
             if (spikesUp()) { ctx.fillStyle = '#CCCCCC'; for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(sp.x + k * 7 - 4, sp.y); ctx.lineTo(sp.x + k * 7, sp.y - 14); ctx.lineTo(sp.x + k * 7 + 4, sp.y); ctx.fill(); } }
         }
         ctx.strokeStyle = '#3A7A1A'; ctx.lineWidth = 4;   // vines hanging over the pit
-        const swingA = P.swing ? Math.sin(P.swing.t * Math.PI) : 0;
         ctx.beginPath(); ctx.moveTo(400, 150); ctx.quadraticCurveTo(400, 240, P.swing ? player.x : 400 + Math.sin(t) * 10, P.swing ? player.y - 10 : 250); ctx.stroke();
         for (const v of VINES) { ctx.fillStyle = '#6A9A2A'; ctx.beginPath(); ctx.arc(v.x, v.y, 8, 0, Math.PI * 2); ctx.fill(); }
         const vi = nearVine();
@@ -11640,7 +11606,7 @@ function drawVignette() {
 function drawRoomBackground() {
     const t = Date.now() / 1000;
     if (state.room === ROOM.VOID) {
-        ctx.fillStyle = voidBgColor; ctx.fillRect(0, 0, 800, 600);
+        ctx.fillStyle = VOID_BG_COLOR; ctx.fillRect(0, 0, 800, 600);
         ctx.drawImage(roomBackground('void'), -50 + Math.sin(t / 6) * 30, -50 + Math.cos(t / 8) * 15);
     } else if (state.room === ROOM.SECRET) {
         const gold = ctx.createRadialGradient(400, 300, 50, 400, 300, 500);
