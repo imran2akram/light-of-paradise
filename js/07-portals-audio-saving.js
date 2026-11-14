@@ -481,16 +481,29 @@ function openSettings() {
 // ── TOASTS (big messages at the top of the screen) ───────────
 let toast = null;   // { text, color, timer }
 function showToast(text, color = '#FFE066', frames = 180) { toast = { text, color, timer: frames }; }
+const TOAST_Y = 76, TOAST_H = 32;
+// The pop-up (menu, shop or awards board) that is open now, or null: a toast must not hide its title and hint
+function overlayRect() {
+    if (menu)             return { x: MENU.X, y: MENU.Y, w: MENU.W, h: menu.h };
+    if (state.shopOpen)   return { x: SHOP.X, y: SHOP.Y, w: SHOP.W, h: SHOP.H };
+    if (state.awardsOpen) return { x: AWARDS_BOARD.X, y: AWARDS_BOARD.Y, w: AWARDS_BOARD.W, h: AWARDS_BOARD.H };
+    return null;
+}
+// Where the toast sits: the usual spot, or just above an open pop-up (still on screen, so "Not enough coins" is seen)
+function toastY() {
+    const o = overlayRect();
+    return o ? Math.max(4, o.y - TOAST_H - 4) : TOAST_Y;
+}
 function drawToast() {
     if (!toast) return;
     if (--toast.timer <= 0) { toast = null; return; }
     ctx.save();
     ctx.globalAlpha = Math.min(1, toast.timer / 30);
     ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
-    const w = ctx.measureText(toast.text).width + 30;
-    ctx.fillStyle = 'rgba(15,10,30,0.88)'; ctx.fillRect(400 - w / 2, 76, w, 32);
-    ctx.strokeStyle = toast.color; ctx.lineWidth = 2; ctx.strokeRect(400 - w / 2, 76, w, 32);
-    ctx.fillStyle = toast.color; ctx.fillText(toast.text, 400, 98);
+    const w = ctx.measureText(toast.text).width + 30, y = toastY();
+    ctx.fillStyle = 'rgba(15,10,30,0.88)'; ctx.fillRect(400 - w / 2, y, w, TOAST_H);
+    ctx.strokeStyle = toast.color; ctx.lineWidth = 2; ctx.strokeRect(400 - w / 2, y, w, TOAST_H);
+    ctx.fillStyle = toast.color; ctx.fillText(toast.text, 400, y + 22);
     ctx.restore();
 }
 

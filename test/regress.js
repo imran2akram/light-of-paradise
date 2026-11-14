@@ -852,6 +852,30 @@ check('title screen and HUD key tags: no text under 12 px, and the HUD slots do 
     return out.join('; ');
 });
 
+check('a toast never covers the title or hint of an open menu, the shop or the awards board, and still shows', () => {
+    const out = [];
+    startPlaying(); changeRoom(ROOM.VOID);
+    const toastLine = () => recordText(drawToast).find(l => l.t.includes('Not enough coins'));
+    const cases = [
+        ['menu', () => openMenu('TEST MENU', () => [{ icon: '?', name: 'x', desc: 'costs', cost: 5, status: null, action() {} }]), () => { menu = null; }, MENU.Y + 4, MENU.Y + 52],
+        ['shop', () => { state.shopOpen = true; }, () => { state.shopOpen = false; }, SHOP.Y + 4, SHOP.Y + 40],
+        ['awards', () => { state.awardsOpen = true; }, () => { state.awardsOpen = false; }, AWARDS_BOARD.Y + 4, AWARDS_BOARD.Y + 56],
+    ];
+    for (const [name, open, close, top, bottom] of cases) {
+        open(); showToast('Not enough coins — you need 🪙5', '#FF8888', 120);
+        const t = toastLine();
+        if (!t) { out.push(name + ': the toast was not drawn'); close(); continue; }
+        const y0 = toastY(), y1 = y0 + TOAST_H;
+        if (y1 > top && y0 < bottom) out.push(name + ': toast box ' + y0 + '-' + y1 + ' covers the title/hint rows ' + top + '-' + bottom);
+        if (y0 < 0 || y1 > 600) out.push(name + ': toast is off the screen');
+        close(); toast = null;
+    }
+    showToast('hello', '#FFE066', 60);
+    if (toastY() !== TOAST_Y) out.push('with nothing open the toast moved');
+    toast = null;
+    return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;
