@@ -433,6 +433,81 @@ check('blocks cannot be placed on portals, exits, doors, the rocket, race master
     return out.join('; ');
 });
 
+// ── football: a helper and two defenders join the goalie ──
+const footballInside = G => [G.mate, ...G.opps].every(a => a.x >= FB_PITCH.x0 && a.x <= FB_PITCH.x1 && a.y >= FB_PITCH.y0 && a.y <= FB_PITCH.y1)
+    && G.ball.x >= 0 && G.ball.x <= 800 && G.ball.y >= 80 && G.ball.y <= 580;
+function footballStart() { state.gamePhase = 'playing'; settings.creative = false; startFootball(); state.playerHp = fullHearts(); player.x = 200; player.y = 330; return miniGame; }
+
+check('football: entering creates 1 teammate, 2 opponents and a goalie', () => {
+    const G = footballStart();
+    if (state.room !== ROOM.STADIUM) return 'not in the stadium';
+    if (!G.mate || typeof G.mate.x !== 'number') return 'no teammate';
+    if (G.opps.length !== 2 || G.opps.some(o => typeof o.x !== 'number')) return 'need exactly 2 opponents';
+    if (typeof G.keeper !== 'number') return 'no goalie';
+    return footballInside(G) ? '' : 'a player starts off the pitch';
+});
+check('football: idle and wandering for thousands of frames stays on the pitch and never costs hearts', () => {
+    for (const wander of [false, true]) {
+        const G = footballStart();
+        let dx = 0, dy = 0;
+        for (let i = 0; i < 3000; i++) {
+            if (wander) {
+                if (i % 40 === 0) { const a = Math.random() * 6.28; dx = Math.cos(a) * 4; dy = Math.sin(a) * 4; }
+                player.x = Math.max(20, Math.min(780, player.x + dx)); player.y = Math.max(100, Math.min(570, player.y + dy));
+            }
+            loop();
+            if (miniGame !== G) { if (i < 1500) return 'game ended early at ' + i; break; }
+            if (!footballInside(G)) return 'someone left the pitch at frame ' + i + (wander ? ' (wandering)' : '');
+            if (state.playerHp < fullHearts()) return 'hearts went down at frame ' + i;
+            if (!isFinite(G.ball.x + G.ball.y)) return 'ball is NaN';
+        }
+    }
+    return '';
+});
+check('football: a ball kicked into the goal scores', () => {
+    const G = footballStart(); const before = G.goals;
+    G.opps.forEach(o => { o.x = 300; o.y = 150; o.recover = 999; }); G.mate.x = 300; G.mate.y = 520; G.mate.recover = 999;
+    Object.assign(G.ball, { x: 700, y: 330, vx: 0, vy: 0 }); player.x = 685; player.y = 330;
+    G.keeper = 270;
+    for (let i = 0; i < 40 && miniGame === G && G.goals === before; i++) loop();
+    return G.goals === before + 1 ? '' : 'no goal (goals ' + G.goals + ')';
+});
+check('football: an opponent touching the loose ball clears it and then rests', () => {
+    const G = footballStart(); const o = G.opps[0];
+    G.mate.recover = 999; G.opps[1].recover = 999; player.x = 100; player.y = 500;
+    Object.assign(G.ball, { x: 500, y: 330, vx: 0, vy: 0 }); Object.assign(o, { x: 510, y: 330, recover: 0, react: 99 });
+    loop();
+    if (G.ball.vx >= 0) return 'ball was not kicked away from their goal (vx ' + G.ball.vx + ')';
+    if (o.recover <= 0) return 'no rest after the tackle';
+    return '';
+});
+check('football: an opponent taking the ball off a dribbler does not hurt', () => {
+    const G = footballStart(); const o = G.opps[0];
+    G.mate.recover = 999; G.opps[1].recover = 999;
+    player.x = 400; player.y = 330; Object.assign(G.ball, { x: 420, y: 330, vx: 0, vy: 0 }); Object.assign(o, { x: 430, y: 330, recover: 0, react: 99 });
+    loop();
+    if (state.playerHp < fullHearts()) return 'hearts lost';
+    return o.recover > 0 ? '' : 'no tackle';
+});
+check('football: a still ball under a pile of players is popped loose', () => {
+    const G = footballStart();
+    Object.assign(G.ball, { x: 300, y: 300, vx: 0, vy: 0 });
+    for (const a of [G.mate, ...G.opps]) { a.x = 300; a.y = 300; a.recover = 9999; }
+    for (let i = 0; i < FB_STUCK_FRAMES + 60 && miniGame === G; i++) {
+        player.x = 300; player.y = 360; loop();
+        if (Math.hypot(G.ball.vx, G.ball.vy) > 0.5 || Math.hypot(G.ball.x - 300, G.ball.y - 300) > 40) return '';
+    }
+    return 'ball stayed stuck';
+});
+check('football: computer players never end up inside a block', () => {
+    const G = footballStart(), key = cellKey(Math.floor(580 / CELL), Math.floor(330 / CELL));
+    roomBlocks()[key] = { type: 'stone' };
+    let bad = '';
+    for (let i = 0; i < 1500 && miniGame === G && !bad; i++) { loop(); for (const a of [G.mate, ...G.opps]) if (playerHitsBlock(a.x, a.y)) bad = 'a player is in a block at frame ' + i; }
+    delete roomBlocks()[key];
+    return bad;
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;
