@@ -1550,6 +1550,7 @@ function handleTap(x, y) {
 }
 
 document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;   // browser shortcuts (Ctrl+R, Cmd+W...) are not game buttons
     initAudio();
     keys[e.code] = true;
     lastInput = 'keyboard';
@@ -1626,6 +1627,42 @@ canvas.addEventListener('contextmenu', e => {
     const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
     if (!blockAtCell(cx, cy)) buildAt(cx, cy, -9999, -9999);   // (far-away aim so it never chops a tree by accident)
 });
+
+// ── PAUSE (the kid switched tab or window: nothing keeps running or stays held down) ──
+let paused = false;
+let padResync = false;   // after a pause: held buttons count as already held, so they don't fire again
+
+function pauseGame() {
+    if (paused) return;
+    paused = true;
+    for (const k of Object.keys(keys)) keys[k] = false;
+    vTouch.joyId = vTouch.shootId = vTouch.meleeId = vTouch.blockId = null;
+    vTouch.joyDX = vTouch.joyDY = 0;
+    padMove.x = padMove.y = 0; padPrev = [];
+    // Let go without hitting: stopping a held punch must not fire a spin attack
+    fight.holding = false; fight.hold = 0; fight.charge = 0; fight.blocking = false;
+    if (audioCtx && audioCtx.state === 'running') audioCtx.suspend();   // the music timer keeps ticking in a hidden tab
+}
+function resumeGame() {
+    if (!paused || document.hidden) return;
+    paused = false; padResync = true;
+    resetFrameClock();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); else resumeGame(); });
+window.addEventListener('blur', pauseGame);
+window.addEventListener('focus', resumeGame);
+
+// Shown when the window is visible but not in front (a hidden tab needs no picture)
+function drawPaused() {
+    if (!paused) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
+    ctx.font = 'bold 44px Arial'; ctx.fillText('⏸ PAUSED', 400, 290);
+    ctx.font = '20px Arial'; ctx.fillText('Click here to play!', 400, 330);
+    ctx.restore();
+}
 
 // ── FRIENDS: Players 2, 3 and 4 on the same screen ──────────
 // P2 can press P (arrow keys + Enter). Anyone can plug in a new controller and HOLD ANY BUTTON to join;
@@ -3504,6 +3541,7 @@ function drawControlsPanel() {
 
 function pollGamepad() {
     padMove.x = padMove.y = 0;
+    if (paused) return;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const connected = Array.from(pads).filter(p => p && p.connected);
     for (const f of FRIENDS) {   // a friend's controller was unplugged: they leave
@@ -3534,7 +3572,8 @@ function pollGamepad() {
     }
     if (!gp) { padPrev = []; return; }
     const held = gp.buttons.map(b => b.pressed);
-    const was  = padPrev;
+    const was  = padResync ? held : padPrev;   // (right after a pause nothing counts as a new press)
+    padResync = false;
     padPrev = held;
     const pressed = i => held[i] && !was[i];
     if (held.some(Boolean) || Math.abs(gp.axes[0] || 0) > 0.5 || Math.abs(gp.axes[1] || 0) > 0.5) {
@@ -5214,7 +5253,8 @@ try { muted = localStorage.getItem('lop_muted') === '1'; } catch (e) {}
 const MUTE_BTN = { x: 26, y: 574, r: 16 };
 
 function initAudio() {
-    if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+    resumeGame();   // any real key press, click or tap means the kid is back (resumeGame ignores a hidden tab)
+    if (audioCtx) { if (audioCtx.state === 'suspended' && !paused) audioCtx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     audioCtx   = new AC();
@@ -5375,7 +5415,7 @@ function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
 // Schedules the next few notes a little ahead of time so the music never stutters
 function musicTick() {
-    if (!audioCtx || muted || !settings.music) return;
+    if (!audioCtx || muted || !settings.music || paused) return;
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
     const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell'
                   : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship', chess: 'mall', library: 'underground',
@@ -12222,7 +12262,7 @@ function drawVirtualControls() {
 
 // ── MAIN LOOP ─────────────────────────────────────────────────
 function update() {
-    if (state.gamePhase === 'intro') return;
+    if (paused || state.gamePhase === 'intro') return;
     if (race) { updateRace(); updateParticles(); return; }   // everything waits while you race
     if (petBattle) { updatePetBattle(); updateParticles(); return; }
     if (tvShow) { if (++tvShow.t > 900) tvShow = null; return; }
@@ -12233,6 +12273,8 @@ function update() {
         if (state.coinsBackup === undefined) state.coinsBackup = state.coins;
         state.coins = 99999;
     }
+    // A menu, the shop or the awards board is open: the world waits for you (monsters must not hurt you while you read)
+    if (menu || state.shopOpen || state.awardsOpen) { fight.charge = 0; updateParticles(); return; }
     updatePlayer();
     if (!state.won && !state.levelComplete) {
         updateEnemies();
@@ -12284,6 +12326,7 @@ function draw() {
 
     if (state.gamePhase === 'intro') {
         drawIntro();
+        drawPaused();
         ctx.restore();
         return;
     }
@@ -12341,6 +12384,7 @@ function draw() {
     drawCredits();
     if (state.levelComplete) drawLevelComplete();
     if (state.won)           drawWin();
+    drawPaused();
 
     ctx.restore();
 }

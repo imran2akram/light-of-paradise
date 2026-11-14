@@ -35,6 +35,8 @@ function countSteps(fn) {
     try { fn(); } finally { update = real; }
     return n;
 }
+const fire = (name, e) => { for (const f of (__h.listeners[name] || [])) f(e); };
+const keyEv = (code, extra) => ({ code, preventDefault() {}, stopPropagation() {}, repeat: false, ...extra });
 const shot = () => ({ x: player.x, y: player.y, dx: 0, dy: 0, r: 6, life: 50, color: '#f00', enemyType: 'devil' });
 
 startFromIntro(true);
@@ -186,6 +188,53 @@ check('a long gap does not fast-forward the game', () => {
 check('loop() with no timestamp is exactly one step', () => {
     const n = countSteps(() => { loop(); loop(); loop(); });
     return n === 3 ? '' : 'ran ' + n + ' steps for 3 frames';
+});
+
+
+check('the world stands still while a menu, the shop or awards are open, then carries on', () => {
+    changeRoom(ROOM.HELL); hell.devil.alive = true;
+    const advances = () => { const f = frameNo; for (let i = 0; i < 5; i++) loop(); return frameNo - f; };
+    const out = [];
+    openMenu('TEST', () => [{ icon: '?', name: 'x', desc: '', cost: 0, status: null, action() {} }]);
+    if (advances()) out.push('world ran under a menu');
+    menu = null;
+    if (!advances()) out.push('world did not resume after the menu');
+    state.shopOpen = true; if (advances()) out.push('world ran under the shop'); state.shopOpen = false;
+    state.awardsOpen = true; if (advances()) out.push('world ran under awards'); state.awardsOpen = false;
+    if (!advances()) out.push('world did not resume after the overlays');
+    return out.join('; ');
+});
+
+check('hidden tab or lost focus: world stops, held input and audio are cleared, then resume', () => {
+    changeRoom(ROOM.VOID); initAudio();
+    const advances = () => { const f = frameNo; for (let i = 0; i < 5; i++) loop(); return frameNo - f; };
+    const out = [];
+    keys.KeyW = true; keys.Space = true; vTouch.joyId = 4; vTouch.joyDX = 20; vTouch.shootId = 5; fight.charge = 30; fight.blocking = true; fight.holding = true;
+    document.hidden = true; fire('visibilitychange', {});
+    if (Object.values(keys).some(Boolean)) out.push('keys stayed held');
+    if (vTouch.joyId !== null || vTouch.joyDX || vTouch.shootId !== null) out.push('touch controls stayed held');
+    if (fight.charge || fight.blocking || fight.holding) out.push('charge / block stayed on');
+    if (audioCtx.state !== 'suspended') out.push('audio kept playing');
+    if (advances()) out.push('world ran while hidden');
+    document.hidden = false; fire('visibilitychange', {});
+    if (!advances()) out.push('world did not resume');
+    if (audioCtx.state !== 'running') out.push('audio did not resume');
+    keys.KeyD = true; fight.charge = 12;
+    fire('blur', {});
+    if (keys.KeyD || fight.charge) out.push('blur did not clear input');
+    if (advances()) out.push('world ran while blurred');
+    fire('focus', {});
+    if (!advances()) out.push('world did not resume after focus');
+    return out.join('; ');
+});
+
+check('Ctrl / Cmd / Alt shortcuts are not game buttons', () => {
+    state.buildMode = false; for (const k of Object.keys(keys)) keys[k] = false;
+    for (const m of ['ctrlKey', 'metaKey', 'altKey']) { fire('keydown', keyEv('KeyB', { [m]: true })); fire('keydown', keyEv('KeyW', { [m]: true })); }
+    const bad = state.buildMode || keys.KeyW;
+    fire('keydown', keyEv('KeyB', {})); const worked = state.buildMode;
+    fire('keydown', keyEv('KeyB', {})); fire('keyup', keyEv('KeyB', {}));
+    return bad ? 'a shortcut pressed a game key' : worked ? '' : 'plain B no longer builds';
 });
 
 const failed = results.filter(([, p]) => p).length;
