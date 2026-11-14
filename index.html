@@ -137,6 +137,7 @@ const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', LIGHTNING: 'Li
 
 // ── WEAPONS ──────────────────────────────────────────────────
 const WEAPON_INFO = {
+    None:      { label: 'SMITING STICK', icon: '🪵', color: '#C8964F', speed: 0, size: 0 },   // before you find an element: a swung branch
     Ice:       { label: 'ICE',           icon: '❄', color: '#4488FF', speed: 9,  size: 6 },
     Brimstone: { label: 'FIRE',          icon: '🔥', color: '#FF4422', speed: 9,  size: 6 },
     Lightning: { label: 'LIGHTNING',     icon: '⚡', color: '#FFE033', speed: 13, size: 5 },   // fastest shots
@@ -339,6 +340,30 @@ function meleeHit(radius, dmg, knock, stun, arc = true, air = 0) {
 }
 
 function meleeFx(kind, r) { fight.fx.push({ kind, x: player.x, y: player.y, a: Math.atan2(state.faceY, state.faceX), r, life: 12 }); }
+
+// ── SMITING STICK (swung when you have no element yet, or while your element reloads) ──
+const STICK_REACH    = 48;   // px past the edge of you — short, so every element feels better
+const STICK_COOLDOWN = 20;   // frames between swings
+const STICK_DAMAGE   = 1;    // weak on purpose (Weapon Level still adds to it)
+const STICK_KNOCK    = 6;
+const STICK_ENGAGE   = 110;  // a bad guy this close means the button swings instead of digging the ground
+
+function stickSwing() {
+    if (!canFight() || fight.cooldown > 0 || fight.blocking) return;
+    // Auto-aim like shoot(): turn to the nearest bad guy that is in reach
+    const foes = targetableEnemies().slice();
+    if (state.room === ROOM.HELL && hell.devil.alive) foes.push(hell.devil);
+    let target = null, best = Infinity;
+    for (const e of foes) {
+        const d = Math.hypot(e.x - player.x, e.y - player.y);
+        if (d - e.r < STICK_REACH && d < best) { best = d; target = e; }
+    }
+    if (target && best > 0) { state.faceX = (target.x - player.x) / best; state.faceY = (target.y - player.y) / best; }
+    meleeFx('stick', STICK_REACH + 12);
+    meleeHit(STICK_REACH, STICK_DAMAGE, STICK_KNOCK, 0);
+    sfx('stick');
+    fight.cooldown = STICK_COOLDOWN;
+}
 
 function meleePress() {
     if (!canFight() || fight.cooldown > 0) return;
@@ -556,6 +581,19 @@ function drawFighting() {
         ctx.beginPath();
         if (f.kind === 'sword') { ctx.strokeStyle = '#DDEEFF'; ctx.lineWidth = 7; ctx.shadowColor = '#AACCFF'; ctx.shadowBlur = 10; }
         if (f.kind === 'hammer') { ctx.strokeStyle = '#C8A070'; ctx.lineWidth = 8; }
+        if (f.kind === 'stick') {   // a brown branch swinging round in front of you
+            ctx.globalAlpha = 1;
+            const swing = f.a + 1.1 - (1 - f.life / 12) * 2.2, len = f.r;
+            const x1 = f.x + Math.cos(swing) * 14, y1 = f.y + Math.sin(swing) * 14, x2 = f.x + Math.cos(swing) * len, y2 = f.y + Math.sin(swing) * len;
+            ctx.strokeStyle = '#6B4423'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            ctx.strokeStyle = '#A8773F'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            const bx = x1 + (x2 - x1) * 0.6, by = y1 + (y2 - y1) * 0.6;   // a little twig and leaf
+            ctx.strokeStyle = '#6B4423'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + Math.cos(swing - 0.8) * 9, by + Math.sin(swing - 0.8) * 9); ctx.stroke();
+            ctx.fillStyle = '#5DBB4A'; ctx.beginPath(); ctx.arc(x2, y2, 3.5, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = f.life / 12 * 0.6; ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 3;   // whoosh trail
+            ctx.beginPath(); ctx.arc(f.x, f.y, len * 0.9, swing - 0.5, swing); ctx.stroke();
+            ctx.restore(); continue;
+        }
         if (f.kind === 'nunchuck') { ctx.strokeStyle = '#FFCC44'; ctx.lineWidth = 3; }
         if (f.kind === 'spear' || f.kind === 'whip') {   // a straight poke / a wiggly whip crack
             const reach = f.r * Math.min(1, (13 - f.life) / 4);
@@ -5248,6 +5286,7 @@ const SFX = {
     place:    () => { tone(200, 0.06, 'square', 0.15, 120); noise(0.05, 0.2, 800); },
     groan:    () => { tone(140, 0.6, 'sawtooth', 0.08, 90); },
     hiss:     () => noise(0.8, 0.25, 5000),
+    stick:    () => { noise(0.08, 0.2, 1800); tone(260, 0.1, 'triangle', 0.18, 120); },
     whoosh:   () => { noise(0.2, 0.2, 2500); tone(300, 0.2, 'sine', 0.08, 900); },
     boom:     () => { noise(0.6, 0.5, 600); tone(80, 0.5, 'sawtooth', 0.3, 30); },
     magic:    () => [880, 1175, 1568, 2093].forEach((f, i) => tone(f, 0.12, 'sine', 0.12, null, i * 0.05)),
@@ -6066,8 +6105,10 @@ let groundHoles = [];      // little holes you've dug (they fill back in)
 // Dig the ground when there's nothing to fight (or you don't have a weapon)
 function wouldDigGround() {
     if (state.gamePhase !== 'playing' || state.won || state.levelComplete || !GROUND[state.room]) return false;
-    const enemies = targetableEnemies().length > 0 || (state.room === ROOM.HELL && hell.devil.alive);
-    return state.power === POWER.NONE || !enemies;
+    // With the stick only close bad guys count (it only reaches a little); shots reach everywhere
+    const near = e => state.power !== POWER.NONE || Math.hypot(e.x - player.x, e.y - player.y) - e.r < STICK_ENGAGE;
+    const enemies = targetableEnemies().some(near) || (state.room === ROOM.HELL && hell.devil.alive && near(hell.devil));
+    return !enemies;
 }
 
 function tryDigGround() {
@@ -7354,10 +7395,11 @@ function updateEnemyProjectiles() {
 
 // ── UPDATE: SHOOTING ──────────────────────────────────────────
 function shoot() {
-    if (state.won || state.levelComplete || state.power === POWER.NONE || state.room === ROOM.VOID) return;
+    if (state.won || state.levelComplete || state.room === ROOM.VOID) return;
+    if (state.power === POWER.NONE) { stickSwing(); return; }   // no element yet: swing the stick
     lastP1Shot = Date.now(); tryTeamUp();
     if (fight.blocking) return;
-    if (state.ammoReloading || state.ammo <= 0) return;
+    if (state.ammoReloading || state.ammo <= 0) { stickSwing(); return; }   // reloading: the stick is better than nothing
 
     const enemies = [];
     enemies.push(...targetableEnemies());
@@ -7488,7 +7530,7 @@ function canDig() {
 }
 
 function powerName(power = state.power, tier = state.powerTier) {
-    if (power === POWER.NONE)    return 'None';
+    if (power === POWER.NONE)    return 'Smiting Stick';
     if (power === POWER.RAINBOW) return 'Rainbow';
     return tier >= 2 ? `Super ${power}` : power;
 }
@@ -11575,10 +11617,9 @@ function drawHUD() {
     ctx.fillText(`${names[state.room]} · ${lvlLabel}`, 400, 38);
 
     // Power
-    ctx.fillStyle = state.power === POWER.RAINBOW ? getPlayerColor()
-                  : state.power === POWER.NONE    ? '#888' : WEAPON_INFO[state.power].color;
+    ctx.fillStyle = state.power === POWER.RAINBOW ? getPlayerColor() : WEAPON_INFO[state.power].color;
     ctx.font = 'bold 17px Arial'; ctx.textAlign = 'right';
-    ctx.fillText(`Power: ${state.power === POWER.NONE ? '' : WEAPON_INFO[state.power].icon + ' '}${powerName()}`, 786, 28);
+    ctx.fillText(`Power: ${WEAPON_INFO[state.power].icon} ${powerName()}`, 786, 28);
 
     // ── AMMO BAR ──────────────────────────────────────────────
     if (state.power !== POWER.NONE && state.room !== ROOM.VOID) {
@@ -11999,7 +12040,7 @@ function drawVirtualControls() {
     }
     ctx.font = 'bold 13px Arial';
     ctx.fillText(state.buildMode ? 'BUILD' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : nearbyMineable() ? 'MINE'
-                 : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : wouldDigGround() ? 'DIG' : 'SHOOT', VSHOOT.x, VSHOOT.y);
+                 : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : wouldDigGround() ? 'DIG' : state.power === POWER.NONE ? 'SWING' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
 }

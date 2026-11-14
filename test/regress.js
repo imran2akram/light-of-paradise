@@ -65,6 +65,22 @@ scenario('dig-spot mole comes up far away and warns first', () => {
     return '';
 });
 
+scenario('smiting stick hurts a monster with no element', () => {
+    changeRoom(ROOM.HELL);
+    state.power = POWER.NONE; fight.cooldown = 0; state.buildMode = false; state.weaponLevel = 1;
+    player.x = 400; player.y = 300; state.faceX = -1; state.faceY = 0;   // facing away: auto-aim must turn us
+    const e = makeEnemy('slime', 430, 300, 0, 0); e.emerge = 0; e.hp = 3; e.maxHp = 3; e.hopTimer = 999;
+    hell.enemies = [e]; hell.devil.alive = false;
+    globalThis.__stickFoe = e;
+    pressAction();
+}, () => {
+    const e = globalThis.__stickFoe;
+    if (e.hp >= 3) return 'stick did no damage';
+    if (state.ammo !== state.ammoMax) return 'stick used ammo';
+    if (fight.cooldown <= 0 && !fight.fx.length) return 'no swing happened';
+    return '';
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;
