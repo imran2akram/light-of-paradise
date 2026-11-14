@@ -117,6 +117,36 @@ scenario('maze walls cannot be mined, even with a diamond pickaxe or in Creative
     state.diamondPickaxe = false; settings.creative = false;
 }, () => globalThis.__wall.every(Boolean) ? '' : 'a maze wall was removed: ' + globalThis.__wall);
 
+scenario('minotaur coins land only where the player can walk', () => {
+    globalThis.__coinProblem = '';
+    for (let n = 0; n < 20 && !globalThis.__coinProblem; n++) {
+        delete worldBlocks.maze; changeRoom(ROOM.MAZE); roomBlocks();
+        player.x = MAZE_START.x; player.y = MAZE_START.y; frameNo += 1;
+        const m = place().enemies[0];
+        m.emerge = 0; m.hp = 1; m.x = 100 + Math.random() * 600; m.y = 100 + Math.random() * 400;   // anywhere, even inside a wall
+        place().coins = [];
+        damageEnemy(m, POWER.RAINBOW);
+        const coins = place().coins;
+        if (coins.length !== 30) { globalThis.__coinProblem = 'expected 30 coins, got ' + coins.length; break; }
+        // Independent check: flood the maze (walls only) from the player's cell
+        const b = worldBlocks.maze, seen = new Set([cellKey(Math.floor(player.x / CELL), Math.floor(player.y / CELL))]), todo = [...seen].map(k => k.split(',').map(Number));
+        while (todo.length) {
+            const [x, y] = todo.pop();
+            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                const k = cellKey(x + dx, y + dy);
+                if (x + dx < 0 || x + dx > 34 || y + dy < 0 || y + dy > 25 || b[k] || seen.has(k)) continue;
+                seen.add(k); todo.push([x + dx, y + dy]);
+            }
+        }
+        for (const c of coins) {
+            if (solidAt(c.x, c.y)) { globalThis.__coinProblem = 'coin inside a wall'; break; }
+            if (playerHitsBlock(c.x, c.y)) { globalThis.__coinProblem = 'player body cannot stand on a coin'; break; }
+            if (!seen.has(cellKey(Math.floor(c.x / CELL), Math.floor(c.y / CELL)))) { globalThis.__coinProblem = 'coin in a sealed pocket'; break; }
+        }
+        if (new Set(coins.map(c => Math.round(c.x) + ',' + Math.round(c.y))).size < 25) globalThis.__coinProblem = 'coins stacked on a few pixels';
+    }
+}, () => globalThis.__coinProblem);
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;

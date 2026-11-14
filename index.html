@@ -3254,7 +3254,7 @@ function updateSubplace() {
         FACTORY_BELTS.forEach((y, i) => { if (Math.abs(player.y - y) < 18) player.x = Math.max(18, Math.min(782, player.x + (i % 2 ? -1.6 : 1.6))); });
     }
     if (state.room === ROOM.CANDYVOLCANO && Math.random() < 0.01) {   // 🌋 the volcano ERUPTS sweets (and coins!)
-        for (let k = 0; k < 4; k++) P.coins.push({ x: 300 + Math.random() * 200, y: 120 + Math.random() * 300, picked: false });
+        for (let k = 0; k < 4; k++) { const c = reachablePoint(300 + Math.random() * 200, 120 + Math.random() * 300); P.coins.push({ x: c.x, y: c.y, picked: false }); }
         spawnParticles(400, 70, '#FF66AA', 20); triggerShake(4);
     }
     if (state.room === ROOM.MUSEUM && P.night > 0 && --P.night === 0) {   // 🌙 the museum comes alive!
@@ -3365,7 +3365,7 @@ const RING_COUNT       = 8;
 let ringRace = null;             // { rings, timer, scores, result }
 function startRingRace() {
     ringRace = { timer: RING_RACE_FRAMES, result: 0, scores: {},
-                 rings: Array.from({ length: RING_COUNT }, () => ({ x: 60 + Math.random() * 680, y: 110 + Math.random() * 440, got: false })) };
+                 rings: Array.from({ length: RING_COUNT }, () => { const p = reachablePoint(60 + Math.random() * 680, 110 + Math.random() * 440); return { x: p.x, y: p.y, got: false }; }) };
     showToast(`⭕ RING RACE! Grab all ${RING_COUNT} rings in 40 seconds!`, '#FFE066', 200); sfx('bite');
 }
 function updateRingRace() {
@@ -4217,7 +4217,7 @@ PLACES.pyramid = { name: '🏜 THE DESERT PYRAMID', spawn: [120, 470], island: t
                    enemies: [e0('mummy', 300, 200), e0('mummy', 550, 420), e0('scarab', 450, 150), e0('scarab', 650, 300), e0('scarab', 250, 400),
                              e0('mummyking', 520, 250, { r: 32, coinDrop: 25, summonTimer: 360, wrapTimer: 120 })] }) };
 PLACES.cloudcity = { name: '☁ CLOUD CITY', spawn: [270, 470],
-    make: () => ({ coins: [], enemies: [], eggs: [0, 1, 2].map(() => ({ x: 100 + Math.random() * 600, y: 120 + Math.random() * 380, got: false })), returned: false,
+    make: () => ({ coins: [], enemies: [], eggs: [0, 1, 2].map(() => { const p = reachablePoint(100 + Math.random() * 600, 120 + Math.random() * 380); return { x: p.x, y: p.y, got: false }; }), returned: false,
                    birds: [0, 1, 2, 3, 4].map(i => ({ x: 150 + i * 130, y: 200 + (i % 2) * 180, t: i })) }) };
 const BIRD_CHAT = ['Tweet tweet! Welcome to Cloud City!', 'Have you seen Mama Bird\'s eggs?', 'I love flying! 🐦', 'The clouds are so soft today!', 'Chirp! You can\'t fly? Poor thing!'];
 
@@ -4306,8 +4306,8 @@ PLACES.snowfort = { name: '☃ SNOWBALL FIGHT!',  spawn: [400, 520],
 for (const [id, sp] of Object.entries(SUBPLACES)) {
     PLACES[id] = { name: sp.name, spawn: [400, 520],
         make: () => ({ coins: [], prize: false, night: id === 'museum' ? 1200 : 0, enemies: sp.enemies(),
-                       items: Array.from({ length: sp.count }, (_, k) => ({ x: 80 + Math.random() * 640, y: 110 + Math.random() * 380, got: false,
-                                                                           icon: id === 'underbed' ? LOST_TOYS[k] : sp.item })) }) };
+                       items: Array.from({ length: sp.count }, (_, k) => { const p = reachablePoint(80 + Math.random() * 640, 110 + Math.random() * 380);
+                                                                           return { x: p.x, y: p.y, got: false, icon: id === 'underbed' ? LOST_TOYS[k] : sp.item }; }) }) };
 }
 
 function inRectXY(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
@@ -5872,6 +5872,52 @@ function playerHitsBlock(px, py) {
     return false;
 }
 
+// ── REACHABLE PICKUPS (coins, hearts, eggs… must never land inside a wall or a sealed pocket) ──
+const PICKUP_BOUNDS   = { x0: 30, x1: 770, y0: 70, y1: 570 };   // the play area a pickup may sit in
+const PICKUP_SEARCH   = 60;    // random tries around the wanted spot, moving further away each time
+const PICKUP_STEP     = 4;     // px further out per try (so the search reaches about 240 px)
+let reachCache = { key: '', cells: null };
+
+// Cells the player can walk to from where they stand. Walls you can mine away don't
+// count as walls (you can always get through those); unbreakable ones do. Null = the room has none.
+function reachableCells() {
+    const blocks = roomBlocks();
+    if (!Object.values(blocks).some(isUnbreakable)) return null;
+    const sx = Math.floor(player.x / CELL), sy = Math.floor(player.y / CELL);
+    const key = `${frameNo}|${state.room}|${sx},${sy}|${Object.keys(blocks).length}`;
+    if (reachCache.key === key) return reachCache.cells;
+    const maxX = Math.ceil(800 / CELL), maxY = Math.ceil(600 / CELL), seen = new Set([cellKey(sx, sy)]), todo = [[sx, sy]];
+    while (todo.length) {
+        const [cx, cy] = todo.pop();
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = cx + dx, ny = cy + dy, k = cellKey(nx, ny);
+            if (nx < 0 || ny < 0 || nx > maxX || ny > maxY || seen.has(k) || isUnbreakable(blocks[k])) continue;
+            seen.add(k); todo.push([nx, ny]);
+        }
+    }
+    reachCache = { key, cells: seen };
+    return seen;
+}
+
+// A spot near (x, y) where the player can really walk up and pick something up:
+// inside the room, not in a block or a rock, and (in the maze) connected to the player.
+// Falls back to opts.fallback, then to the player's own spot.
+function reachablePoint(x, y, opts = {}) {
+    const B = PICKUP_BOUNDS, reach = reachableCells();
+    const ok = (px, py) => px >= B.x0 && px <= B.x1 && py >= B.y0 && py <= B.y1
+        && !playerHitsBlock(px, py) && !sceneryAt(px, py)
+        && (!reach || reach.has(cellKey(Math.floor(px / CELL), Math.floor(py / CELL))));
+    const cx = Math.max(B.x0, Math.min(B.x1, x)), cy = Math.max(B.y0, Math.min(B.y1, y));
+    if (ok(cx, cy)) return { x: cx, y: cy };
+    for (let i = 1; i <= PICKUP_SEARCH; i++) {
+        const a = Math.random() * Math.PI * 2, r = 6 + i * PICKUP_STEP;
+        const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+        if (ok(px, py)) return { x: px, y: py };
+    }
+    if (opts.fallback && ok(opts.fallback.x, opts.fallback.y)) return { x: opts.fallback.x, y: opts.fallback.y };
+    return { x: player.x, y: player.y };
+}
+
 // The starting blocks in each room: trees in Paradise, ores in Hell and the Underground
 function makeWorldBlocks(room) {
     const b = {};
@@ -6790,13 +6836,13 @@ function roomCoins() {
 function dropLoot(e) {
     const count = (e.coinDrop || COINS_PER_KILL) * (mod('doubleCoins') ? 2 : 1);
     for (let i = 0; i < count; i++) {
-        roomCoins().push({
-            x: Math.max(30, Math.min(770, e.x + (Math.random() - 0.5) * 16 * count)),
-            y: Math.max(70, Math.min(570, e.y + (Math.random() - 0.5) * 16 * count)),
-            picked: false,
-        });
+        const p = reachablePoint(e.x + (Math.random() - 0.5) * 16 * count, e.y + (Math.random() - 0.5) * 16 * count, { fallback: e });
+        roomCoins().push({ x: p.x, y: p.y, picked: false });
     }
-    if (Math.random() < HEART_DROP_CHANCE) heartPickups.push({ x: e.x + 12, y: e.y, life: 600 });
+    if (Math.random() < HEART_DROP_CHANCE) {
+        const p = reachablePoint(e.x + 12, e.y, { fallback: e });
+        heartPickups.push({ x: p.x, y: p.y, life: 600 });
+    }
 }
 
 // Some mornings it's somebody's birthday!
@@ -8649,7 +8695,7 @@ function startJob(job) {
     if (job.kind === 'apples') {
         paradise.apples = [];
         for (let i = 0; i < job.count; i++) {
-            paradise.apples.push({ x: 60 + Math.random() * 680, y: 260 + Math.random() * 170 });
+            paradise.apples.push(reachablePoint(60 + Math.random() * 680, 260 + Math.random() * 170));
         }
     }
     if (job.kind === 'water') {
