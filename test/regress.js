@@ -659,6 +659,85 @@ check('football: computer players never end up inside a block', () => {
     return bad;
 });
 
+// Text drawing with a believable width (the stub canvas says every string is 10 px wide) and a record of where it went
+const textLog = [];
+function recordText(fn) {
+    const realFill = ctx.fillText, realMeasure = ctx.measureText;
+    const size = () => Number((/(\d+(?:\.\d+)?)px/.exec(ctx.font) || [0, 12])[1]) * (/bold/.test(ctx.font) ? 0.6 : 0.55);   // a bit wider than Arial
+    ctx.measureText = t => ({ width: String(t).length * size() });
+    ctx.fillText = (t, x, y, maxW) => {
+        let w = String(t).length * size(); if (maxW) w = Math.min(w, maxW);
+        const x0 = ctx.textAlign === 'center' ? x - w / 2 : ctx.textAlign === 'right' ? x - w : x;
+        textLog.push({ t: String(t), x0, x1: x0 + w, y, size: Number((/(\d+)px/.exec(ctx.font) || [0, 12])[1]) });
+    };
+    textLog.length = 0;
+    try { fn(); } finally { ctx.fillText = realFill; ctx.measureText = realMeasure; }
+    return textLog.slice();
+}
+const sideways = (lines, x0, x1) => lines.filter(l => l.x0 < x0 - 0.5 || l.x1 > x1 + 0.5).map(l => '"' + l.t.slice(0, 40) + '"').join(', ');
+
+check('the Void floor text fits the picture', () => {
+    startFromIntro(true); state.gamePhase = 'playing'; menu = null; changeRoom(ROOM.VOID); state.power = POWER.ICE;
+    const lines = recordText(drawVoid);
+    return sideways(lines, 0, 800) && 'too wide: ' + sideways(lines, 0, 800);
+});
+check('weapon chart: the sign opens it; SPACE, Escape, the X and the controller each close it', () => {
+    state.gamePhase = 'playing'; menu = null; state.shopOpen = false; changeRoom(ROOM.VOID);
+    player.x = CHART_SIGN.x; player.y = CHART_SIGN.y;
+    const out = [];
+    const open = how => { menu = null; pressAction(); if (!menu || !menu.wide) { out.push('did not open for ' + how); return false; } return true; };
+    if (open('the main button')) {
+        const lines = recordText(drawMenu);
+        const bad = sideways(lines, MENU.X, MENU.X + MENU.W);
+        if (bad) out.push('wider than the panel: ' + bad);
+        if (lines.some(l => l.size < 12)) out.push('text smaller than 12 px: ' + lines.filter(l => l.size < 12).map(l => l.t.slice(0, 20)));
+        if (lines.some(l => l.y > MENU.Y + menu.h)) out.push('text below the panel');
+        const last = menuItemRect(menu.items().length - 1);
+        if (last.y + last.h > MENU.Y + menu.h) out.push('the last row is below the panel');
+        const all = lines.map(l => l.t).join(' ');
+        for (const k of ['Slimes', 'Ghosts', 'Bats', 'Fire Monsters']) if (!all.includes(k)) out.push('the list is missing ' + k);
+        fire('keydown', keyEv('Space')); fire('keyup', keyEv('Space')); if (menu) out.push('SPACE did not close it');   // (a selected row just closes the chart)
+    }
+    if (open('tap')) { handleTap(MENU_CLOSE.x, MENU_CLOSE.y); if (menu) out.push('the X did not close it'); }
+    if (open('keyboard')) { fire('keydown', keyEv('Escape')); fire('keyup', keyEv('Escape')); if (menu) out.push('Escape did not close it'); }
+    if (open('controller')) { padWith(PAD.B); padWith(-1); if (menu) out.push('B did not close it'); }
+    // phones: the picture is offset and the buttons live in the margins; the panel must still be in the picture
+    if (open('touch')) { lastInput = 'touch'; const lines = recordText(drawMenu); if (sideways(lines, 0, 800)) out.push('touch text too wide'); handleTap(MENU_CLOSE.x, MENU_CLOSE.y); lastInput = 'keyboard'; if (menu) out.push('touch: the X did not close it'); }
+    menu = null;
+    return out.join('; ');
+});
+check('menus show "Your coins" only where something costs coins', () => {
+    const coinLine = () => recordText(drawMenu).some(l => /Your coins/.test(l.t));
+    openMenu('FREE', () => [{ icon: '?', name: 'x', desc: 'free', cost: 0, status: null, action() {} }]);
+    const out = [];
+    if (coinLine()) out.push('free menu shows coins');
+    openMenu('PAID', () => [{ icon: '?', name: 'x', desc: 'paid', cost: 5, status: null, action() {} }]);
+    if (!coinLine()) out.push('paid menu hides coins');
+    openSettings(); if (coinLine()) out.push('settings shows coins');
+    menu = null;
+    return out.join('; ');
+});
+
+check('phones: the gadget / dash icons are not also drawn in the picture corner (the real buttons are in the margins)', () => {
+    state.gamePhase = 'playing'; menu = null; state.hasDash = true;
+    lastInput = 'touch';    const onTouch = recordText(drawGadgetHud).length;
+    lastInput = 'keyboard'; const onKeys = recordText(drawGadgetHud).length;
+    return onTouch ? 'drew ' + onTouch + ' texts on touch' : !onKeys ? 'nothing drawn on a keyboard either' : '';
+});
+
+check('football: SAVED! shows once per save, even if the ball keeps sitting in the goalie\'s reach', () => {
+    const G = footballStart();
+    let said = 0; const real = spawnFloatText;
+    spawnFloatText = (x, y, text, ...rest) => { if (text === 'SAVED!') said++; return real(x, y, text, ...rest); };
+    try {
+        for (let i = 0; i < 20 && miniGame === G; i++) { Object.assign(G.ball, { x: 745, y: G.keeper, vx: 0, vy: 0 }); loop(); }
+        if (said !== 1) return 'said SAVED! ' + said + ' times for one save';
+        Object.assign(G.ball, { x: 500, y: G.keeper, vx: 0, vy: 0 }); loop();   // it left: the next save speaks again
+        Object.assign(G.ball, { x: 745, y: G.keeper, vx: 0, vy: 0 }); loop();
+        return said === 2 ? '' : 'a second save said nothing (' + said + ')';
+    } finally { spawnFloatText = real; }
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;

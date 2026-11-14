@@ -1521,11 +1521,28 @@ const MENU = { X: 130, Y: 70, W: 540, H: 430 };
 // Item boxes: two columns; with more than MENU_TALL_AFTER items the rows are squeezed so they all fit
 const MENU_ITEM = { PAD: 14, COL: 262, TOP: 56, W: 250, ROW: 68, H: 62, ROW_SQUEEZED: 58, H_SQUEEZED: 54 };
 const MENU_TALL_AFTER = 10;
+const WEAPON_CHART_H = 470;   // a tall panel: the long monster lists wrap onto 3-4 lines each
 const MENU_CLOSE = { x: MENU.X + MENU.W - 26, y: MENU.Y + 20, r: 17, hitR: 36 };   // the ✕ (the tap area stays above the first row of items)
 
-// opts (optional): hint = the small line under the title, h = a shorter panel for menus with only a few items
-function openMenu(title, items, opts = {}) { menu = { title, items, cursor: 0, hint: opts.hint, h: opts.h || MENU.H }; }
+// A "wide" menu is a list of full-width rows whose descriptions wrap onto several lines (the weapon chart)
+const MENU_WIDE = { PAD: 14, TOP: 56, GAP: 4, HEAD: 22, LINE: 14, BOTTOM: 8, TEXT_X: 54, MAX_LINES: 5 };
+function wideDescLines(it) {
+    ctx.save(); ctx.font = '12px Arial';
+    const lines = wrapText(it.desc, MENU.W - 2 * MENU_WIDE.PAD - MENU_WIDE.TEXT_X - 4, MENU_WIDE.MAX_LINES);
+    ctx.restore();
+    return lines;
+}
+
+// opts (optional): hint = the small line under the title, h = a shorter panel for menus with only a few items,
+// wide = full-width rows (see MENU_WIDE)
+function openMenu(title, items, opts = {}) { menu = { title, items, cursor: 0, hint: opts.hint, h: opts.h || MENU.H, wide: !!opts.wide }; }
 function menuItemRect(i) {
+    if (menu && menu.wide) {
+        const W = MENU_WIDE, list = menu.items();
+        let y = MENU.Y + W.TOP;
+        for (let k = 0; k < i; k++) y += W.HEAD + wideDescLines(list[k]).length * W.LINE + W.BOTTOM + W.GAP;
+        return { x: MENU.X + W.PAD, y, w: MENU.W - 2 * W.PAD, h: W.HEAD + wideDescLines(list[i]).length * W.LINE + W.BOTTOM };
+    }
     const col = i % 2, row = Math.floor(i / 2);
     const I = MENU_ITEM, tall = menu && menu.items().length > MENU_TALL_AFTER;   // squeeze rows when there's a lot to show
     return { x: MENU.X + I.PAD + col * I.COL, y: MENU.Y + I.TOP + row * (tall ? I.ROW_SQUEEZED : I.ROW), w: I.W, h: tall ? I.H_SQUEEZED : I.H };
@@ -1570,6 +1587,7 @@ function pressAction() {
     if (tvShow) { nextTvChannel(); return; }
     if (credits) return;
     if (nearRaceMaster() && state.gamePhase === 'playing') { openMenu('🏁 PICK A RACE!', raceItems); return; }
+    if (nearChartSign() && state.gamePhase === 'playing') { openWeaponChart(); return; }
     if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
         const { cx, cy } = buildTargetCell();
         buildAt(cx, cy, player.x + state.faceX * 30, player.y + 5 + state.faceY * 30);
@@ -2924,6 +2942,7 @@ const FB_STUCK_FRAMES = 120;    // a still ball with 2 players on it for 2 s get
 const FB_PASS_CONE    = 0.45;   // kick roughly at your helper (within about 26 degrees) and the pass flies straight to them
 const FB_SHOOT_X      = 520;    // the helper shoots when the ball reaches them this close to goal, and passes back otherwise
 const FB_MATE_CHASE   = 90;     // the helper only runs for a loose ball this close, so you get the kick-off
+const FB_KEEPER_REACH = 26;    // the goalie stops a ball this close to the middle of the goal line (and says SAVED! once per save)
 const FB_KIT          = { you: '#3A7BFF', them: '#E8392F', keeper: '#FFD23A' };   // team colours
 const FB_KICKOFF      = { ball: [400, 330], mate: [520, 330], opps: [[580, 250], [580, 410]] };
 function footballActor(x, y) { return { x, y, walk: 0, recover: 0, react: 0, tx: x, ty: y }; }
@@ -2935,7 +2954,7 @@ function footballKickoff(G) {
 }
 function startFootball() {
     changeRoom(ROOM.STADIUM);
-    miniGame = { kind: 'ball', timer: 3600, goals: 0, ball: { x: 400, y: 330, vx: 0, vy: 0 }, keeper: 330, mate: {}, opps: [{}, {}], presser: 0, held: false, stuck: 0, said: 0 };
+    miniGame = { kind: 'ball', timer: 3600, goals: 0, ball: { x: 400, y: 330, vx: 0, vy: 0 }, keeper: 330, mate: {}, opps: [{}, {}], presser: 0, held: false, stuck: 0, said: 0, saving: false };
     footballKickoff(miniGame);
     showToast('⚽ FOOTBALL! Kick it to your 🔵 friend!', '#FFFFFF', 240);
 }
@@ -3033,7 +3052,12 @@ function updateFootball(G) {
     if (b.x < 30) { b.vx *= -1; b.x = 30; }
     G.keeper += Math.sign(b.y - G.keeper) * Math.min(2.2, Math.abs(b.y - G.keeper));   // the goalie follows the ball
     G.keeper = Math.max(270, Math.min(390, G.keeper));
-    if (b.x > 740 && Math.abs(b.y - G.keeper) < 26) { b.vx = -Math.abs(b.vx) - 3; spawnFloatText(740, G.keeper - 30, 'SAVED!', '#FFFFFF', 40); }
+    const inReach = b.x > 740 && Math.abs(b.y - G.keeper) < FB_KEEPER_REACH;
+    if (inReach) {
+        b.vx = -Math.abs(b.vx) - 3;
+        if (!G.saving) spawnFloatText(740, G.keeper - 30, 'SAVED!', '#FFFFFF', 40);   // (a slow ball can stay in reach for many frames: say it once)
+    }
+    G.saving = inReach;
     if (b.x > 770) {
         if (b.y > FB_GOAL.y0 && b.y < FB_GOAL.y1) footballScored(G, G.mateShot > 0); else footballKickoff(G);
         return;
@@ -4493,6 +4517,7 @@ function paintArena(g, R) {
 // 🏬 THE MALL (a door in the Void): shops in a row, each opens a pop-up store
 const MALL_DOOR  = { x: 140, y: 128 };   // in the Void
 const MALL_EXIT  = { x: 400, y: 578 };
+const CHART_SIGN = { x: 480, y: 505 };   // in the Void: a sign you walk up to for the weapon chart
 const MALL_SHOPS = [
     { id: 'magic',  name: '✨ MAGIC SHOP', keeper: 'Merlin', x: 140, awning: '#6A3AAA', coat: '#3A2A9A', hat: 'wizard', items: () => spellItems(), title: "✨ MERLIN'S MAGIC SHOP" },
     { id: 'stable', name: '🐴 STABLE',     keeper: 'Rita',   x: 300, awning: '#8A5A2A', coat: '#6A8A3A', hat: 'cowboy', items: () => mountItems(), title: "🐴 RITA'S STABLE — pick a ride!" },
@@ -6406,7 +6431,7 @@ const KEEP_CLEAR_R = 36;   // a block whose middle is closer than this to a spot
 function keepClearSpots(room = state.room) {
     const list = [], at = (rooms, o) => { if ([].concat(rooms).includes(room)) list.push(o); };
     at(ROOM.VOID, ROCKET);  at(ROOM.SPACE, ROCKET);
-    at(ROOM.VOID, RACE_MASTER);  at(ROOM.VOID, ARENA_GATE);  at(ROOM.ARENA, ARENA_EXIT);
+    at(ROOM.VOID, RACE_MASTER);  at(ROOM.VOID, CHART_SIGN);  at(ROOM.VOID, ARENA_GATE);  at(ROOM.ARENA, ARENA_EXIT);
     at(ROOM.VOID, SHOP_BTN);  at(ROOM.VOID, AWARDS_BTN);   // the shop and awards spots (on-screen buttons: rectangles)
     at(ROOM.VOID, MALL_DOOR);  at(ROOM.MALL, MALL_EXIT);  at(ROOM.TOY, TOY_EXIT);
     at(ROOM.HOUSE, HOUSE_DOOR);
@@ -8708,8 +8733,9 @@ function drawBuildButton() {
     ctx.restore();
 }
 
-// Little gadget + dash icons in the bottom-left corner
+// Little gadget + dash icons in the bottom-left corner (keyboard and controller: on a phone the real buttons are in the side margins)
 function drawGadgetHud() {
+    if (lastInput === 'touch') return;
     const slots = [];
     if (state.gadget) {
         const g = GADGETS.find(g => g.id === state.gadget);
@@ -8733,7 +8759,7 @@ function drawGadgetHud() {
         ctx.strokeStyle = sl.cd > 0 ? '#777' : '#FFD700'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.stroke();
         ctx.font = '15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#FFF';
         ctx.fillText(sl.icon, x, y + 1);
-        if (lastInput !== 'touch') { ctx.font = 'bold 8px Arial'; ctx.fillText(sl.key, x + 12, y - 12); }
+        ctx.font = 'bold 8px Arial'; ctx.fillText(sl.key, x + 12, y - 12);
         ctx.restore();
     });
 }
@@ -9143,7 +9169,10 @@ function drawMenu() {
     ctx.fillStyle = '#FFB347'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
     ctx.fillText(menu.title, 400, Y + 26);
     ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '12px Arial';
-    ctx.fillText(menu.hint || `Your coins: 🪙${state.coins}   ·   ${byInput('Arrows + SPACE (or click) to buy, E to close', 'Tap to buy, ✕ to close', 'A to buy, B to close')}`, 400, Y + 44);
+    const costs = menu.items().some(it => it.cost > 0);   // the coin count only matters where something costs coins
+    const keysHint = costs ? byInput('Arrows + SPACE (or click) to buy, E to close', 'Tap to buy, ✕ to close', 'A to buy, B to close')
+                           : byInput('Arrows + SPACE (or click) to choose, E to close', 'Tap to choose, ✕ to close', 'A to choose, B to close');
+    ctx.fillText(menu.hint || (costs ? `Your coins: 🪙${state.coins}   ·   ${keysHint}` : keysHint), 400, Y + 44);
     ctx.beginPath(); ctx.arc(MENU_CLOSE.x, MENU_CLOSE.y, MENU_CLOSE.r, 0, Math.PI * 2);   // ✕ close button
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill(); ctx.strokeStyle = '#FFB347'; ctx.lineWidth = 2; ctx.stroke();
     ctx.beginPath();
@@ -9156,6 +9185,15 @@ function drawMenu() {
         ctx.fillRect(r.x, r.y, r.w, r.h);
         ctx.strokeStyle = cursor ? '#FFFFFF' : it.status ? '#C8A040' : '#444'; ctx.lineWidth = cursor ? 2.5 : 1;
         ctx.strokeRect(r.x, r.y, r.w, r.h);
+        if (menu.wide) {   // icon, a bold name, then the wrapped text under it
+            ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
+            ctx.fillText(it.icon, r.x + 28, r.y + r.h / 2 + 8);
+            ctx.textAlign = 'left'; ctx.fillStyle = '#FFE8B0'; ctx.font = 'bold 14px Arial';
+            ctx.fillText(it.name, r.x + MENU_WIDE.TEXT_X, r.y + 17);
+            ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = '12px Arial';
+            wideDescLines(it).forEach((line, k) => ctx.fillText(line, r.x + MENU_WIDE.TEXT_X, r.y + MENU_WIDE.HEAD + 11 + k * MENU_WIDE.LINE));
+            return;
+        }
         ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
         ctx.fillText(it.icon, r.x + 28, r.y + r.h / 2 + 8);
         ctx.textAlign = 'left';
@@ -9887,6 +9925,50 @@ function drawRaceMaster() {
     }
 }
 
+// ── THE WEAPON CHART (a sign in the Void): which weapon beats which bad guy ──
+function nearChartSign() {
+    return state.room === ROOM.VOID && !state.shopOpen && !state.buildMode && Math.hypot(player.x - CHART_SIGN.x, player.y - CHART_SIGN.y) < 44;
+}
+
+// "Fire Monster" → "Fire Monsters", "Mummy" → "Mummies", "The Kraken" → "Krakens"
+function monsterPlural(name) {
+    const n = name.replace(/^The /, '');
+    if (n === 'Shadow You') return n;
+    if (/man$/.test(n)) return n.slice(0, -3) + 'men';
+    if (/Mouse$/.test(n)) return n.slice(0, -5) + 'Mice';
+    if (/[^aeiou]y$/.test(n)) return n.slice(0, -1) + 'ies';
+    if (/(s|sh|ch|x)$/.test(n)) return n + 'es';
+    return n + 's';
+}
+
+function weaponChartItems() {
+    const rows = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER].map(w => {
+        const beats = new Set(Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].weakTo === w).map(k => monsterPlural(ENEMY_TYPES[k].name)));
+        return { icon: WEAPON_INFO[w].icon, name: `${WEAPON_INFO[w].label} beats`, desc: [...beats].join(', '), cost: 0, status: null, action: () => { menu = null; } };
+    });
+    rows.push({ icon: '🌈', name: 'RAINBOW POWER', desc: 'Beats everything!', cost: 0, status: null, action: () => { menu = null; } });
+    return rows;
+}
+
+function openWeaponChart() {
+    openMenu('📖 WHAT BEATS WHAT', weaponChartItems,
+             { hint: `Every weapon still does a little damage to everything  ·  ${byInput('E to close', '✕ to close', 'B to close')}`, h: WEAPON_CHART_H, wide: true });
+}
+
+function drawChartSign() {
+    const { x, y } = CHART_SIGN;
+    drawGroundShadow(x, y + 16, 14, 4);
+    ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x - 3, y - 6, 6, 24);   // post
+    ctx.fillStyle = '#C8964F'; ctx.fillRect(x - 24, y - 30, 48, 28);
+    ctx.strokeStyle = '#6B3E1E'; ctx.lineWidth = 2; ctx.strokeRect(x - 24, y - 30, 48, 28);
+    ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
+    ctx.fillText('📖', x, y - 15);
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 12px Arial';
+    ctx.fillText('Weapon chart', x, y + 32);
+    if (nearChartSign()) drawSpeech({ x, y: y - 20 }, `${mainBtn()}: What beats what?`);
+}
+
 function drawArenaGate() {
     const { x, y } = ARENA_GATE, t = Date.now() / 1000;
     ctx.save();
@@ -9910,27 +9992,16 @@ function drawVoid() {
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillText('Every portal is a mystery — where will it take you?', 400, 328);
 
-    // Shield hint
+    // Shield hint (one short line: the full list of monsters is on the weapon chart sign)
     if (state.power !== POWER.NONE) {
-        const shielded = state.power === POWER.RAINBOW ? 'EVERY MONSTER (not the Devil!)'
-            : Object.keys(ENEMY_TYPES).filter(isShieldedAgainst).map(k => ENEMY_TYPES[k].name.toUpperCase() + 'S').join(' & ');
-        ctx.fillStyle = WEAPON_INFO[state.power].color;
+        const w = WEAPON_INFO[state.power];
+        ctx.fillStyle = w.color;
         ctx.font = 'bold 12px Arial';
-        ctx.fillText(`🛡 ${WEAPON_INFO[state.power].label} SHIELD — protects you from ${shielded}`, 400, 360);
+        ctx.fillText(state.power === POWER.RAINBOW ? '🛡 RAINBOW SHIELD — protects you from every monster (not the Devil!)'
+                                                   : `🛡 ${w.label} SHIELD — protects you from the monsters ${w.label.toLowerCase()} beats`, 400, 360);
     }
 
-    // Which weapon beats which bad guy
-    const chart = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER].map(w => {
-        const plural = n => n.endsWith('man') ? n.slice(0, -3) + 'men' : n === 'Shadow You' ? n : n + 's';
-        const beats = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].weakTo === w).map(k => plural(ENEMY_TYPES[k].name));
-        const list = beats.length > 1 ? beats.slice(0, -1).join(', ') + ' & ' + beats[beats.length - 1] : beats[0];
-        return `${WEAPON_INFO[w].icon} ${WEAPON_INFO[w].label} beats ${list}`;
-    });
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.font = 'bold 12px Arial';
-    ctx.fillText('WHAT BEATS WHAT (every weapon still does a little damage to everything)', 400, 446);
-    ctx.font = '10px Arial';
-    chart.forEach((line, i) => ctx.fillText(line, 400, 462 + i * 14));
-    ctx.fillText('🌈 RAINBOW POWER beats everything!', 400, 462 + chart.length * 14);
+    drawChartSign();
 
     // Void enemies
     const t = Date.now() / 400;

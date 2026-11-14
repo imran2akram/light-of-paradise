@@ -16,3 +16,6 @@ desktop.ini
 node_modules/
 package.json
 package-lock.json
+
+# Claude Code worktrees
+.claude/worktrees/
