@@ -742,6 +742,24 @@ function drawInsideCave() {
                  400, c.y > 300 ? c.y - 24 : c.y + c.h + 34);
     // A mole's warning mound shows through the dark so you always see where it will come up
     for (const e of hell.enemies) if (e.alive && e.type === 'mole' && e.warn > 0) drawMoleMound(e);
+    // …and so does a mole that is out: you can see it coming even from inside the cave
+    for (const e of hell.enemies) if (e.alive && e.type === 'mole' && !(e.warn > 0) && !(e.emerge > 45)) drawMoleThroughDark(e);
+    ctx.restore();
+}
+
+// A glowing brown mole with angry red eyes, drawn on top of the dark so it can be seen
+function drawMoleThroughDark(e) {
+    const r = e.r || 15;
+    if (e.emerge > 0) drawMoleMound(e);   // still climbing out: the mound too
+    ctx.save();
+    const glow = ctx.createRadialGradient(e.x, e.y, r * 0.5, e.x, e.y, r * 2.4);
+    glow.addColorStop(0, 'rgba(255,140,70,0.5)'); glow.addColorStop(1, 'rgba(255,140,70,0)');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(e.x, e.y, r * 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#A8723C'; ctx.strokeStyle = '#FFE0A8'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(e.x, e.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#E8A0A0'; ctx.beginPath(); ctx.arc(e.x, e.y + r * 0.25, r * 0.22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#FF3030'; ctx.beginPath();
+    ctx.arc(e.x - r * 0.35, e.y - r * 0.25, r * 0.2, 0, Math.PI * 2); ctx.arc(e.x + r * 0.35, e.y - r * 0.25, r * 0.2, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
 }
 

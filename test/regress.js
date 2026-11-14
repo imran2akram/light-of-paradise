@@ -876,6 +876,26 @@ check('a toast never covers the title or hint of an open menu, the shop or the a
     return out.join('; ');
 });
 
+check('a live mole is drawn on top of the dark while you hide in a Hell cave (and nothing is drawn for a defeated one)', () => {
+    startPlaying(); changeRoom(ROOM.HELL); const c = HELL_CAVES[0];
+    player.x = c.x + c.w / 2; player.y = c.y + c.h / 2;
+    const far = { x: c.x + c.w + 150, y: c.y + c.h / 2 };
+    const mole = alive => ({ type: 'mole', x: far.x, y: far.y, alive, r: 15, hp: 5, maxHp: 5, hitFlash: 0, frozen: 0, warn: 0, emerge: 0 });
+    const arcsAtMole = () => {
+        const real = ctx.arc, realFill = ctx.fill; let darkAt = -1, n = 0; const hits = [];
+        ctx.arc = (x, y, ...r) => { n++; if (Math.hypot(x - far.x, y - far.y) < 1) hits.push(n); return real.call(ctx, x, y, ...r); };
+        ctx.fill = (...a) => { if (a[0] === 'evenodd') darkAt = n; return realFill.apply(ctx, a); };
+        try { drawInsideCave(); } finally { ctx.arc = real; ctx.fill = realFill; }
+        return { hits, darkAt };
+    };
+    hell.enemies = [mole(true)];
+    const live = arcsAtMole();
+    if (!live.hits.length) return 'the mole was not drawn';
+    if (!live.hits.some(h => h > live.darkAt)) return 'the mole was drawn only under the dark';
+    hell.enemies = [mole(false)];
+    return arcsAtMole().hits.length ? 'a defeated mole was drawn' : '';
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;
