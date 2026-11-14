@@ -7599,23 +7599,28 @@ function powerName(power = state.power, tier = state.powerTier) {
 }
 
 // Finds a place for the mole to come up: far from the player, in the room, and
-// preferably in (or at the edge of) a cave since moles live underground
+// preferably in (or at the edge of) the player's cave so they can see it (you only
+// see inside the cave while hiding), then in the other cave, then anywhere
+const MOLE_EDGE_PAD = 45;   // px around a cave still counts as "at the edge"
 function moleSpawnPoint(s) {
     const farEnough = (x, y) => Math.hypot(x - player.x, y - player.y) >= MOLE_MIN_DIST;
-    const cave = HELL_CAVES.find(c => s.x >= c.x && s.x <= c.x + c.w && s.y >= c.y && s.y <= c.y + c.h);
-    const inRoom = [], inCave = [];
+    const ownCave = HELL_CAVES.find(c => s.x >= c.x && s.x <= c.x + c.w && s.y >= c.y && s.y <= c.y + c.h);
+    const around = c => {
+        const out = [];
+        for (let i = 0; i < 40; i++) {
+            const x = c.x - MOLE_EDGE_PAD + Math.random() * (c.w + 2 * MOLE_EDGE_PAD), y = c.y - MOLE_EDGE_PAD + Math.random() * (c.h + 2 * MOLE_EDGE_PAD);
+            if (x >= 40 && x <= 760 && y >= 80 && y <= 560 && farEnough(x, y)) out.push({ x, y });
+        }
+        return out;
+    };
+    const own = ownCave ? around(ownCave) : [];
+    const other = HELL_CAVES.filter(c => c !== ownCave).flatMap(around);
+    const anywhere = [];
     for (let i = 0; i < 40; i++) {
         const x = 40 + Math.random() * 720, y = 80 + Math.random() * 480;
-        if (!farEnough(x, y)) continue;
-        inRoom.push({ x, y });
-        if (cave && x >= cave.x - 20 && x <= cave.x + cave.w + 20 && y >= cave.y - 20 && y <= cave.y + cave.h + 20) inCave.push({ x, y });
+        if (farEnough(x, y)) anywhere.push({ x, y });
     }
-    // Cave corners are also fair game (the room-wide picks only land there by luck)
-    if (cave) for (let i = 0; i < 20; i++) {
-        const x = cave.x + 10 + Math.random() * (cave.w - 20), y = cave.y + 10 + Math.random() * (cave.h - 20);
-        if (farEnough(x, y)) inCave.push({ x, y });
-    }
-    const list = inCave.length ? inCave : inRoom;
+    const list = own.length ? own : other.length ? other : anywhere;
     if (list.length) return list[Math.floor(Math.random() * list.length)];
     // Nothing found (very unlikely): the far side of the room from the player
     return { x: player.x < 400 ? 700 : 100, y: player.y < 300 ? 500 : 100 };
@@ -9692,18 +9697,24 @@ function drawMoleMound(e) {
     const shake = warning ? Math.sin(frameNo * 1.7) * 3 : Math.sin(frameNo * 1.2) * 1.5;
     const grow = warning ? 0.6 + 0.4 * (1 - e.warn / MOLE_WARN_FRAMES) : 1;
     ctx.save();
+    if (warning) {   // pulsing red ring so it still shows up in the dark caves
+        const pulse = 0.5 + 0.5 * Math.sin(frameNo * 0.3);
+        ctx.strokeStyle = `rgba(255,70,40,${0.55 + 0.4 * pulse})`; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.ellipse(e.x, e.y + 6, 30 + 8 * pulse, 15 + 4 * pulse, 0, 0, Math.PI * 2); ctx.stroke();
+    }
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.beginPath(); ctx.ellipse(e.x + shake, e.y + 6, 26 * grow, 11 * grow, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#5C3A1E';
+    ctx.fillStyle = '#7A4C26';
     ctx.beginPath(); ctx.ellipse(e.x + shake, e.y + 6, 24 * grow, 14 * grow, 0, Math.PI, 0); ctx.fill();
-    ctx.fillStyle = '#8B5A2B';
+    ctx.fillStyle = '#A8723C';
     ctx.beginPath(); ctx.ellipse(e.x + shake - 5, e.y + 2, 11 * grow, 7 * grow, 0, Math.PI, 0); ctx.fill();
     if (warning) {
         const blink = Math.floor(frameNo / 8) % 2 === 0;
         ctx.fillStyle = blink ? '#FFEE33' : '#FF6633';
         ctx.strokeStyle = '#3A1400'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
-        ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center';
-        ctx.strokeText('!', e.x + shake, e.y - 16); ctx.fillText('!', e.x + shake, e.y - 16);
+        ctx.font = 'bold 38px Arial'; ctx.textAlign = 'center';
+        ctx.shadowColor = '#FFAA00'; ctx.shadowBlur = 10;
+        ctx.strokeText('!', e.x + shake, e.y - 14); ctx.fillText('!', e.x + shake, e.y - 14);
     }
     ctx.restore();
 }
@@ -11087,6 +11098,8 @@ function drawInsideCave() {
     ctx.fillStyle = state.caveProtectionExpired ? '#FF7744' : '#FFD08A'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center';
     ctx.fillText(state.caveProtectionExpired ? '⚠ The Devil found you — get out of the cave!' : `🕳 Hiding in the cave… the Devil can't see you (${secs}s)`,
                  400, c.y > 300 ? c.y - 24 : c.y + c.h + 34);
+    // A mole's warning mound shows through the dark so you always see where it will come up
+    for (const e of hell.enemies) if (e.alive && e.type === 'mole' && e.warn > 0) drawMoleMound(e);
     ctx.restore();
 }
 
