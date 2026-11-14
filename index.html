@@ -1076,6 +1076,11 @@ const DIG_MAX_DEPTH       = 3;                 // layers in each dig spot
 const DIG_HITS_PER_LAYER  = [3, 4, 8];         // Space / DIG presses per layer (deeper = harder)
 const DIG_MOLE_CHANCE     = [0.3, 0.6, 1.0];   // chance a mole monster pops out of each layer
 const DIG_RANGE           = 24;                // how close the player must stand to a dig spot
+const MOLE_MIN_DIST       = 140;               // a mole always comes up at least this far from the PLAYER
+const MOLE_WARN_FRAMES    = 90;                // shaking mound with a "!" before the mole climbs out
+const MOLE_EMERGE_FRAMES  = 45;                // then it climbs out (harmless while emerging)
+const MOLE_SLOW_FRAMES    = 60;                // gentle start: half speed for the first second out
+const MOLE_SLOW_FACTOR    = 0.5;
 // Layer 1: Ice / Fire / Lightning / Water · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (strong vs everything)
 
 // ── SETTINGS (⚙ button / O / Start) ───────────────────────────
@@ -5221,6 +5226,7 @@ const SFX = {
     superHit: () => { tone(600, 0.1, 'square', 0.12, 1200); tone(900, 0.12, 'triangle', 0.15, 1800, 0.05); },
     defeat:   () => { noise(0.25, 0.3); tone(400, 0.25, 'sawtooth', 0.1, 60); },
     dig:      () => { noise(0.1, 0.35, 500); tone(90, 0.12, 'sine', 0.35, 50); },
+    rumble:   () => { noise(0.4, 0.3, 200); tone(60, 0.4, 'sawtooth', 0.2, 40); },
     found:    () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.15, 'square', 0.1, null, i * 0.08)),
     coin:     () => { tone(988, 0.06, 'square', 0.08); tone(1319, 0.2, 'square', 0.08, null, 0.06); },
     hurt:     () => tone(300, 0.3, 'sawtooth', 0.18, 80),
@@ -6835,6 +6841,12 @@ function updateRoomEnemies() {
         if (e.slip > 0) e.slip--;
         if (e.stun > 0) { e.stun--; if (e.hitFlash > 0) e.hitFlash--; continue; }   // seeing stars
         if (!e.alive) continue;
+        if (e.warn > 0) {   // a mole's warning: rumbling mound
+            e.warn--;
+            if (e.warn % 30 === 0 && e.warn > 0) sfx('rumble');
+            if (Math.random() < 0.5) spawnParticles(e.x, e.y + 6, '#6B3E1E', 1);
+            continue;
+        }
         if (e.emerge > 0) {
             e.emerge--;
             if (Math.random() < 0.4) spawnParticles(e.x, e.y + 8, '#6B3E1E', 1);
@@ -7151,8 +7163,10 @@ function moveEnemy(e) {
     } else if (e.type === 'mole') {
         // Chases the player — even inside caves (they live underground!)
         const a = Math.atan2(player.y - e.y, player.x - e.x);
-        e.x += Math.cos(a) * e.speed;
-        e.y += Math.sin(a) * e.speed;
+        const sp = e.speed * (e.slowStart > 0 ? MOLE_SLOW_FACTOR : 1);
+        if (e.slowStart > 0) e.slowStart--;
+        e.x += Math.cos(a) * sp;
+        e.y += Math.sin(a) * sp;
     } else if (e.type === 'fire') {
         e.x += e.dx; e.y += e.dy;
     } else if (e.type === 'ghost') {
@@ -7479,15 +7493,40 @@ function powerName(power = state.power, tier = state.powerTier) {
     return tier >= 2 ? `Super ${power}` : power;
 }
 
+// Finds a place for the mole to come up: far from the player, in the room, and
+// preferably in (or at the edge of) a cave since moles live underground
+function moleSpawnPoint(s) {
+    const farEnough = (x, y) => Math.hypot(x - player.x, y - player.y) >= MOLE_MIN_DIST;
+    const cave = HELL_CAVES.find(c => s.x >= c.x && s.x <= c.x + c.w && s.y >= c.y && s.y <= c.y + c.h);
+    const inRoom = [], inCave = [];
+    for (let i = 0; i < 40; i++) {
+        const x = 40 + Math.random() * 720, y = 80 + Math.random() * 480;
+        if (!farEnough(x, y)) continue;
+        inRoom.push({ x, y });
+        if (cave && x >= cave.x - 20 && x <= cave.x + cave.w + 20 && y >= cave.y - 20 && y <= cave.y + cave.h + 20) inCave.push({ x, y });
+    }
+    // Cave corners are also fair game (the room-wide picks only land there by luck)
+    if (cave) for (let i = 0; i < 20; i++) {
+        const x = cave.x + 10 + Math.random() * (cave.w - 20), y = cave.y + 10 + Math.random() * (cave.h - 20);
+        if (farEnough(x, y)) inCave.push({ x, y });
+    }
+    const list = inCave.length ? inCave : inRoom;
+    if (list.length) return list[Math.floor(Math.random() * list.length)];
+    // Nothing found (very unlikely): the far side of the room from the player
+    return { x: player.x < 400 ? 700 : 100, y: player.y < 300 ? 500 : 100 };
+}
+
 function spawnMole(s) {
-    // Pops out a little way from the player so it doesn't hit them straight away
-    const a = Math.random() * Math.PI * 2;
+    const p = moleSpawnPoint(s);
     hell.enemies.push({
-        type: 'mole', x: s.x + Math.cos(a) * 45, y: s.y + Math.sin(a) * 45, alive: true,
+        type: 'mole', x: p.x, y: p.y, alive: true,
         r: 13 + s.depth * 2, hp: s.depth * 2 + 1, maxHp: s.depth * 2 + 1, hitFlash: 0, frozen: 0,
         speed: 0.8 + s.depth * 0.25,
-        emerge: 45,   // frames spent climbing out (harmless while emerging)
+        warn: MOLE_WARN_FRAMES,        // shaking mound first (can't hurt or be hurt)
+        emerge: MOLE_EMERGE_FRAMES,    // then climbs out (still harmless)
+        slowStart: MOLE_SLOW_FRAMES,   // then walks slowly for a moment
     });
+    sfx('rumble');
 }
 
 function nearbyGem() {
@@ -9542,7 +9581,31 @@ function drawEmojiEnemy(e, t) {
     ctx.restore();
 }
 
+// A mole is coming! Shaking dirt mound with a big "!" (warning), then a mound it climbs out of
+function drawMoleMound(e) {
+    const warning = e.warn > 0;
+    const shake = warning ? Math.sin(frameNo * 1.7) * 3 : Math.sin(frameNo * 1.2) * 1.5;
+    const grow = warning ? 0.6 + 0.4 * (1 - e.warn / MOLE_WARN_FRAMES) : 1;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(e.x + shake, e.y + 6, 26 * grow, 11 * grow, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#5C3A1E';
+    ctx.beginPath(); ctx.ellipse(e.x + shake, e.y + 6, 24 * grow, 14 * grow, 0, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = '#8B5A2B';
+    ctx.beginPath(); ctx.ellipse(e.x + shake - 5, e.y + 2, 11 * grow, 7 * grow, 0, Math.PI, 0); ctx.fill();
+    if (warning) {
+        const blink = Math.floor(frameNo / 8) % 2 === 0;
+        ctx.fillStyle = blink ? '#FFEE33' : '#FF6633';
+        ctx.strokeStyle = '#3A1400'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
+        ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center';
+        ctx.strokeText('!', e.x + shake, e.y - 16); ctx.fillText('!', e.x + shake, e.y - 16);
+    }
+    ctx.restore();
+}
+
 function drawEnemyBody(e, t) {
+    if (e.type === 'mole' && e.warn > 0) { drawMoleMound(e); return; }
+    if (e.type === 'mole' && e.emerge > 0) drawMoleMound(e);   // the mole rises out of its mound
     if (e.frog) { drawGroundShadow(e.x, e.y + 12, 10, 3); drawFrog(e); return; }
     if (ENEMY_TYPES[e.type].emoji) { drawEmojiEnemy(e, t); return; }
     if (!e.hidden && !(e.emerge > 45)) {

@@ -39,6 +39,32 @@ scenario('every room draws', () => {
     for (const r of Object.values(ROOM)) { changeRoom(r); loop(); }
 }, () => '');
 
+scenario('dig-spot mole comes up far away and warns first', () => {
+    changeRoom(ROOM.HELL);
+    state.playerHp = 3; state.playerInvincible = 0; state.bubble = false;
+    const spot = hell.digSpots[0];
+    for (let i = 0; i < 30; i++) {
+        player.x = spot.x; player.y = spot.y;
+        hell.enemies = [];
+        spawnMole(spot);
+        const m = hell.enemies[0];
+        if (Math.hypot(m.x - player.x, m.y - player.y) < MOLE_MIN_DIST) throw new Error('mole too close: ' + Math.round(Math.hypot(m.x - player.x, m.y - player.y)));
+        if (m.x < 0 || m.x > 800 || m.y < 0 || m.y > 600) throw new Error('mole outside the room');
+    }
+    // Walk the mole onto the player during its warning: it must not hurt
+    hell.enemies = []; spawnMole(spot);
+    const m = hell.enemies[0];
+    m.x = player.x; m.y = player.y;
+    state.hp = state.playerHp;
+}, () => {
+    const m = hell.enemies[0], hp0 = state.playerHp;
+    for (let i = 0; i < 40; i++) updateRoomEnemies();
+    if (state.playerHp < hp0) return 'mole hurt the player during the warning';
+    if (!(m.warn > 0)) return 'warning ended too early';
+    if (targetableEnemies().includes(m)) return 'mole can be hit during the warning';
+    return '';
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;
