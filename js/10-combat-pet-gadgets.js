@@ -678,6 +678,7 @@ function drawBuildButton() {
 }
 
 // Little gadget + dash icons in the bottom-left corner (keyboard and controller: on a phone the real buttons are in the side margins)
+const GADGET_SLOT_STEP = 52;   // room for a 12 px key name beside each round slot
 function drawGadgetHud() {
     if (lastInput === 'touch') return;
     const slots = [];
@@ -693,7 +694,7 @@ function drawGadgetHud() {
     const gp = nextGodPower();
     if (gp) slots.push({ icon: gp.icon, key: keyName('T', 'BACK'), cd: state.godCooldown / gp.cd });
     slots.forEach((sl, i) => {
-        const x = 70 + i * 40, y = 574;
+        const x = 70 + i * GADGET_SLOT_STEP, y = 574;
         ctx.save();
         ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.fill();
         if (sl.cd > 0) {   // cooldown sweep
@@ -703,7 +704,10 @@ function drawGadgetHud() {
         ctx.strokeStyle = sl.cd > 0 ? '#777' : '#FFD700'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.stroke();
         ctx.font = '15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#FFF';
         ctx.fillText(sl.icon, x, y + 1);
-        ctx.font = 'bold 8px Arial'; ctx.fillText(sl.key, x + 12, y - 12);
+        ctx.font = 'bold 12px Arial';   // the key name sits on a dark tag so 12 px reads over anything
+        const tw = ctx.measureText(sl.key).width + 6;
+        ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(x + 14 - tw / 2, y - 21, tw, 15);
+        ctx.fillStyle = '#FFE680'; ctx.fillText(sl.key, x + 14, y - 13);
         ctx.restore();
     });
 }

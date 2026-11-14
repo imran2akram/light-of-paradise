@@ -1026,8 +1026,14 @@ function pollGamepad() {
     if (pressed(PAD.LB)) startBlock();
     if (was[PAD.LB] && !held[PAD.LB]) stopBlock();
     if (pressed(PAD.X) && state.gamePhase === 'intro') askNewGame();
-    if (pressed(PAD.X) && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
+    if (pressed(PAD.X) && canOpenShop() && !state.shopOpen) setAwardsOpen(!state.awardsOpen);
     if (state.awardsOpen && pressed(PAD.B)) state.awardsOpen = false;
+    if (state.awardsOpen) {   // D-pad / stick left-right (or up-down) and A turn the pages; nothing else happens behind the board
+        if (pressed(PAD.LEFT) || pressed(PAD.UP))    awardsTurn(-1);
+        if (pressed(PAD.RIGHT) || pressed(PAD.DOWN) || pressed(PAD.A)) awardsTurn(1);
+        if (nav) awardsTurn(nav[0] + nav[1]);
+        return;
+    }
     if (pressed(PAD.START)) pressStart();
     if (pressed(PAD.Y) || (state.shopOpen && pressed(PAD.B))) toggleShop();
 

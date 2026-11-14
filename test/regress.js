@@ -745,6 +745,73 @@ check('football: SAVED! shows once per save, even if the ball keeps sitting in t
     } finally { spawnFloatText = real; }
 });
 
+check('awards board: every word is 12 px or more, every award is reachable by paging with keys, controller and taps; it opens and closes as before', () => {
+    const out = [];
+    startPlaying(); changeRoom(ROOM.VOID); menu = null; state.shopOpen = false; state.awardsOpen = false;
+    awards.got = {}; for (const a of AWARDS.slice(0, 5)) awards.got[a.id] = true;
+    const seen = new Set(), pages = awardsPageCount();
+    const read = () => {
+        const lines = recordText(drawAwards);
+        for (const l of lines) if (l.size < 12) out.push('page ' + (awardsPage + 1) + ': "' + l.t.slice(0, 24) + '" is ' + l.size + ' px');
+        const bad = sideways(lines, AWARDS_BOARD.X, AWARDS_BOARD.X + AWARDS_BOARD.W); if (bad) out.push('page ' + (awardsPage + 1) + ' too wide: ' + bad);
+        AWARDS.forEach((a, i) => { if (lines.some(l => l.t.includes(a.name))) seen.add(i); });   // (by position: three ids are used twice)
+        return lines;
+    };
+    const walk = (how, open, next, close) => {
+        seen.clear(); open(); if (!state.awardsOpen) { out.push(how + ': did not open'); return; }
+        if (awardsPage !== 0) out.push(how + ': did not open on page 1');
+        for (let i = 0; i < pages; i++) { read(); next(); }
+        if (seen.size !== AWARDS.length) out.push(how + ': reached ' + seen.size + ' of ' + AWARDS.length + ' awards, missing ' + AWARDS.filter((a, i) => !seen.has(i)).map(a => a.name).join('/'));
+        if (awardsPage !== 0) out.push(how + ': paging did not wrap round');
+        close(); if (state.awardsOpen) out.push(how + ': did not close');
+    };
+    const lines = (() => { state.awardsOpen = true; awardsPage = 0; return read(); })();
+    if (!lines.some(l => l.t.includes('1 / ' + pages))) out.push('the page "1 / ' + pages + '" is not shown');
+    if (!lines.some(l => l.t.includes('5/' + AWARDS.length))) out.push('total earned is not shown');
+    state.awardsOpen = false;
+    walk('keyboard', () => { fire('keydown', keyEv('KeyH')); fire('keyup', keyEv('KeyH')); },
+        () => { fire('keydown', keyEv('ArrowRight')); fire('keyup', keyEv('ArrowRight')); },
+        () => { fire('keydown', keyEv('Escape')); fire('keyup', keyEv('Escape')); });
+    walk('keyboard back', () => { fire('keydown', keyEv('KeyH')); fire('keyup', keyEv('KeyH')); },
+        () => { fire('keydown', keyEv('ArrowLeft')); fire('keyup', keyEv('ArrowLeft')); },
+        () => { fire('keydown', keyEv('KeyH')); fire('keyup', keyEv('KeyH')); });
+    walk('controller', () => { padWith(PAD.X); padWith(-1); },
+        () => { padWith(PAD.RIGHT); padWith(-1); },
+        () => { padWith(PAD.B); padWith(-1); });
+    walk('controller stick', () => { padWith(PAD.X); padWith(-1); },
+        () => { padWith(-1, 0.9, 0); padWith(-1); },
+        () => { padWith(PAD.X); padWith(-1); });
+    for (const [w, h] of [[844, 390], [667, 375]]) {
+        phoneMode(w, h); startPlaying(); changeRoom(ROOM.VOID); lastInput = 'touch';
+        for (const [name, r] of [['previous', awardsPrevRect()], ['next', awardsNextRect()]]) {
+            const t = tapRect(r);
+            if (t.w * view.fit < 47.5 || t.h * view.fit < 47.5) out.push(w + 'x' + h + ': the ' + name + ' arrow is only ' + Math.round(t.w * view.fit) + 'x' + Math.round(t.h * view.fit) + ' px');
+        }
+        walk('tap ' + w + 'x' + h, () => { handleTap(AWARDS_BTN.x + AWARDS_BTN.w / 2, AWARDS_BTN.y + AWARDS_BTN.h / 2); },
+            () => { const r = awardsNextRect(); handleTap(r.x + r.w / 2, r.y + r.h / 2); },
+            () => { handleTap(AWARDS_BOARD.X + 20, AWARDS_BOARD.Y + 20); });
+        const p = awardsPrevRect(); state.awardsOpen = true; awardsPage = 0; handleTap(p.x + p.w / 2, p.y + p.h / 2);
+        if (!state.awardsOpen || awardsPage !== pages - 1) out.push('the previous arrow did not go back');
+        state.awardsOpen = false; lastInput = 'keyboard';
+    }
+    desktopMode(); startPlaying(); lastInput = 'keyboard'; state.awardsOpen = false;
+    return out.slice(0, 6).join('; ');
+});
+check('title screen and HUD key tags: no text under 12 px, and the HUD slots do not overlap', () => {
+    const out = [];
+    state.gamePhase = 'intro';
+    for (const l of recordText(drawIntro)) if (l.size < 12) out.push('title: "' + l.t.slice(0, 24) + '" is ' + l.size + ' px');
+    startPlaying(); lastInput = 'keyboard';
+    state.hasDash = true; state.spell = SPELLS[0].id; state.gadget = GADGETS[0].id; state.demigod = GOD_PARENTS[0].id;
+    const hud = recordText(drawGadgetHud);
+    if (!hud.length) out.push('no HUD slots drawn');
+    for (const l of hud) if (l.size < 12) out.push('HUD: "' + l.t + '" is ' + l.size + ' px');
+    const tags = hud.filter(l => l.size === 12).sort((a, b) => a.x0 - b.x0);
+    for (let i = 1; i < tags.length; i++) if (tags[i].x0 < tags[i - 1].x1) out.push('HUD key tags overlap: ' + tags[i - 1].t + ' / ' + tags[i].t);
+    state.hasDash = false; state.spell = null; state.gadget = null; state.demigod = undefined;
+    return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;

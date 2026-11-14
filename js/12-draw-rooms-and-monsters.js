@@ -77,9 +77,9 @@ function drawIntro() {
     });
 
     // Hint: Caves
-    ctx.fillStyle = 'rgba(180,120,60,0.7)';
+    ctx.fillStyle = 'rgba(220,150,80,0.9)';
     ctx.font = '13px Arial';
-    ctx.fillText('Tip: Hide in Hell\'s caves for 1 minute — dig deep for rare weapons, but watch out for moles!', 400, 460);
+    ctx.fillText('Tip: Hide in Hell\'s caves for 1 minute — dig deep for rare weapons, but watch out for moles!', 400, 472);
 
     // Pulsing Press Space
     const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 400);
@@ -112,8 +112,8 @@ function drawIntro() {
         ctx.fillText(inFullscreen() ? '⛶ Exit full screen' : '⛶ Full screen', b.x + b.w / 2, b.y + b.h / 2 + 1);
         ctx.textBaseline = 'alphabetic';
     }
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = '11px Arial';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '12px Arial';
     ctx.fillText(usesTouchLayout() ? 'Move: left stick  |  Shoot: big button  |  Mystery portals go anywhere!'
                                    : 'Move: WASD / Arrows  |  Shoot: Space  |  Dance: G  |  Fart: F  |  Mystery portals go anywhere!', 400, 562);
 }

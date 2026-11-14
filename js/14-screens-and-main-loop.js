@@ -135,35 +135,47 @@ function drawWin() {
 // ── DRAW: AWARDS ──────────────────────────────────────────────
 function drawAwards() {
     if (!state.awardsOpen) return;
-    const X = 90, Y = 48, W = 620, H = 540;
+    const B = AWARDS_BOARD, X = B.X, Y = B.Y, W = B.W, H = B.H;
+    awardsPage = Math.min(awardsPage, awardsPageCount() - 1);
     ctx.save();
     ctx.fillStyle = 'rgba(10,5,25,0.97)'; ctx.fillRect(X, Y, W, H);
     ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
     ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
     const got = AWARDS.filter(a => awards.got[a.id]).length;
     ctx.fillText(`🏅 AWARDS  ${got}/${AWARDS.length}`, 400, Y + 30);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px Arial';
-    ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}   ·   Tap, H or B to close`, 400, Y + 50);
-    // Squeeze the boxes smaller as more awards are added, so they always fit
-    const cols = AWARDS.length > 64 ? 5 : 4, colW = (W - 20) / cols;
-    const rowH = Math.min(36, (H - 62) / Math.ceil(AWARDS.length / cols)), boxH = rowH - 3;
-    AWARDS.forEach((a, i) => {
-        const col = i % cols, row = Math.floor(i / cols);
-        const x = X + 10 + col * colW, y = Y + 56 + row * rowH;
-        const has = awards.got[a.id];
-        ctx.fillStyle = has ? 'rgba(255,215,0,0.18)' : 'rgba(255,255,255,0.05)';
-        ctx.fillRect(x, y, colW - 6, boxH);
-        ctx.strokeStyle = has ? '#FFD700' : '#444'; ctx.lineWidth = 1; ctx.strokeRect(x, y, colW - 6, boxH);
-        ctx.globalAlpha = has ? 1 : 0.35;
-        ctx.font = `${Math.round(boxH * 0.6)}px Arial`; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(a.icon, x + 17, y + boxH * 0.7);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '12px Arial';
+    ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}`, 400, Y + 50);
+    // A page of big cells: icon, name, and the description (wrapped, never squeezed)
+    const gap = 8, cellW = (W - 28 - gap) / B.COLS, cellH = B.ROW_H - gap;
+    const first = awardsPage * AWARDS_PER_PAGE;
+    for (let i = 0; i < AWARDS_PER_PAGE && first + i < AWARDS.length; i++) {
+        const a = AWARDS[first + i], has = awards.got[a.id];
+        const x = X + 14 + (i % B.COLS) * (cellW + gap), y = Y + B.GRID_Y + Math.floor(i / B.COLS) * B.ROW_H;
+        ctx.fillStyle = has ? 'rgba(255,215,0,0.22)' : 'rgba(255,255,255,0.05)';
+        ctx.fillRect(x, y, cellW, cellH);
+        ctx.strokeStyle = has ? '#FFD700' : '#555'; ctx.lineWidth = has ? 2 : 1; ctx.strokeRect(x, y, cellW, cellH);
+        ctx.globalAlpha = has ? 1 : 0.35;   // locked ones are dim, earned ones glow gold
+        ctx.font = '26px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
+        ctx.fillText(a.icon, x + 24, y + cellH / 2 + 9);
         ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
-        ctx.fillStyle = has ? '#FFE680' : '#888'; ctx.font = 'bold 10px Arial';
-        ctx.fillText(a.name, x + 32, y + boxH * 0.42);
-        ctx.fillStyle = has ? 'rgba(255,255,255,0.75)' : '#666'; ctx.font = '8px Arial';
-        ctx.fillText(has ? '✓ ' + a.desc : a.desc, x + 32, y + boxH * 0.8, colW - 42);
-    });
+        ctx.fillStyle = has ? '#FFE680' : '#AAA'; ctx.font = 'bold 14px Arial';
+        ctx.fillText((has ? '✓ ' : '🔒 ') + a.name, x + 46, y + 20);
+        ctx.fillStyle = has ? '#FFFFFF' : '#BBB'; ctx.font = '12px Arial';
+        wrapText(a.desc, cellW - 56, 2).forEach((line, k) => ctx.fillText(line, x + 46, y + 38 + k * 14));
+    }
+    // Page arrows and "2 / 9"
+    const prev = awardsPrevRect(), next = awardsNextRect();
+    for (const [r, label] of [[prev, '◀'], [next, '▶']]) {
+        ctx.fillStyle = 'rgba(255,215,0,0.2)'; ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 7);
+    }
+    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(`${awardsPage + 1} / ${awardsPageCount()}`, 400, prev.y + prev.h / 2 + 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '12px Arial';
+    ctx.fillText(byInput('◀ ▶ keys turn the page  ·  H or Esc closes', 'Tap ◀ ▶ to turn the page  ·  tap here to close', '◀ ▶ turn the page  ·  B closes'), 400, Y + H - 14);
     ctx.restore();
 }
 
