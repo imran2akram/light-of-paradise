@@ -196,7 +196,7 @@ const ENEMY_TYPES = {
     queen:     { name: 'Chess Queen',  hp: 25, weakTo: POWER.LIGHTNING, color: '#333333', emoji: '♛' },   // Wizard Chess boss
     hydra:     { name: 'The Hydra',    hp: 30, weakTo: POWER.BRIMSTONE, color: '#3A8A4A', emoji: '🐲' },   // Greek Island boss: cut a head, two grow back!
     hydrahead: { name: 'Hydra Head',   hp: 2,  weakTo: POWER.BRIMSTONE, color: '#3A8A4A', emoji: '🐍' },
-    medusa:    { name: 'Medusa',       hp: 28, weakTo: POWER.LIGHTNING, color: '#6A9A5A', emoji: '👸' },   // her stare turns you to stone!
+    medusa:    { name: 'Medusa',       hp: 28, weakTo: POWER.LIGHTNING, color: '#6A9A5A' },   // her stare turns you to stone! (drawn by drawMedusa)
     minotaur:  { name: 'The Minotaur', hp: 30, weakTo: POWER.ICE,       color: '#8A5A3A', emoji: '🐂' },   // lives in the maze
     cerberus:  { name: 'Cerberus',     hp: 32, weakTo: POWER.WATER,     color: '#442222', emoji: '🐕' },   // three-headed guard dog of the Underworld
     troll:     { name: 'Troll',        hp: 6,  weakTo: POWER.BRIMSTONE, color: '#6A7A5A', emoji: '🧌' },   // Viking Island
@@ -9683,11 +9683,10 @@ function drawEmojiEnemy(e, t) {
         ctx.fillStyle = '#FFF'; ctx.fillRect(-6, -e.r * 0.12, 4, 5); ctx.fillRect(2, -e.r * 0.12, 4, 5);
     } else if (e.type === 'megaboss') {   // all the bosses stuck together!
         ctx.font = `${e.r * 1.1}px Arial`;
-        [['🐲', -0.55, -0.45], ['👸', 0.55, -0.45], ['🐂', -0.6, 0.45], ['🤖', 0.6, 0.45], ['👹', 0, 0]].forEach(([em, ox, oy]) => ctx.fillText(em, ox * e.r, oy * e.r + Math.sin(t * 4 + ox * 3) * 2));
+        [['🐲', -0.55, -0.45], ['🐍', 0.55, -0.45], ['🐂', -0.6, 0.45], ['🤖', 0.6, 0.45], ['👹', 0, 0]].forEach(([em, ox, oy]) => ctx.fillText(em, ox * e.r, oy * e.r + Math.sin(t * 4 + ox * 3) * 2));
     } else if (e.type === 'cerberus') { ctx.font = `${size * 0.7}px Arial`; ctx.fillText('🐕', -e.r * 0.7, 4); ctx.fillText('🐕', e.r * 0.7, 4); ctx.fillText('🐕', 0, -e.r * 0.5); }   // three heads!
     else ctx.fillText(info.emoji, 0, 0);
     if (info.crown) { ctx.font = `${e.r * 0.8}px Arial`; ctx.fillText('👑', 0, -e.r * 1.05); }
-    if (e.type === 'medusa') { ctx.font = `${e.r * 0.7}px Arial`; for (let k = 0; k < 5; k++) ctx.fillText('🐍', Math.cos(k * 0.8 - 1.6 - 0.4) * e.r * 0.9, -e.r * 0.6 + Math.sin(k * 0.8 - 2) * e.r * 0.5 + Math.sin(t * 6 + k) * 2); }
     ctx.restore();
 }
 
@@ -9719,6 +9718,104 @@ function drawMoleMound(e) {
     ctx.restore();
 }
 
+// ── MEDUSA: a scaly green monster with a head full of writhing snakes ──
+const MEDUSA_WARN_FRAMES = 90;   // matches the "DON'T LOOK AT ME!" wind-up in moveEnemy
+const MEDUSA_SNAKES      = 9;
+
+function drawMedusa(e) {
+    const u = e.r / 30;   // everything is drawn for r = 30 and scaled
+    const w = frameNo * 0.12;
+    const k = e.gazeTimer > 0 && e.gazeTimer <= MEDUSA_WARN_FRAMES ? 1 - e.gazeTimer / MEDUSA_WARN_FRAMES : 0;   // 0 → 1 during the stare wind-up
+    const pulse = 0.5 + 0.5 * Math.sin(frameNo * 0.5);
+    const thrash = 1 + k * 1.8;   // the snakes go wild before she stares
+    ctx.save();
+    ctx.translate(e.x, e.y); ctx.scale(u, u);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // Snakes for hair (behind the head)
+    for (let i = 0; i < MEDUSA_SNAKES; i++) {
+        const f = i / (MEDUSA_SNAKES - 1), a = -Math.PI * (0.98 - 0.96 * f);   // fanned out over the top and down the sides
+        const dx = Math.cos(a), dy = Math.sin(a), px = -dy, py = dx;
+        const len = 26 + (i % 3) * 7, sx = dx * 17, sy = -3 + dy * 19;
+        const pts = [];
+        for (let j = 0; j <= 8; j++) {
+            const q = j / 8, sway = Math.sin(w * thrash * 1.6 + i * 1.9 + q * 5) * (2 + 10 * q) * (0.7 + 0.3 * thrash);
+            pts.push([sx + dx * q * len + px * sway, sy + dy * q * len + py * sway + q * q * 8]);   // droops a little
+        }
+        for (const [col, wid] of [['#17401C', 7], ['#4FA23A', 5], ['#8BD05A', 1.6]]) {
+            for (let j = 0; j < 8; j++) {
+                const q = j / 8, fat = 1 - q * 0.55;
+                ctx.strokeStyle = col; ctx.lineWidth = wid * fat;
+                ctx.beginPath(); ctx.moveTo(pts[j][0], pts[j][1] - (col === '#8BD05A' ? 1 : 0)); ctx.lineTo(pts[j + 1][0], pts[j + 1][1] - (col === '#8BD05A' ? 1 : 0)); ctx.stroke();
+            }
+        }
+        const [hx, hy] = pts[8], [bx, by] = pts[7], ha = Math.atan2(hy - by, hx - bx);   // snake head
+        ctx.save(); ctx.translate(hx, hy); ctx.rotate(ha);
+        ctx.fillStyle = '#3F8F2F'; ctx.beginPath(); ctx.ellipse(1, 0, 5, 3.4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = k > 0.3 ? '#FF3322' : '#FFE600'; ctx.beginPath(); ctx.arc(2, -1.3, 1.1, 0, Math.PI * 2); ctx.arc(2, 1.3, 1.1, 0, Math.PI * 2); ctx.fill();
+        if (Math.sin(w * 2.2 + i * 2.3) > 0.2) {   // flicking tongue
+            ctx.strokeStyle = '#E02040'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(5.5, 0); ctx.lineTo(9, 0); ctx.moveTo(9, 0); ctx.lineTo(11, -1.5); ctx.moveTo(9, 0); ctx.lineTo(11, 1.5); ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    // Shoulders in a dark scaly robe
+    ctx.fillStyle = '#244F2C'; ctx.beginPath(); ctx.ellipse(0, 27, 19, 11, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#3F8A47'; ctx.lineWidth = 1;
+    for (let row = 0; row < 3; row++) for (let col = -3; col <= 3; col++) {
+        const sx = col * 5 + (row % 2) * 2.5, sy = 22 + row * 4;
+        if ((sx * sx) / 330 + ((sy - 27) * (sy - 27)) / 100 < 0.9) { ctx.beginPath(); ctx.arc(sx, sy, 2.6, 0.2, Math.PI - 0.2); ctx.stroke(); }
+    }
+
+    // Head: scaly green skin
+    const skin = ctx.createRadialGradient(-5, -10, 3, 0, -2, 26);
+    skin.addColorStop(0, '#A4DB72'); skin.addColorStop(0.6, '#5BAA45'); skin.addColorStop(1, '#2F6F33');
+    ctx.fillStyle = skin; ctx.strokeStyle = '#1C4A22'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(0, -2, 21, 23, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = 'rgba(30,90,35,0.55)'; ctx.lineWidth = 0.9;   // little scales
+    for (let row = 0; row < 9; row++) for (let col = -4; col <= 4; col++) {
+        const sx = col * 5 + (row % 2) * 2.5, sy = -20 + row * 5;
+        if ((sx * sx) / 400 + ((sy + 2) * (sy + 2)) / 480 < 0.82 && !(Math.abs(sx) < 14 && sy > -13 && sy < -1)) { ctx.beginPath(); ctx.arc(sx, sy, 2.4, 0.3, Math.PI - 0.3); ctx.stroke(); }
+    }
+
+    // Glowing eyes: yellow, then hot red while she winds up her stare
+    const eyeCol = `rgb(255, ${Math.round(232 - 200 * k)}, ${Math.round(20 * (1 - k))})`;
+    for (const side of [-1, 1]) {
+        const ex = side * 9, ey = -7;
+        if (k > 0) {   // red glow around the eye
+            const aura = ctx.createRadialGradient(ex, ey, 2, ex, ey, 16 + 10 * pulse);
+            aura.addColorStop(0, `rgba(255,40,0,${0.55 * k})`); aura.addColorStop(1, 'rgba(255,40,0,0)');
+            ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(ex, ey, 26, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = '#10200F'; ctx.beginPath(); ctx.ellipse(ex, ey, 7.6, 5.4, side * -0.38, 0, Math.PI * 2); ctx.fill();   // dark socket
+        ctx.save();
+        ctx.shadowColor = eyeCol; ctx.shadowBlur = 7 + 20 * k * (0.7 + 0.3 * pulse);
+        ctx.fillStyle = eyeCol; ctx.beginPath(); ctx.ellipse(ex, ey, 6.2, 4.2, side * -0.38, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.ellipse(ex, ey, 1.5 - 0.5 * k, 4, 0, 0, Math.PI * 2); ctx.fill();   // slit pupil
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(ex - 2, ey - 2, 0.9, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#143A1A'; ctx.lineWidth = 3.4;   // angry brow slanting down to the middle
+        ctx.beginPath(); ctx.moveTo(side * 17, -17 + k * 2); ctx.lineTo(side * 3, -9 + k * 2); ctx.stroke();
+    }
+
+    // Nose holes
+    ctx.fillStyle = '#1C4A22'; ctx.beginPath(); ctx.ellipse(-2.2, 3, 1, 1.6, 0, 0, Math.PI * 2); ctx.ellipse(2.2, 3, 1, 1.6, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Wide mouth with fangs and a forked tongue
+    const open = 4 + Math.sin(w * 1.3) * 1 + 4 * k;
+    const tongue = 8 + Math.sin(w * 3.1) * 4 + 4 * k;
+    ctx.fillStyle = '#2A0608';
+    ctx.beginPath(); ctx.moveTo(-13, 9); ctx.quadraticCurveTo(0, 9 + open * 2.2, 13, 9); ctx.quadraticCurveTo(0, 6, -13, 9); ctx.fill();
+    ctx.strokeStyle = '#E02040'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, 12); ctx.lineTo(0, 12 + tongue); ctx.moveTo(0, 12 + tongue); ctx.lineTo(-3.5, 14 + tongue); ctx.moveTo(0, 12 + tongue); ctx.lineTo(3.5, 14 + tongue); ctx.stroke();
+    ctx.fillStyle = '#FFFFF0';
+    for (const side of [-1, 1]) {
+        ctx.beginPath(); ctx.moveTo(side * 4, 8.2); ctx.lineTo(side * 8, 8.6); ctx.lineTo(side * 6, 8.4 + 6 + open * 0.3); ctx.fill();   // long fangs
+        ctx.beginPath(); ctx.moveTo(side * 10, 9); ctx.lineTo(side * 12.4, 9.2); ctx.lineTo(side * 11.2, 13); ctx.fill();               // small teeth
+    }
+    ctx.restore();
+}
+
 function drawEnemyBody(e, t) {
     if (e.type === 'mole' && e.warn > 0) { drawMoleMound(e); return; }
     if (e.type === 'mole' && e.emerge > 0) drawMoleMound(e);   // the mole rises out of its mound
@@ -9736,7 +9833,9 @@ function drawEnemyBody(e, t) {
         ctx.beginPath(); ctx.ellipse(e.x, e.y + e.r * 0.6, e.r * 1.2, e.r * 0.45, 0, Math.PI, 0); ctx.fill();
         ctx.globalAlpha = Math.max(0.1, 1 - e.emerge / 60);
     }
-    if (e.type === 'fire') {
+    if (e.type === 'medusa') {
+        drawMedusa(e);
+    } else if (e.type === 'fire') {
         ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#FFAA00';
