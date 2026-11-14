@@ -35,12 +35,29 @@ function countSteps(fn) {
     try { fn(); } finally { update = real; }
     return n;
 }
+const cfire = (name, e) => { for (const f of (canvasListeners[name] || [])) f(e); };
 const fire = (name, e) => { for (const f of (__h.listeners[name] || [])) f(e); };
-const keyEv = (code, extra) => ({ code, preventDefault() {}, stopPropagation() {}, repeat: false, ...extra });
+const keyEv = (code, extra) => ({ code, preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}, repeat: false, ...extra });
 const shot = () => ({ x: player.x, y: player.y, dx: 0, dy: 0, r: 6, life: 50, color: '#f00', enemyType: 'devil' });
 
 startFromIntro(true);
 loop();   // one normal frame to settle
+
+// A fake controller: only button b is down (-1 = none), stick at (ax, ay)
+const padWith = (b, ax = 0, ay = 0) => { __h.pads = [{ connected: true, index: 0, buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === b, value: 0 })), axes: [ax, ay, 0, 0], id: 'pad' }]; pollGamepad(); };
+
+// (first, while the opening video is still up: the later scenarios need it gone)
+check('any controller button skips the opening video, and that press is not also a game button', () => {
+    if (!introVideo.isUp()) return 'video overlay was not up';
+    state.gamePhase = 'intro';
+    padWith(-1); if (!introVideo.isUp()) return 'skipped without a press';
+    padWith(PAD.A);
+    const started = state.gamePhase !== 'intro';   // it was the title screen: A must not have started the game
+    state.gamePhase = 'playing';
+    __h.pads = []; pollGamepad();
+    return introVideo.isUp() ? 'the button did not skip the video' : started ? 'the same press also started the game' : '';
+});
+
 
 scenario('die to a fireball with two more in flight', () => {
     changeRoom(ROOM.HELL);
@@ -256,7 +273,6 @@ check('New Game asks first when there is a save (keyboard, tap, controller) and 
     if (!menu) out.push('tap started over without asking');
     else if (handleTap(menu ? menuItemRect(0).x + 5 : 0, menuItemRect(0).y + 5) !== true || menu || savedGame === null) out.push('tapping Keep failed');
     // controller X, then B backs out
-    const padWith = b => { __h.pads = [{ connected: true, index: 0, buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === b, value: 0 })), axes: [0, 0, 0, 0], id: 'pad' }]; pollGamepad(); };
     toTitle(); padWith(-1);   // (a neutral poll first: the first one after a pause only syncs)
     padWith(PAD.X);
     if (!menu) out.push('controller X started over without asking');
@@ -315,6 +331,71 @@ check('walking into a room is safe for the first second (night boss at the Parad
     changeRoom(ROOM.VOID); state.playerHp = 1; state.playerInvincible = 0; state.bubble = false;
     damagePlayer(); loop();
     if (state.playerInvincible <= 0 || state.room !== ROOM.VOID) out.push('no protection after respawning');
+    return out.join('; ');
+});
+
+
+check('stick flicks move the menu and shop cursors (once per flick, repeating when held)', () => {
+    const out = [], item = () => ({ icon: '?', name: 'x', desc: '', cost: 0, status: null, action() {} });
+    state.gamePhase = 'playing'; changeRoom(ROOM.VOID); menu = null; state.shopOpen = false;
+    openMenu('TEST', () => [item(), item(), item(), item(), item(), item(), item(), item()]);
+    padWith(-1);
+    padWith(-1, 1, 0);   if (menu.cursor !== 1) out.push('right flick: cursor ' + menu.cursor);
+    padWith(-1, 1, 0.1); if (menu.cursor !== 1) out.push('held stick moved at once: ' + menu.cursor);
+    for (let i = 0; i < STICK_NAV_REPEAT_FIRST + STICK_NAV_REPEAT_EVERY; i++) padWith(-1, 1, 0);
+    if (menu.cursor !== 3) out.push('held stick did not repeat twice: ' + menu.cursor);
+    padWith(-1, 0, 0);   padWith(-1, 0, 1);   if (menu.cursor !== 5) out.push('down flick: cursor ' + menu.cursor);
+    padWith(-1, 0, 0);   padWith(-1, 0.4, 0); if (menu.cursor !== 5) out.push('a small push moved the cursor');
+    padWith(-1, 0, 0);   padWith(-1, -1, 0);  if (menu.cursor !== 4) out.push('left flick: cursor ' + menu.cursor);
+    menu = null; padWith(-1, 0, 0);
+    state.shopOpen = true; state.shopCursor = 0;
+    padWith(-1, 1, 0);   if (state.shopCursor !== 1) out.push('shop right flick: cursor ' + state.shopCursor);
+    padWith(-1, 0, 0);   padWith(-1, 0, 1); if (state.shopCursor !== 9) out.push('shop down flick: cursor ' + state.shopCursor);
+    state.shopOpen = false; padWith(-1, 0, 0); __h.pads = []; pollGamepad();
+    return out.join('; ');
+});
+
+check('radial deadzone: nothing inside the circle, then a smooth ramp from 0 to full', () => {
+    const out = [], v = (x, y) => Math.hypot(stickVector(x, y).x, stickVector(x, y).y);
+    if (v(0.2, 0.2) !== 0) out.push('diagonal wobble inside the circle moved');
+    if (!(v(0.32, 0) > 0 && v(0.32, 0) < 0.1)) out.push('just past the edge is not near 0: ' + v(0.32, 0));
+    if (!(v(0.65, 0) > 0.4 && v(0.65, 0) < 0.6)) out.push('halfway push is ' + v(0.65, 0));
+    if (Math.abs(v(1, 0) - 1) > 0.001 || v(0.7, 0.7) > 1.001) out.push('full push is off: ' + v(1, 0) + ' / ' + v(0.7, 0.7));
+    padWith(-1, 0, 0); padWith(-1, 0.4, 0);
+    const slow = padMove.x;
+    padWith(-1, 0, 0); __h.pads = []; pollGamepad();
+    if (!(slow > 0 && slow < 0.2)) out.push('walking starts at ' + slow);
+    return out.join('; ');
+});
+
+check('hints follow the device really used', () => {
+    const out = [];
+    lastInput = 'keyboard'; __h.pads = []; fire('gamepadconnected', {});
+    if (lastInput !== 'keyboard') out.push('plugging in a controller changed the hints');
+    padWith(-1); padWith(PAD.A); if (lastInput !== 'pad') out.push('a button press did not switch to pad');
+    padWith(-1); __h.pads = []; pollGamepad();
+    cfire('click', { clientX: 5, clientY: 5, preventDefault() {} }); if (lastInput !== 'keyboard') out.push('a mouse click did not switch to keyboard');
+    lastInput = 'pad'; cfire('contextmenu', { clientX: 5, clientY: 5, preventDefault() {}, button: 2 }); if (lastInput !== 'keyboard') out.push('right-click did not switch to keyboard');
+    return out.join('; ');
+});
+
+check('win and level-complete screens ignore buttons for 1 s, then Space / A / Enter work', () => {
+    const out = [];
+    const run = n => { for (let i = 0; i < n; i++) loop(); };
+    state.gamePhase = 'playing'; changeRoom(ROOM.VOID);
+    state.won = true; endScreenFrames = 0; run(5);
+    pressAction(); pressStart(); padWith(-1); padWith(PAD.A); padWith(-1);
+    if (!state.won) out.push('Play Again fired during the first second');
+    run(END_SCREEN_DELAY);
+    pressAction();
+    if (state.won) out.push('Space / A did not play again after the delay');
+    startFromIntro(true); loop();
+    state.level = 1; state.levelComplete = true; endScreenFrames = 0; run(5);
+    pressAction(); if (!state.levelComplete) out.push('level complete skipped during the first second');
+    run(END_SCREEN_DELAY); pressAction();
+    if (state.levelComplete) out.push('Space / A did not continue after the delay');
+    if (state.gamePhase !== 'playing') startFromIntro(true);
+    state.won = false; state.levelComplete = false; changeRoom(ROOM.VOID);
     return out.join('; ');
 });
 

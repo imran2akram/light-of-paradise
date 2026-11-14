@@ -16,7 +16,7 @@ const driver = String.raw`
 const CODES = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'Enter', 'KeyB', 'KeyP', 'KeyJ', 'KeyX', 'KeyC',
                'KeyO', 'KeyR', 'KeyV', 'KeyQ', 'ShiftLeft', 'KeyE', 'KeyH', 'Escape', 'KeyG', 'KeyT', 'KeyK', 'KeyF', 'KeyU', 'KeyI', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit9'];
 const ROOMS = Object.values(ROOM);
-const ev = extra => ({ preventDefault() {}, stopPropagation() {}, repeat: false, ...extra });
+const ev = extra => ({ preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}, repeat: false, ...extra });
 const fire  = (name, e) => { for (const f of (__h.listeners[name] || [])) f(e); };
 const cfire = (name, e) => { for (const f of (canvasListeners[name] || [])) f(e); };
 const errors = {};
@@ -29,6 +29,7 @@ function report(where, e) {
 function act(where, f) { try { f(); } catch (e) { report(where, e); } }
 console.error = (msg, e) => report('console.error ' + msg, e);   // loop() logs instead of crashing: still a failure here
 
+introVideo.dismiss();   // the opening video would swallow the first controller press
 startFromIntro(true);
 state.coins = 5000;
 const held = new Set();
