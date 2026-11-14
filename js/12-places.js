@@ -1,326 +1,3 @@
-// ── ENTITY FACTORIES ─────────────────────────────────────────
-function makeDigSpots() {
-    // One of each weapon, shuffled so every visit is a surprise
-    const loot = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER];
-    for (let i = loot.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [loot[i], loot[j]] = [loot[j], loot[i]];
-    }
-    // Only ONE dig spot hides the tunnel to the Underground Caves — nobody knows which
-    const tunnel = Math.floor(Math.random() * DIG_SPOTS.length);
-    return DIG_SPOTS.map((s, i) => ({ x: s.x, y: s.y, hits: 0, depth: 0, weapon: loot[i], tunnel: i === tunnel }));
-}
-
-function inAnyCave(x, y, pad = 0) {
-    return HELL_CAVES.some(c => x >= c.x - pad && x <= c.x + c.w + pad && y >= c.y - pad && y <= c.y + c.h + pad);
-}
-
-function makeWorms() {
-    const list = [];
-    const n = LEVEL_CONFIGS[state.level - 1].worms;
-    while (list.length < n) {
-        const x = 80 + Math.random() * 640, y = 90 + Math.random() * 460;
-        if (inAnyCave(x, y, 20) || Math.hypot(x - 100, y - 300) < 180) continue;   // not in caves, not on the entrance
-        list.push({ type: 'worm', x, y, r: 15, hp: 3, maxHp: 3, alive: true, hitFlash: 0, frozen: 0,
-                    hidden: true, wState: 'under', wTimer: WORM_UNDER_FRAMES * (0.5 + Math.random()), spit: WORM_SPIT_FRAMES });
-    }
-    return list;
-}
-
-function makeHell() {
-    const cfg = LEVEL_CONFIGS[state.level - 1];
-    return {
-        digSpots: makeDigSpots(),
-        foundMsg: null,   // { text, sub, color, timer } — floats up in the middle after digging
-        enemies:  [],     // bad guys in Hell (mole monsters, lava worms, mini-devils)
-        summonTimer: IMP_SUMMON_FRAMES,
-        devil: {
-            x: 660, y: 300, r: cfg.devilR, alive: true, shieldFlash: 0, frozen: 0,
-            hp: cfg.devilHp, maxHp: cfg.devilHp,
-            aiState: 'CHASE',
-            wanderTarget: { x: 400, y: 300 },
-            wanderWaitTimer: 0,
-            shootTimer: cfg.devilShootRate,
-            telegraphTimer: 0,
-            isAboutToShoot: false,
-        },
-        coins: [],   // coins only come from beating bad guys
-    };
-}
-
-function makeEnemy(type, x, y, dx, dy) {
-    const hp = ENEMY_TYPES[type].hp;
-    return { type, x, y, dx, dy, r: 16, hp, maxHp: hp, alive: true, hitFlash: 0, hopTimer: 0, frozen: 0,
-             home: { x, y, dx, dy } };   // where to respawn for the next wave
-}
-
-function makeParadise() {
-    const cfg = LEVEL_CONFIGS[state.level - 1];
-    const enemies = [
-        makeEnemy('fire',  200, 150,  1.2,  0.8),
-        makeEnemy('fire',  550, 200, -0.9,  1.1),
-        makeEnemy('fire',  350, 400,  1.0, -1.0),
-        makeEnemy('ghost', 300, 250, -0.7,  0.9),
-        makeEnemy('ghost', 600, 350,  0.8, -0.8),
-        makeEnemy('bat',   150, 350,  2.0,  1.4),
-        makeEnemy('slime', 450, 150,  0,    0),
-    ];
-    // Extra enemies for harder levels
-    for (let i = 0; i < cfg.extraFireMonsters; i++) {
-        enemies.push(makeEnemy('fire', 150 + i * 200, 100 + i * 80, 1.1 + i * 0.2, -0.9 - i * 0.15));
-        enemies.push(makeEnemy('bat',  250 + i * 150, 450 - i * 60, -1.8 - i * 0.2, 1.2));
-    }
-    for (let i = 0; i < cfg.extraGhosts; i++) {
-        enemies.push(makeEnemy('ghost', 450 + i * 150, 150 + i * 100, -0.8 - i * 0.2, 1.0 + i * 0.2));
-        enemies.push(makeEnemy('slime', 200 + i * 250, 300 + i * 50, 0, 0));
-    }
-    // The King Slime only comes on Monster Night 3
-    const king = makeEnemy('king', 580, 430, 0, 0);
-    Object.assign(king, { r: 40, minNight: 3, coinDrop: 15 });
-    enemies.push(king);
-    // The Ghost King haunts Monster Night 2
-    const ghostKing = makeEnemy('ghostking', 220, 180, 0, 0);
-    Object.assign(ghostKing, { r: 34, minNight: 2, onlyNight: 2, coinDrop: 12, phase: 0 });
-    enemies.push(ghostKing);
-    // Minecraft monsters come out every Monster Night
-    enemies.push(makeEnemy('zombie', 200, 400, 0, 0), makeEnemy('zombie', 600, 200, 0, 0), makeEnemy('creeper', 500, 450, 0, 0));
-    // A robot army marches in on nights 2 and 3
-    for (let i = 0; i < 4; i++) {
-        const bot = makeEnemy('robot', 90 + i * 42, 140, 1.3, 0);
-        Object.assign(bot, { r: 14, minNight: 2, march: true });
-        enemies.push(bot);
-    }
-    return {
-        enemies,
-        chests: [
-            { x: 330, y: 478, w: 30, h: 24, opened: false },
-            { x: 400, y: 478, w: 30, h: 24, opened: false },
-            { x: 470, y: 478, w: 30, h: 24, opened: false },
-        ],
-        villagers: VILLAGERS.map(v => ({ ...v, tx: v.x, ty: v.y, walk: 0, face: 1 })),
-        crops:     FARM_CROPS.map(c => ({ ...c, thirsty: false })),
-        birthday:  Math.random() < 0.4 ? { id: VILLAGERS[Math.floor(Math.random() * VILLAGERS.length)].id, wished: false } : null,
-        fishing:   { stage: 'idle', timer: 0 },   // 'idle' → 'waiting' → 'bite'
-        quiet:     false,     // tonight is a quiet night (no monsters)
-        lastQuiet: false,
-        ambushers: [],        // monsters that popped up in the daytime
-        ambushTimer: AMBUSH_FRAMES[0],
-        weather:   'sun',     // 'sun' | 'rain' | 'snow'
-        weatherTimer: WEATHER_FRAMES,
-        rainbowTimer: 0,
-        coins:  [],           // coins only come from beating monsters
-        phase:  'day',        // 'day' → 'dusk' → 'night' → (chest opened) → 'day'
-        timer:  dayFrames(),
-        apples: [],           // for the Mayor's apple-picking job
-        speech: null,         // { npc, text, timer } — speech bubble over a townsperson
-    };
-}
-
-function makeVoidRoom() {
-    return {
-        enemies: [],
-        coins:   [],
-    };
-}
-
-function makeSecretRoom() {
-    return {
-        treasures: [
-            // Rainbow Power is only here sometimes — otherwise a big pile of points
-            { kind: Math.random() < RAINBOW_CHANCE ? 'rainbow' : 'gem', x: 250, y: 300, picked: false },
-            { kind: 'heart',   x: 400, y: 250, picked: false },   // full hearts + Shield Bubble
-            { kind: 'star',    x: 550, y: 300, picked: false },   // Gold skin (or lots of points)
-        ],
-    };
-}
-
-function makeUnderground() {
-    const enemies = [];
-    for (let i = 0; i < 4; i++) {
-        const x = 200 + Math.random() * 480, y = 100 + Math.random() * 400;
-        enemies.push({ type: 'mole', x, y, alive: true, r: 15, hp: 5, maxHp: 5, hitFlash: 0, frozen: 0,
-                       speed: 1.1, emerge: 45 + i * 60 });
-    }
-    enemies.push(...makeWorms().slice(0, 2));
-    enemies.push(makeEnemy('zombie', 300, 450, 0, 0), makeEnemy('zombie', 500, 150, 0, 0), makeEnemy('creeper', 450, 420, 0, 0));
-    // Spiders wait on the ceiling, then drop down on a thread
-    for (let i = 0; i < 3; i++) {
-        enemies.push({ type: 'spider', x: 200 + i * 180, y: 50, ty: 180 + Math.random() * 260, r: 12, hp: 3, maxHp: 3,
-                       alive: true, hitFlash: 0, frozen: 0, hidden: true, dropTimer: 90 + Math.random() * 300, dx: 0, dy: 0 });
-    }
-    // The Cave Dragon guards the deepest cave
-    enemies.push({ type: 'dragon', x: 640, y: 300, r: 40, hp: 22, maxHp: 22, alive: true, hitFlash: 0, frozen: 0,
-                   coinDrop: 20, breath: 150, dx: 0, dy: 0.6 });
-    return {
-        enemies,
-        coins: [],
-        gems: [
-            { x: 180, y: 130, hits: 0, color: '#CC66FF', mined: false },
-            { x: 620, y: 140, hits: 0, color: '#33EEFF', mined: false },
-            { x: 560, y: 470, hits: 0, color: '#FF66AA', mined: false },
-        ],
-        // Glowing mushrooms (just for looks)
-        shrooms: Array.from({ length: 14 }, (_, i) => ({ x: 40 + (i * 97) % 720, y: 80 + (i * 211) % 480, h: (i * 53) % 360 })),
-    };
-}
-
-// ── YOUR HOME (inside whichever house you own) ────────────────
-const FURNITURE = [
-    { id: 'tv',        icon: '📺', name: 'Big TV',       cost: 15, x: 400, y: 128 },
-    { id: 'sofa',      icon: '🛋', name: 'Comfy Sofa',   cost: 10, x: 400, y: 220 },
-    { id: 'rug',       icon: '🟥', name: 'Fluffy Rug',   cost: 5,  x: 400, y: 330 },
-    { id: 'picture',   icon: '🖼', name: 'Picture',      cost: 5,  x: 250, y: 100 },
-    { id: 'lamp',      icon: '💡', name: 'Lamp',         cost: 6,  x: 690, y: 170 },
-    { id: 'bookshelf', icon: '📚', name: 'Bookshelf',    cost: 8,  x: 560, y: 118 },
-    { id: 'fishtank',  icon: '🐠', name: 'Fish Tank',    cost: 12, x: 130, y: 430 },
-];
-const HOUSE_BED    = { x: 130, y: 200 };
-const HOUSE_DOOR   = { x: 400, y: 578 };
-const CATALOGUE    = { id: 'catalogue', name: 'Furniture Catalogue', x: 290, y: 470 };
-const GARDEN_POTS  = [0, 1, 2, 3].map(i => ({ x: 560 + i * 50, y: 470 }));
-const GROW_MS      = 45000;   // a seed takes 45 s to grow (even while you're away!)
-const PET_BEDS     = [{ x: 560, y: 320 }, { x: 610, y: 320 }, { x: 660, y: 320 }, { x: 710, y: 320 }];
-
-function gardenStage(i) {
-    const t = state.garden[i];
-    if (!t) return 0;                                    // empty
-    return Math.min(3, 1 + Math.floor((Date.now() - t) / (GROW_MS / 2)));   // 1 seed, 2 sprout, 3 ready!
-}
-
-function nearHome(obj, r = 34) { return state.room === ROOM.HOUSE && Math.hypot(player.x - obj.x, player.y - obj.y) < r; }
-function nearPot() { return state.room === ROOM.HOUSE ? GARDEN_POTS.findIndex(p => Math.hypot(player.x - p.x, player.y - p.y) < 26) : -1; }
-
-// Things you can do at home with the main button
-function tryHomeAction() {
-    if (state.room !== ROOM.HOUSE) return false;
-    if (state.furniture.tv && nearHome({ x: 400, y: 150 }, 44)) { tvShow = { ch: 0, t: 0 }; return true; }
-    if (nearHome(CATALOGUE)) { openMenu('📖 FURNITURE CATALOGUE', furnitureItems); return true; }
-    if (nearHome(HOUSE_BED, 40)) {
-        state.playerHp = fullHearts();
-        spawnParticles(player.x, player.y, '#FF88AA', 12);
-        showToast('Zzz… you had a lovely nap. All hearts back! ❤', '#FFB0C8');
-        sfx('buy');
-        return true;
-    }
-    const i = nearPot();
-    if (i >= 0) {
-        const stage = gardenStage(i), p = GARDEN_POTS[i];
-        if (stage === 0) { state.garden[i] = Date.now(); spawnFloatText(p.x, p.y - 30, '🌱 Planted! Come back soon', '#88FF88', 70); sfx('dig'); }
-        else if (stage < 3) spawnFloatText(p.x, p.y - 30, 'Still growing…', '#CCFFCC', 50);
-        else {
-            state.garden[i] = 0;
-            const veg = ['🥕 Carrot', '🍓 Strawberry', '🍅 Tomato', '🌽 Corn'][i];
-            if (state.playerHp < fullHearts()) { state.playerHp++; spawnFloatText(p.x, p.y - 30, `${veg}! +1 ❤`, '#FFAA66', 80); }
-            else { addScore(20); spawnFloatText(p.x, p.y - 30, `${veg}! +20`, '#FFAA66', 80); }
-            sfx('found'); giveAward('gardener');
-        }
-        return true;
-    }
-    return false;
-}
-
-function furnitureItems() {
-    return FURNITURE.map(f => ({
-        icon: f.icon, name: f.name, desc: 'Makes your home look amazing', cost: f.cost,
-        status: state.furniture[f.id] ? 'IN YOUR HOME' : null,
-        action: () => {
-            if (state.furniture[f.id]) return;
-            if (spend(f.cost)) {
-                state.furniture[f.id] = true;
-                showToast(`${f.icon} ${f.name} added to your home!`);
-                if (FURNITURE.every(x => state.furniture[x.id])) giveAward('decorator');
-            }
-        },
-    }));
-}
-
-function paintHouse(g, R) {
-    // Wooden floor
-    for (let y = 130; y < 600; y += 20) {
-        for (let x = (y / 20) % 2 ? -40 : 0; x < 800; x += 80) {
-            g.fillStyle = `hsl(30, ${35 + R() * 10}%, ${38 + R() * 8}%)`;
-            g.fillRect(x, y, 79, 19);
-        }
-    }
-    // Wallpaper wall with a skirting board
-    g.fillStyle = '#F4E4C8'; g.fillRect(0, 46, 800, 90);
-    g.fillStyle = 'rgba(220,160,120,0.35)';
-    for (let x = 0; x < 800; x += 24) g.fillRect(x, 46, 10, 90);
-    g.fillStyle = '#8A5A34'; g.fillRect(0, 130, 800, 8);
-    // Windows
-    for (const wx of [90, 690]) {
-        const sky = g.createLinearGradient(0, 62, 0, 118);
-        sky.addColorStop(0, '#7FC8FF'); sky.addColorStop(1, '#D8F0FF');
-        g.fillStyle = sky; g.fillRect(wx - 28, 62, 56, 56);
-        g.strokeStyle = '#FFFFFF'; g.lineWidth = 4; g.strokeRect(wx - 28, 62, 56, 56);
-        g.beginPath(); g.moveTo(wx, 62); g.lineTo(wx, 118); g.moveTo(wx - 28, 90); g.lineTo(wx + 28, 90); g.stroke();
-    }
-    // Garden corner (soil)
-    g.fillStyle = '#6B8A3A'; g.fillRect(520, 430, 270, 80);
-    // Front door mat
-    g.fillStyle = '#8A3A2A'; g.fillRect(360, 560, 80, 30);
-}
-
-function drawHouse() {
-    const t = Date.now() / 1000, F = state.furniture;
-    const label = (text, x, y) => { ctx.fillStyle = 'rgba(60,30,10,0.8)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
-    // Front door (walk into it to go outside)
-    ctx.fillStyle = '#6B3E1E'; ctx.fillRect(HOUSE_DOOR.x - 22, 560, 44, 40);
-    ctx.fillStyle = '#FFD700'; ctx.fillRect(HOUSE_DOOR.x + 12, 578, 4, 4);
-    label('⬇ WAY OUT', HOUSE_DOOR.x, 556);
-    if (F.rug)     { ctx.fillStyle = '#C0304A'; ctx.beginPath(); ctx.ellipse(400, 330, 110, 45, 0, 0, Math.PI * 2); ctx.fill();
-                     ctx.strokeStyle = '#FFD0A0'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(400, 330, 95, 36, 0, 0, Math.PI * 2); ctx.stroke(); }
-    if (F.picture) { ctx.fillStyle = '#C8A040'; ctx.fillRect(222, 70, 56, 44); ctx.fillStyle = '#7FC8FF'; ctx.fillRect(228, 76, 44, 32);
-                     ctx.fillStyle = '#4CAF50'; ctx.beginPath(); ctx.moveTo(228, 108); ctx.lineTo(245, 88); ctx.lineTo(262, 108); ctx.fill();
-                     ctx.fillStyle = '#FFE066'; ctx.beginPath(); ctx.arc(262, 84, 4, 0, Math.PI * 2); ctx.fill(); }
-    if (F.bookshelf) { ctx.fillStyle = '#6B3E1E'; ctx.fillRect(530, 70, 60, 64);
-                     for (let r = 0; r < 3; r++) for (let b = 0; b < 6; b++) { ctx.fillStyle = ['#C03030', '#3060C0', '#30A050', '#E0A020', '#8040A0', '#20A0A0'][(b + r) % 6]; ctx.fillRect(534 + b * 9, 74 + r * 20, 7, 16); } }
-    if (F.tv)      { ctx.fillStyle = '#222'; ctx.fillRect(350, 84, 100, 60); ctx.fillStyle = `hsl(${(t * 40) % 360}, 60%, 55%)`; ctx.fillRect(356, 90, 88, 48);
-                     ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('📺 CARTOONS!', 400, 118);
-                     ctx.fillStyle = '#444'; ctx.fillRect(390, 144, 20, 6); }
-    if (F.sofa)    { ctx.fillStyle = '#3A6AB0'; pathRoundRect(340, 200, 120, 40, 10); ctx.fill(); ctx.fillStyle = '#4A7AC8'; pathRoundRect(345, 214, 110, 22, 8); ctx.fill(); }
-    if (F.lamp)    { ctx.fillStyle = '#555'; ctx.fillRect(688, 150, 4, 50); ctx.fillStyle = '#FFE8A0'; ctx.beginPath(); ctx.moveTo(676, 152); ctx.lineTo(704, 152); ctx.lineTo(698, 134); ctx.lineTo(682, 134); ctx.fill();
-                     const gl = ctx.createRadialGradient(690, 150, 4, 690, 150, 70); gl.addColorStop(0, 'rgba(255,230,150,0.35)'); gl.addColorStop(1, 'rgba(255,230,150,0)'); ctx.fillStyle = gl; ctx.fillRect(620, 80, 140, 140); }
-    if (F.fishtank){ ctx.fillStyle = 'rgba(80,170,230,0.7)'; ctx.fillRect(95, 405, 70, 45); ctx.strokeStyle = '#DDD'; ctx.lineWidth = 2; ctx.strokeRect(95, 405, 70, 45);
-                     for (let k = 0; k < 3; k++) { const fx = 105 + ((t * 20 + k * 22) % 50); ctx.fillStyle = ['#FF8800', '#FFDD00', '#FF4488'][k]; ctx.beginPath(); ctx.ellipse(fx, 418 + k * 10, 5, 3, 0, 0, Math.PI * 2); ctx.fill(); } }
-    // Bed (always)
-    ctx.fillStyle = '#8A5A34'; ctx.fillRect(90, 165, 80, 75);
-    ctx.fillStyle = '#FFFFFF'; ctx.fillRect(96, 170, 68, 18);
-    ctx.fillStyle = '#E05080'; ctx.fillRect(96, 190, 68, 45);
-    label('Bed — rest here', HOUSE_BED.x, 252);
-    // Catalogue
-    ctx.fillStyle = '#3A6A3A'; ctx.fillRect(CATALOGUE.x - 12, CATALOGUE.y - 9, 24, 18); ctx.fillStyle = '#FFE066'; ctx.fillRect(CATALOGUE.x - 1, CATALOGUE.y - 9, 2, 18);
-    label('📖 Furniture Catalogue', CATALOGUE.x, CATALOGUE.y + 22);
-    // Garden pots
-    GARDEN_POTS.forEach((p, i) => {
-        const st = gardenStage(i);
-        ctx.fillStyle = '#B0603A'; ctx.beginPath(); ctx.moveTo(p.x - 14, p.y - 4); ctx.lineTo(p.x + 14, p.y - 4); ctx.lineTo(p.x + 10, p.y + 14); ctx.lineTo(p.x - 10, p.y + 14); ctx.fill();
-        ctx.fillStyle = '#4A2E1A'; ctx.fillRect(p.x - 13, p.y - 6, 26, 4);
-        if (st >= 1) { ctx.strokeStyle = '#3A9A3A'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(p.x, p.y - 6); ctx.lineTo(p.x, p.y - 6 - st * 7); ctx.stroke(); }
-        if (st >= 2) { ctx.fillStyle = '#4CBF4C'; ctx.beginPath(); ctx.ellipse(p.x - 5, p.y - 14, 5, 3, -0.5, 0, Math.PI * 2); ctx.ellipse(p.x + 5, p.y - 17, 5, 3, 0.5, 0, Math.PI * 2); ctx.fill(); }
-        if (st === 3) { ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.fillText(['🥕', '🍓', '🍅', '🌽'][i], p.x, p.y - 26 + Math.sin(t * 3 + i) * 2); }
-    });
-    label('🌻 YOUR GARDEN — plant, wait, pick!', 655, 506);
-    // Pets asleep in their beds
-    let bed = 0;
-    PETS.forEach((pInfo, j) => {
-        if (!state.ownedPets[j] || j === state.activePet) return;
-        const b = PET_BEDS[bed++];
-        if (!b) return;   // only 4 beds
-        ctx.fillStyle = '#A06AC8'; ctx.beginPath(); ctx.ellipse(b.x, b.y + 8, 20, 9, 0, 0, Math.PI * 2); ctx.fill();
-        drawPetShape(pInfo.id, b.x, b.y, 1, 1);
-        ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-        ctx.fillText('z'.repeat(1 + Math.floor(t * 2 + j) % 3), b.x + 14, b.y - 16 - ((t * 10) % 8));
-    });
-    if (bed) label('💤 your pets are sleeping', 635, 346);
-    // What the button does here
-    const verb = mainBtn();
-    const i = nearPot();
-    if (nearHome(CATALOGUE)) drawSpeech(CATALOGUE, `${verb}: Buy furniture`);
-    else if (nearHome(HOUSE_BED, 40)) drawSpeech(HOUSE_BED, `${verb}: Take a nap (free heal)`);
-    else if (i >= 0) { const st = gardenStage(i); drawSpeech(GARDEN_POTS[i], `${verb}: ${st === 0 ? 'Plant a seed' : st < 3 ? 'Growing…' : 'Pick it!'}`); }
-}
-
 // ── ADVENTURE PLACES ──────────────────────────────────────────
 // ⛵ Sail from Paradise (talk to Captain Salty) to Candy Land, the Ice Kingdom or the Haunted House.
 // ☁ Climb the cloud stairs in Heaven to the Sky Castle.  🚀 Take the rocket in the Void to Space.
@@ -1312,5 +989,66 @@ function drawRocket(x, y, text) {
     ctx.fillStyle = `rgba(255,${150 + Math.random() * 100},0,0.9)`; ctx.beginPath(); ctx.moveTo(x - 7, y + 10); ctx.lineTo(x, y + 22 + Math.random() * 8); ctx.lineTo(x + 7, y + 10); ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(`🚀 ${text}`, x, y + 40);
     ctx.restore();
+}
+
+// ── MORE PLACES: doors, things to collect, belts and the museum at night ──
+const SUBPLACE_EXIT = { x: 400, y: 578 };
+function updateSubplace() {
+    const sp = SUBPLACES[state.room];
+    if (!sp || !playing()) return;
+    const P = place();
+    for (const it of P.items) {
+        if (it.got || Math.hypot(it.x - player.x, it.y - player.y) > 24) continue;
+        it.got = true; sfx('coin'); spawnParticles(it.x, it.y, '#FFE066', 10);
+        const left = P.items.filter(i => !i.got).length;
+        spawnFloatText(it.x, it.y - 20, left ? `${left} to go!` : 'GOT THEM ALL!', '#FFE066', 60);
+    }
+    if (!P.prize && P.items.length && P.items.every(i => i.got)) {
+        P.prize = true; state.coins += 60; addScore(150); giveAward('collector'); sfx('win'); spawnConfettiAt(player.x, player.y);
+        showToast(`🏆 You found all ${sp.count} ${sp.item}! +🪙60`, '#FFD700', 220);
+    }
+    if (state.room === ROOM.FACTORY) {   // conveyor belts!
+        FACTORY_BELTS.forEach((y, i) => { if (Math.abs(player.y - y) < 18) player.x = Math.max(18, Math.min(782, player.x + (i % 2 ? -1.6 : 1.6))); });
+    }
+    if (state.room === ROOM.CANDYVOLCANO && Math.random() < 0.01) {   // 🌋 the volcano ERUPTS sweets (and coins!)
+        for (let k = 0; k < 4; k++) { const c = reachablePoint(300 + Math.random() * 200, 120 + Math.random() * 300); P.coins.push({ x: c.x, y: c.y, picked: false }); }
+        spawnParticles(400, 70, '#FF66AA', 20); triggerShake(4);
+    }
+    if (state.room === ROOM.MUSEUM && P.night > 0 && --P.night === 0) {   // 🌙 the museum comes alive!
+        P.enemies.push(e0('bonesaur', 180, 160), e0('bonesaur', 620, 160), e0('bonesaur', 180, 440), e0('bonerex', 620, 440, { r: 36, coinDrop: 30 }));
+        showToast('🌙 NIGHT AT THE MUSEUM! The dinosaurs came ALIVE!', '#CCCCFF', 240); sfx('dragonRoar'); triggerShake(14);
+    }
+}
+function drawSubplaces() {
+    const verb = mainBtn();
+    const t = Date.now() / 1000;
+    for (const [id, sp] of Object.entries(SUBPLACES)) {   // doors in the places you know
+        if (state.room !== sp.parent || sp.door.x < 0) continue;   // some places have no door (time machine, shrink ray)
+        const { x, y } = sp.door;
+        if (id === 'secretroom') { if (Math.sin(t * 3) > 0.6) drawStar(x, y, 4, '#FFE066'); continue; }   // 🕵 shhh — just a little twinkle
+        ctx.save(); ctx.fillStyle = 'rgba(40,20,10,0.85)'; ctx.fillRect(x - 16, y - 22, 32, 40);
+        ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(x + 9, y, 2.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+        ctx.fillText(sp.doorLabel, Math.max(60, Math.min(740, x)), y - 28); ctx.restore();
+    }
+    const sp = SUBPLACES[state.room];
+    if (!sp) return;
+    const P = place();
+    for (const it of P.items) {
+        if (it.got) continue;
+        ctx.save(); ctx.font = '22px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.shadowColor = '#FFE066'; ctx.shadowBlur = 10;
+        ctx.fillText(it.icon, it.x, it.y + Math.sin(t * 3 + it.x) * 3); ctx.restore();
+    }
+    ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
+    ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Go back', SUBPLACE_EXIT.x, 556);
+    const left = P.items.filter(i => !i.got).length;
+    if (!P.items.length) return;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(320, 76, 160, 20);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 11px Arial'; ctx.fillText(left ? `Find ${left} more ${sp.item}` : `✅ All ${sp.item} found!`, 400, 90);
+    if (state.room === ROOM.MUSEUM && P.night > 0) { ctx.fillStyle = '#665'; ctx.fillText(`The museum closes in ${Math.ceil(P.night / 60)}s… 🌙`, 400, 112); }
+    if (state.room === ROOM.MUSEUM && P.night === 0) { ctx.fillStyle = 'rgba(10,10,40,0.35)'; ctx.fillRect(0, 46, 800, 554); }
+    if (state.room === ROOM.MUSEUM && P.night > 0) for (const [x, y] of [[180, 160], [620, 160], [180, 440], [620, 440]]) {
+        ctx.save(); ctx.filter = 'grayscale(1) brightness(1.5)'; ctx.font = '50px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🦖', x, y); ctx.restore();
+    }
 }
 
