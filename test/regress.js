@@ -237,6 +237,58 @@ check('Ctrl / Cmd / Alt shortcuts are not game buttons', () => {
     return bad ? 'a shortcut pressed a game key' : worked ? '' : 'plain B no longer builds';
 });
 
+
+check('New Game asks first when there is a save (keyboard, tap, controller) and Keep leaves it intact', () => {
+    const out = [];
+    state.gamePhase = 'playing'; state.coins = 77; saveGame();
+    const saved = JSON.stringify(savedGame), stored = localStorage.getItem('lop_save');
+    if (!savedGame) return 'no save to test with';
+    const toTitle = () => { menu = null; state.gamePhase = 'intro'; };
+    // keyboard N
+    toTitle(); fire('keydown', keyEv('KeyN'));
+    if (!menu || state.gamePhase !== 'intro') out.push('N started over without asking');
+    if (savedGame === null || localStorage.getItem('lop_save') !== stored) out.push('save touched before the answer');
+    if (menu && menu.cursor !== 0) out.push('default is not Keep');
+    fire('keydown', keyEv('Space'));   // the default: Keep my game
+    if (menu || state.gamePhase !== 'intro' || JSON.stringify(savedGame) !== saved || localStorage.getItem('lop_save') !== stored) out.push('Keep changed something');
+    // tap on the New Game button
+    toTitle(); handleTap(NEW_GAME_BTN.x + 5, NEW_GAME_BTN.y + 5);
+    if (!menu) out.push('tap started over without asking');
+    else if (handleTap(menu ? menuItemRect(0).x + 5 : 0, menuItemRect(0).y + 5) !== true || menu || savedGame === null) out.push('tapping Keep failed');
+    // controller X, then B backs out
+    const padWith = b => { __h.pads = [{ connected: true, index: 0, buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === b, value: 0 })), axes: [0, 0, 0, 0], id: 'pad' }]; pollGamepad(); };
+    toTitle(); padWith(-1);   // (a neutral poll first: the first one after a pause only syncs)
+    padWith(PAD.X);
+    if (!menu) out.push('controller X started over without asking');
+    padWith(-1); padWith(PAD.B); __h.pads = []; pollGamepad();
+    if (menu || savedGame === null) out.push('controller B did not back out');
+    // Start over really starts over
+    toTitle(); fire('keydown', keyEv('KeyN')); fire('keydown', keyEv('ArrowRight')); fire('keydown', keyEv('ArrowDown')); menuSelect(1);
+    if (savedGame !== null || localStorage.getItem('lop_save') !== null || state.gamePhase !== 'playing') out.push('Start over did not start over');
+    // no save: no question
+    toTitle(); fire('keydown', keyEv('KeyN'));
+    if (menu || state.gamePhase !== 'playing') out.push('asked even with no save');
+    return out.join('; ');
+});
+
+check('hotbar and job survive a reload; old or broken saves still load', () => {
+    const out = [];
+    changeRoom(ROOM.PARADISE); startJob(makeJob('farmer')); state.hotbar = 5; saveGame();
+    const wantCount = state.job.count;
+    state.gamePhase = 'intro'; startFromIntro();
+    if (state.hotbar !== 5) out.push('hotbar lost');
+    if (!state.job || state.job.kind !== 'water' || paradise.crops.filter(c => c.thirsty).length !== wantCount) out.push('job not restored with its thirsty crops');
+    for (const bad of [undefined, { kind: 'nope' }, { kind: 'apples', giver: 'x', pay: 1 }, 'text']) {
+        const d = JSON.parse(JSON.stringify(savedGame)); delete d.hotbar; if (bad === undefined) delete d.job; else d.job = bad; savedGame = d;
+        state.gamePhase = 'intro'; startFromIntro();
+        if (state.job || state.hotbar !== 0) out.push('broken save gave job ' + JSON.stringify(state.job) + ' hotbar ' + state.hotbar);
+    }
+    saveEverything(); document.hidden = true; fire('visibilitychange', {}); document.hidden = false; fire('visibilitychange', {});
+    clearSave(); fire('pagehide', {});
+    if (!savedGame) out.push('pagehide did not save');
+    return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;

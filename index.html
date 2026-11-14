@@ -1443,7 +1443,8 @@ function shopSelect(i) {
 let menu = null;   // { title, items, cursor }
 const MENU = { X: 130, Y: 70, W: 540, H: 430 };
 
-function openMenu(title, items) { menu = { title, items, cursor: 0 }; }
+// opts (optional): hint = the small line under the title, h = a shorter panel for menus with only a few items
+function openMenu(title, items, opts = {}) { menu = { title, items, cursor: 0, hint: opts.hint, h: opts.h || MENU.H }; }
 function menuItemRect(i) {
     const col = i % 2, row = Math.floor(i / 2);
     const tall = menu && menu.items().length > 10;   // squeeze rows when there's a lot to show
@@ -1505,8 +1506,8 @@ function pressStart() {
 function handleTap(x, y) {
     if (Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < MUTE_BTN.r * 1.5) { toggleMute(); return true; }
     if (state.gamePhase === 'playing' && Math.hypot(x - SETTINGS_BTN.x, y - SETTINGS_BTN.y) < SETTINGS_BTN.r * 1.4) { openSettings(); return true; }
-    if (state.gamePhase === 'intro') {
-        if (savedGame && inRect(x, y, NEW_GAME_BTN)) startFromIntro(true);
+    if (state.gamePhase === 'intro' && !menu) {   // (the New Game question is a menu: it gets the taps)
+        if (savedGame && inRect(x, y, NEW_GAME_BTN)) askNewGame();
         else startFromIntro();
         return true;
     }
@@ -1519,7 +1520,7 @@ function handleTap(x, y) {
     if (menu) {
         const list = menu.items();
         for (let i = 0; i < list.length; i++) if (inRect(x, y, menuItemRect(i))) { menuSelect(i); return true; }
-        if (!inRect(x, y, { x: MENU.X, y: MENU.Y, w: MENU.W, h: MENU.H }) || y < MENU.Y + 40) menu = null;   // tap outside / title bar closes
+        if (!inRect(x, y, { x: MENU.X, y: MENU.Y, w: MENU.W, h: menu.h }) || y < MENU.Y + 40) menu = null;   // tap outside / title bar closes
         return true;
     }
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
@@ -1591,7 +1592,7 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyC' && state.room === ROOM.PARADISE && !state.shopOpen) { /* handled by walking up to the table */ }
     if (e.code === 'KeyH' && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
     if (e.code === 'Escape') state.awardsOpen = false;
-    if (e.code === 'KeyN' && state.gamePhase === 'intro') startFromIntro(true);
+    if (e.code === 'KeyN' && state.gamePhase === 'intro') askNewGame();
     if (e.code === 'KeyG') dance();
     if (e.code === 'KeyT') useGodPower();
     if (e.code === 'KeyK') toggleControlsPanel();
@@ -1649,7 +1650,10 @@ function resumeGame() {
     resetFrameClock();
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden) pauseGame(); else resumeGame(); });
+// Closing a tab, switching apps or locking a phone can happen between the 5-second saves
+function saveEverything() { saveGame(); if (state.gamePhase === 'playing' && !state.won) saveWorld(); lastSave = Date.now(); }
+window.addEventListener('pagehide', saveEverything);
+document.addEventListener('visibilitychange', () => { if (document.hidden) { saveEverything(); pauseGame(); } else resumeGame(); });
 window.addEventListener('blur', pauseGame);
 window.addEventListener('focus', resumeGame);
 
@@ -3610,7 +3614,7 @@ function pollGamepad() {
     if (was[PAD.RB] && !held[PAD.RB]) meleeRelease();
     if (pressed(PAD.LB)) startBlock();
     if (was[PAD.LB] && !held[PAD.LB]) stopBlock();
-    if (pressed(PAD.X) && state.gamePhase === 'intro') startFromIntro(true);
+    if (pressed(PAD.X) && state.gamePhase === 'intro') askNewGame();
     if (pressed(PAD.X) && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
     if (state.awardsOpen && pressed(PAD.B)) state.awardsOpen = false;
     if (pressed(PAD.START)) pressStart();
@@ -5633,7 +5637,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt', 'mirrorShield', 'saberColor', 'heroSuit'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt', 'mirrorShield', 'saberColor', 'heroSuit', 'hotbar', 'job'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -5813,6 +5817,15 @@ function rollBirthLuck() {
     }
 }
 
+// "New Game" would erase the save, so ask first (a plain two-choice menu works with keys, taps and a controller)
+function askNewGame() {
+    if (!savedGame) { startFromIntro(true); return; }
+    openMenu('Start over? Your game will be erased.', () => [
+        { icon: '💾', name: 'Keep my game', desc: 'Go back', cost: 0, status: null, action: () => { menu = null; } },
+        { icon: '✦',  name: 'Start over',   desc: 'Erase it and begin again', cost: 0, status: null, action: () => { menu = null; startFromIntro(true); } },
+    ], { hint: lastInput === 'pad' ? 'A to choose, B to go back' : lastInput === 'touch' ? 'Tap to choose' : 'Arrows + SPACE to choose', h: 190 });
+}
+
 function startFromIntro(fresh = false) {
     if (fresh || !savedGame) {
         if (fresh) { clearSave(); worldBlocks = {}; saveWorld(); }
@@ -5833,11 +5846,13 @@ function startFromIntro(fresh = false) {
         for (const [k, v] of Object.entries({ dirt: 10, planks: 10, stone: 5, glass: 5 })) state.inv[k] = (state.inv[k] || 0) + v;
     }
     while (state.petXp.length < PETS.length) state.petXp.push(0);
+    state.hotbar = Math.max(0, Math.min(HOTBAR.length - 1, Math.floor(Number(state.hotbar)) || 0));   // old saves have none; a bad one must not crash the build code
     const cfg = LEVEL_CONFIGS[state.level - 1];
     state.ammoMax = cfg.ammoMax + state.ammoBonus;
     state.ammo    = state.ammoMax;
     hell = makeHell(); paradise = makeParadise(); voidRoom = makeVoidRoom();
     paradise.chests.forEach((c, i) => { if (i < state.paradiseClearCount) { c.visible = true; c.opened = true; } });
+    restoreJob();
     changeRoom(ROOM.VOID);
     showToast(`💾 Welcome back! Level ${state.level}, 🪙${state.coins}`, '#88EEFF');
     if (state.demigod === undefined) rollBirthLuck();   // saves from before this get one roll too
@@ -8656,14 +8671,14 @@ function meleeItems() {
 
 function drawMenu() {
     if (!menu) return;
-    const { X, Y, W, H } = MENU;
+    const { X, Y, W } = MENU, H = menu.h;
     ctx.save();
     ctx.fillStyle = 'rgba(12,8,24,0.97)'; ctx.fillRect(X, Y, W, H);
     ctx.strokeStyle = '#FFB347'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
     ctx.fillStyle = '#FFB347'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
     ctx.fillText(menu.title, 400, Y + 26);
     ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px Arial';
-    ctx.fillText(`Your coins: 🪙${state.coins}   ·   ${lastInput === 'pad' ? 'A to buy, B to close' : lastInput === 'touch' ? 'Tap to buy, tap the title to close' : 'Arrows + SPACE (or click) to buy, E to close'}`, 400, Y + 44);
+    ctx.fillText(menu.hint || `Your coins: 🪙${state.coins}   ·   ${lastInput === 'pad' ? 'A to buy, B to close' : lastInput === 'touch' ? 'Tap to buy, tap the title to close' : 'Arrows + SPACE (or click) to buy, E to close'}`, 400, Y + 44);
     menu.items().forEach((it, i) => {
         const r = menuItemRect(i);
         const cursor = i === menu.cursor && lastInput !== 'touch';
@@ -8678,7 +8693,7 @@ function drawMenu() {
         ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.font = '10px Arial'; ctx.fillText(it.desc, r.x + 56, r.y + 36);
         ctx.font = 'bold 11px Arial';
         ctx.fillStyle = it.status ? '#FFD700' : state.coins >= (it.cost || 0) ? '#FFD700' : '#886';
-        ctx.fillText(it.status ? '✓ ' + it.status : it.cost ? `🪙${it.cost}` : 'Need more…', r.x + 56, r.y + 53);
+        ctx.fillText(it.status ? '✓ ' + it.status : it.cost ? `🪙${it.cost}` : '', r.x + 56, r.y + 53);
     });
     ctx.restore();
 }
@@ -8747,6 +8762,16 @@ function startJob(job) {
         const crops = [...paradise.crops].sort(() => Math.random() - 0.5);
         crops.forEach((c, i) => { c.thirsty = i < job.count; });
     }
+}
+
+// A saved job comes back only if it is whole; startJob() puts the apples and thirsty crops back in the town
+const JOB_KINDS = ['deliver', 'water', 'fish', 'apples'];
+function restoreJob() {
+    const j = state.job;
+    const ok = j && typeof j === 'object' && JOB_KINDS.includes(j.kind) && typeof j.giver === 'string' && Number.isFinite(j.pay)
+               && (j.kind === 'deliver' ? Array.isArray(j.stops) && j.stops.length > 0 : Number.isFinite(j.count) && Number.isFinite(j.got));
+    if (!ok) { state.job = null; return; }
+    startJob(j);
 }
 
 // What pressing the button will do, shown above the townsperson
@@ -12326,6 +12351,7 @@ function draw() {
 
     if (state.gamePhase === 'intro') {
         drawIntro();
+        drawMenu();
         drawPaused();
         ctx.restore();
         return;
