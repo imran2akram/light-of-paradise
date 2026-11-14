@@ -289,6 +289,35 @@ check('hotbar and job survive a reload; old or broken saves still load', () => {
     return out.join('; ');
 });
 
+
+check('walking into a room is safe for the first second (night boss at the Paradise arrival, Treehouse, Under the bed)', () => {
+    const out = [];
+    const hurtIn = (room, prep) => {
+        changeRoom(room);
+        if (prep) prep();
+        state.playerHp = 3; state.bubble = false; state.invisible = 0; settings.creative = false;
+        for (let i = 0; i < 60; i++) loop();
+        return state.playerHp < 3 || state.room !== room;
+    };
+    if (hurtIn(ROOM.PARADISE, () => {
+        paradise.phase = 'night';
+        const king = makeEnemy('king', 400, 330, 0, 0); Object.assign(king, { r: 40, coinDrop: 15 });
+        const ghost = makeEnemy('ghostking', 400, 290, 0, 0); Object.assign(ghost, { r: 34, phase: 0 });
+        paradise.enemies = [king, ghost];
+    })) out.push('hurt on arriving in Paradise at night');
+    for (const room of [ROOM.TREEHOUSE, ROOM.UNDERBED]) {
+        for (let n = 0; n < 10; n++) {
+            changeRoom(room);
+            for (const e of place().enemies) if (Math.hypot(e.x - player.x, e.y - player.y) < ENTRY_SAFE_DISTANCE - 1) { out.push(room + ': a monster starts ' + Math.round(Math.hypot(e.x - player.x, e.y - player.y)) + ' px away'); n = 99; break; }
+        }
+        if (hurtIn(room)) out.push('hurt on arriving in ' + room);
+    }
+    changeRoom(ROOM.VOID); state.playerHp = 1; state.playerInvincible = 0; state.bubble = false;
+    damagePlayer(); loop();
+    if (state.playerInvincible <= 0 || state.room !== ROOM.VOID) out.push('no protection after respawning');
+    return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;

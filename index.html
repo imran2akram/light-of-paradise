@@ -6536,12 +6536,13 @@ function damagePlayer() {
 // loops over the room's projectiles and enemies, and changeRoom() replaces
 // those arrays, so switching rooms mid-loop crashed the game (a frozen screen).
 let pendingRespawn = false;
+const RESPAWN_SAFE_FRAMES = 120;   // a little longer than a room entry: you also lost your weapons
 function respawnPlayer() {
     const maxHp = fullHearts();
     state.power           = POWER.NONE;
     state.powerTier       = 1;
     state.playerHp        = maxHp;
-    state.playerInvincible = 120;
+    state.playerInvincible = RESPAWN_SAFE_FRAMES;
     pendingRespawn = true;
 }
 
@@ -6649,6 +6650,8 @@ function spawnAmbush() {
     sfx('worm');
 }
 
+const ENTRY_SAFE_FRAMES   = 90;    // 1.5 s nobody can hurt you after walking into a room (a monster may be standing at the door)
+const ENTRY_SAFE_DISTANCE = 120;   // monsters in a fresh mini-world start at least this far from where you arrive
 function changeRoom(dest) {
     if (state.gamePhase === 'playing') sfx('portal');
     state.room = dest;
@@ -6697,6 +6700,7 @@ function changeRoom(dest) {
     if (PLACES[dest]) {
         placeState[dest] = PLACES[dest].make();
         [player.x, player.y] = PLACES[dest].spawn;
+        keepMonstersAwayFromArrival(placeState[dest].enemies);
         if (dest !== ROOM.SHIP) {
             state.placesSeen = state.placesSeen || {};
             state.placesSeen[dest] = true;
@@ -6709,6 +6713,19 @@ function changeRoom(dest) {
     placePetBesidePlayer();
     for (const f of activeFriends()) { f.x = player.x + 30 * (f.n - 1); f.y = player.y; }   // friends come along through portals
     if (state.gamePhase === 'playing') maybeMiniBoss();
+    state.playerInvincible = Math.max(state.playerInvincible, ENTRY_SAFE_FRAMES);
+}
+
+// Slide any monster that starts too close to the arrival point straight away from it (inside the room)
+function keepMonstersAwayFromArrival(list) {
+    for (const e of list || []) {
+        let dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy);
+        if (d >= ENTRY_SAFE_DISTANCE) continue;
+        if (d < 1) { dx = 0; dy = -1; d = 1; }   // exactly on top of you: up
+        const nx = Math.max(40, Math.min(760, player.x + dx / d * ENTRY_SAFE_DISTANCE)), ny = Math.max(80, Math.min(560, player.y + dy / d * ENTRY_SAFE_DISTANCE));
+        if (e.home) { e.home.x += nx - e.x; e.home.y += ny - e.y; }   // its patrol spot moves with it
+        e.x = nx; e.y = ny;
+    }
 }
 
 // ── UPDATE: PLAYER ────────────────────────────────────────────
