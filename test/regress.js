@@ -399,6 +399,40 @@ check('win and level-complete screens ignore buttons for 1 s, then Space / A / E
     return out.join('; ');
 });
 
+
+check('blocks cannot be placed on portals, exits, doors, the rocket, race master, Boss Rush gate or shop', () => {
+    const out = [], cellOf = o => [Math.floor(o.x / CELL), Math.floor(o.y / CELL)];
+    state.gamePhase = 'playing'; settings.creative = false;
+    for (const room of Object.values(ROOM)) {
+        changeRoom(room); player.x = -500; player.y = -500; goldenPortal = null;
+        // 1. everything we know about must be refused
+        const spots = [...(PORTALS[room] || []), ...keepClearSpots(room)];
+        if (room === ROOM.PARADISE) spots.push(...townNpcs());
+        for (const o of spots) {
+            const [cx, cy] = o.w ? cellOf({ x: o.x + o.w / 2, y: o.y + o.h / 2 }) : cellOf(o);
+            if (canPlaceAt(cx, cy)) out.push(room + ': can build on ' + Math.round(o.x) + ',' + Math.round(o.y));
+        }
+        // 2. independent: no cell you may build on is close enough to set off an exit
+        let hits = 0;
+        for (let cy = 2; cy < 25 && hits < 3; cy++) for (let cx = 0; cx < 34; cx++) {
+            if (state.room !== room) changeRoom(room);
+            if (!canPlaceAt(cx, cy)) continue;
+            player.x = cx * CELL + CELL / 2; player.y = cy * CELL + CELL / 2;
+            if (updatePlaceExits() || state.room !== room) { hits++; out.push(room + ': an exit can be reached through buildable cell ' + cx + ',' + cy); }
+            player.x = -500; player.y = -500;
+        }
+        if (state.room !== room) changeRoom(room);
+    }
+    // the feedback for a refused block: a red cross, and nothing is used up
+    changeRoom(ROOM.VOID); state.hotbar = 0; state.inv.dirt = 5; state.buildMode = true;
+    player.x = ROCKET.x + 90; player.y = ROCKET.y; floatTexts.length = 0;
+    const [rx, ry] = cellOf(ROCKET); buildAt(rx, ry);
+    if (state.inv.dirt !== 5 || blockAtCell(rx, ry)) out.push('a block was placed on the rocket');
+    if (!floatTexts.some(t => t.text === '✖')) out.push('no cross shown when a block is refused');
+    state.buildMode = false;
+    return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;

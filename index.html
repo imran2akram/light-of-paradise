@@ -6057,6 +6057,35 @@ function isCreative() { return settings.creative || state.room === ROOM.HEAVEN; 
 function invCount(type) { return state.inv[type] || 0; }
 
 // Is it OK to put a block here? (not on you, portals, people, doors, chests or dig spots)
+// ── KEEP CLEAR: things you walk up to or into must never be buried under blocks ──
+// A lazy list (the constants live in sections further down the file). Doors, stairs and boats also
+// get a ring, because their trigger is "stand near it". Portals, NPCs, dig spots etc. are checked in canPlaceAt().
+const KEEP_CLEAR_R = 36;   // a block whose middle is closer than this to a spot is refused
+function keepClearSpots(room = state.room) {
+    const list = [], at = (rooms, o) => { if ([].concat(rooms).includes(room)) list.push(o); };
+    at(ROOM.VOID, ROCKET);  at(ROOM.SPACE, ROCKET);
+    at(ROOM.VOID, RACE_MASTER);  at(ROOM.VOID, ARENA_GATE);  at(ROOM.ARENA, ARENA_EXIT);
+    at(ROOM.VOID, SHOP_BTN);  at(ROOM.VOID, AWARDS_BTN);   // the shop and awards spots (on-screen buttons: rectangles)
+    at(ROOM.VOID, MALL_DOOR);  at(ROOM.MALL, MALL_EXIT);  at(ROOM.TOY, TOY_EXIT);
+    at(ROOM.HOUSE, HOUSE_DOOR);
+    at(ROOM.HEAVEN, SKY_STAIRS);  at(ROOM.HEAVEN, BALLOON);  at(ROOM.CLOUDCITY, BALLOON);  at(ROOM.HEAVEN, ENDING_DOOR);  at(ROOM.HEAVEN, HEAVEN_OLYMPUS);
+    at(ROOM.SKY, { x: 400, y: 575 });
+    at(ROOM.GREECE, MAZE_DOOR);  at(ROOM.GREECE, GORGON_DOOR);  at(ROOM.GREECE, CHARON);
+    at([ROOM.GORGON, ROOM.UNDERWORLD, ROOM.CHESS, ROOM.LIBRARY], SCHOOL_EXIT);
+    at(ROOM.CAMP, CAMP_EXIT);  at(ROOM.CAMP, OLYMPUS_STAIRS);  at(ROOM.OLYMPUS, OLYMPUS_EXIT);
+    at([ROOM.STADIUM, ROOM.SNOWFORT], SUBPLACE_EXIT);
+    if (PLACES[room] && PLACES[room].island) list.push(DOCK);
+    for (const [id, sp] of Object.entries(SUBPLACES)) {   // every mini-world's door, and the way back out of it
+        if (sp.parent === room) list.push(sp.door);
+        if (id === room) list.push(SUBPLACE_EXIT);
+    }
+    return list;
+}
+function onKeepClearSpot(x, y) {
+    return keepClearSpots().some(o => o.w ? inRect(x, y, { x: o.x - CELL / 2, y: o.y - CELL / 2, w: o.w + CELL, h: o.h + CELL })
+                                          : Math.hypot(o.x - x, o.y - y) < KEEP_CLEAR_R);
+}
+
 function canPlaceAt(cx, cy) {
     const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
     if (x < 0 || x > 800 || y < 56 || y > 600) return false;
@@ -6071,6 +6100,7 @@ function canPlaceAt(cx, cy) {
     }
     if (state.room === ROOM.HELL) for (const d of hell.digSpots) if (Math.hypot(d.x - x, d.y - y) < 30) return false;
     if (state.room === ROOM.HEAVEN && Math.hypot(WISH_ANGEL.x - x, WISH_ANGEL.y - y) < 34) return false;
+    if (onKeepClearSpot(x, y)) return false;
     return true;
 }
 
