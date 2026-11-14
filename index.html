@@ -2905,7 +2905,7 @@ function miniGameItems() {
         go('🙈', 'Hide & Seek',      'Find 3 kids hiding in Paradise!',      startHideSeek),
         go('🎣', 'Fishing Contest',  'Catch more fish than Old Tom',         startFishingContest),
         go('🗺', 'Mega Treasure Hunt', 'Follow 5 clues to big treasure',       () => { if (state.treasure) showToast('🗺 Finish your treasure map first!', '#FFE8A0', 150); else startTreasureMap(5); }),
-        go('⚽', 'Football',         'Score goals past the goalie!',         startFootball),
+        go('⚽', 'Football',         'Score goals with your team!',          startFootball),
         go('☃', 'Snowball Fight',   'Hit all the snowball kids!',           () => { changeRoom(ROOM.SNOWFORT); miniGame = { kind: 'snow' }; showToast('☃ SNOWBALL FIGHT! Hit every kid!', '#AADDFF', 200); }),
         go('💃', 'Dance Battle',     'Press the arrows in time!',            startDanceBattle),
         go('👨‍🍳', 'Cooking Contest', 'Cook a dish for the judges',          startCooking),
@@ -2931,11 +2931,179 @@ function startFishingContest() {
     miniGame = { kind: 'fish', timer: 3600, start: awards.fish || 0, tom: 2 + Math.floor(Math.random() * 3) };
     showToast(`🎣 FISHING CONTEST! Old Tom will catch ${miniGame.tom}. Catch more in 60 s!`, '#88CCFF', 240);
 }
-// ⚽ Football: push the ball into the goal on the right
+// ⚽ Football: you and a helper (blue) against two defenders (red) and a goalie (yellow). Score in the goal on the right
+const FB_PITCH        = { x0: 34, x1: 766, y0: 108, y1: 568 };   // where the computer players may stand: inside the white lines, under the score bar
+const FB_GOAL         = { x: 780, y0: 260, y1: 400 };             // the goal mouth
+const FB_KICK_SPEED   = 8;      // how hard walking into the ball kicks it (this was always so)
+const FB_OPP_SPEED    = 2.3;    // red defenders walk slower than you (4), so a child can always outrun them
+const FB_MATE_SPEED   = 3;      // your blue helper is a bit quicker than the defenders, but still slower than you
+const FB_REACT        = 15;     // defenders only look where the ball is 4 times a second, so a quick dribble fools them
+const FB_RECOVER      = 80;     // after a tackle or a kick a defender stands still for this long: time to win the ball back
+const FB_MATE_RECOVER = 45;     // the helper rests a little after passing or shooting
+const FB_AIM_PAUSE    = 24;     // the helper holds the ball for a moment before kicking, so you can see what is coming
+const FB_TOUCH        = 22;     // how close a computer player must be to reach the ball
+const FB_TACKLE       = 26;     // how close to you a defender must be to take a ball you are dribbling
+const FB_DRIBBLE      = 36;     // the ball is "yours" when it is this close to you
+const FB_APART        = 28;     // computer players push each other apart when closer than this
+const FB_STUCK_FRAMES = 120;    // a still ball with 2 players on it for 2 s gets popped loose
+const FB_PASS_CONE    = 0.45;   // kick roughly at your helper (within about 26 degrees) and the pass flies straight to them
+const FB_SHOOT_X      = 520;    // the helper shoots when the ball reaches them this close to goal, and passes back otherwise
+const FB_MATE_CHASE   = 90;     // the helper only runs for a loose ball this close, so you get the kick-off
+const FB_KIT          = { you: '#3A7BFF', them: '#E8392F', keeper: '#FFD23A' };   // team colours
+const FB_KICKOFF      = { ball: [400, 330], mate: [520, 330], opps: [[580, 250], [580, 410]] };
+function footballActor(x, y) { return { x, y, walk: 0, recover: 0, react: 0, tx: x, ty: y }; }
+function footballKickoff(G) {
+    Object.assign(G.ball, { x: FB_KICKOFF.ball[0], y: FB_KICKOFF.ball[1], vx: 0, vy: 0 });
+    G.held = false; G.stuck = 0;
+    Object.assign(G.mate, footballActor(...FB_KICKOFF.mate), { hold: 0 });
+    G.opps.forEach((o, i) => Object.assign(o, footballActor(...FB_KICKOFF.opps[i])));
+}
 function startFootball() {
     changeRoom(ROOM.STADIUM);
-    miniGame = { kind: 'ball', timer: 3600, goals: 0, ball: { x: 400, y: 330, vx: 0, vy: 0 }, keeper: 330 };
-    showToast('⚽ FOOTBALL! Run into the ball to kick it. Score in the goal on the right!', '#FFFFFF', 240);
+    miniGame = { kind: 'ball', timer: 3600, goals: 0, ball: { x: 400, y: 330, vx: 0, vy: 0 }, keeper: 330, mate: {}, opps: [{}, {}], presser: 0, held: false, stuck: 0, said: 0 };
+    footballKickoff(miniGame);
+    showToast('⚽ FOOTBALL! Kick it to your 🔵 friend!', '#FFFFFF', 240);
+}
+// Move a computer player, never through blocks or off the pitch
+function footballMove(a, dx, dy) {
+    const nx = Math.max(FB_PITCH.x0, Math.min(FB_PITCH.x1, a.x + dx)), ny = Math.max(FB_PITCH.y0, Math.min(FB_PITCH.y1, a.y + dy));
+    if (!playerHitsBlock(nx, a.y)) a.x = nx;
+    if (!playerHitsBlock(a.x, ny)) a.y = ny;
+}
+function footballSeek(a, tx, ty, speed) {
+    const d = Math.hypot(tx - a.x, ty - a.y);
+    if (d < 4) return;
+    const step = Math.min(speed, d);
+    footballMove(a, (tx - a.x) / d * step, (ty - a.y) / d * step);
+    a.walk += 0.3;
+}
+function footballSay(G, x, y, text, color) { if (G.said <= 0) { spawnFloatText(x, y - 28, text, color, 50); G.said = 40; } }   // one shout at a time, so words don't pile up
+function footballKick(G, vx, vy) { G.ball.vx = vx; G.ball.vy = vy; G.held = false; sfx('boing'); }
+function footballScored(G, byMate) {
+    G.goals++; giveAward('goal'); sfx('win'); spawnConfettiAt(760, G.ball.y); showToast(byMate ? '⚽ GOAL! Great pass!' : '⚽ GOOOOOAL!!!', '#FFE066', 120);
+    footballKickoff(G);
+}
+function updateFootball(G) {
+    const b = G.ball, m = G.mate, opps = G.opps;
+    const humans = [{ x: player.x, y: player.y }, ...activeFriends().filter(f => !f.down)];
+    const actors = [m, ...opps];
+    if (G.said > 0) G.said--;
+    // You kick by walking into the ball. A kick toward your helper becomes a neat pass.
+    for (const k of humans) {
+        const d = Math.hypot(b.x - k.x, b.y - k.y);
+        if (d >= 26 || d === 0) continue;
+        let ux = (b.x - k.x) / d, uy = (b.y - k.y) / d, speed = FB_KICK_SPEED;
+        const md = Math.hypot(m.x - b.x, m.y - b.y);
+        if (md > 60 && md < 450 && ux * (m.x - b.x) / md + uy * (m.y - b.y) / md > Math.cos(FB_PASS_CONE)) {
+            ux = (m.x - b.x) / md; uy = (m.y - b.y) / md; speed = Math.max(4, Math.min(9, md * 0.032 + 2.5));
+            footballSay(G, b.x, b.y, 'Pass!', FB_KIT.you);
+        }
+        footballKick(G, ux * speed, uy * speed);
+    }
+    // Red defenders: the nearer one presses the ball, the other covers the space in front of the goal
+    const near0 = Math.hypot(opps[0].x - b.x, opps[0].y - b.y), near1 = Math.hypot(opps[1].x - b.x, opps[1].y - b.y);
+    if (G.presser === 0 && near1 < near0 - 40) G.presser = 1; else if (G.presser === 1 && near0 < near1 - 40) G.presser = 0;
+    opps.forEach((o, i) => {
+        if (o.recover > 0) { o.recover--; return; }
+        if (--o.react <= 0) {
+            o.react = FB_REACT;
+            if (i === G.presser) { o.tx = b.x; o.ty = b.y; }
+            else { o.tx = Math.max(380, Math.min(700, b.x + 110)); o.ty = (b.y + 330) / 2; }
+        }
+        footballSeek(o, o.tx, o.ty, FB_OPP_SPEED);
+        const dribbler = humans.find(h => Math.hypot(h.x - o.x, h.y - o.y) < FB_TACKLE && Math.hypot(b.x - h.x, b.y - h.y) < FB_DRIBBLE);
+        if (dribbler || Math.hypot(b.x - o.x, b.y - o.y) < FB_TOUCH) {
+            // take the ball and boot it away from their goal (to the left), then rest. Nobody gets hurt.
+            const a = Math.PI + (Math.random() - 0.5) * 1.2;
+            footballKick(G, Math.cos(a) * 7, Math.sin(a) * 7);
+            o.recover = FB_RECOVER;
+            if (dribbler) footballSay(G, o.x, o.y, 'Tackled!', FB_KIT.them);
+        }
+    });
+    // Blue helper: finds open space near the goal; when the ball reaches them they shoot, or pass back to you
+    if (m.recover > 0) m.recover--;
+    if (G.held) {
+        if (--m.hold > 0) { b.x = m.x + 12; b.y = m.y; b.vx = b.vy = 0; }
+        else if (m.x > FB_SHOOT_X) {
+            const ty = (G.keeper > 330 ? 292 : 368) + (Math.random() - 0.5) * 20, d = Math.hypot(FB_GOAL.x - m.x, ty - m.y);   // aim away from the goalie
+            footballKick(G, (FB_GOAL.x - m.x) / d * 11, (ty - m.y) / d * 11); m.recover = FB_MATE_RECOVER; G.mateShot = 90;
+            footballSay(G, m.x, m.y, 'Shoot!', FB_KIT.you);
+        } else {
+            const d = Math.hypot(player.x - m.x, player.y - m.y) || 1, v = Math.max(4, Math.min(9, d * 0.032 + 2.5));
+            footballKick(G, (player.x - m.x) / d * v, (player.y - m.y) / d * v); m.recover = FB_MATE_RECOVER;
+            footballSay(G, m.x, m.y, 'Pass!', FB_KIT.you);
+        }
+    } else {
+        const speed = Math.hypot(b.vx, b.vy), md = Math.hypot(b.x - m.x, b.y - m.y);
+        if (m.recover === 0 && md < FB_TOUCH) { G.held = true; m.hold = FB_AIM_PAUSE; b.vx = b.vy = 0; }
+        else {
+            const hd = Math.min(...humans.map(h => Math.hypot(b.x - h.x, b.y - h.y)));
+            if (speed < 3 && md < FB_MATE_CHASE && md < hd) footballSeek(m, b.x, b.y, FB_MATE_SPEED);   // a loose ball close to them: go and get it
+            else {
+                if (--m.react <= 0) {   // otherwise pick the most open spot near the goal
+                    m.react = 45; let best = -1e9;
+                    for (const sx of [560, 620, 680]) for (const sy of [220, 330, 440]) {
+                        const open = Math.min(...opps.map(o => Math.hypot(o.x - sx, o.y - sy))) + Math.hypot(b.x - sx, b.y - sy) * 0.2 - Math.abs(sy - 330) * 0.2;
+                        if (open > best) { best = open; m.tx = sx; m.ty = sy; }
+                    }
+                }
+                footballSeek(m, m.tx, m.ty, FB_MATE_SPEED);
+            }
+        }
+    }
+    if (G.mateShot > 0) G.mateShot--;
+    // Ball physics (as before)
+    if (!G.held) { b.x += b.vx; b.y += b.vy; b.vx *= 0.97; b.vy *= 0.97; }
+    if (b.y < 90 || b.y > 570) { b.vy *= -1; b.y = Math.max(90, Math.min(570, b.y)); }
+    if (b.x < 30) { b.vx *= -1; b.x = 30; }
+    G.keeper += Math.sign(b.y - G.keeper) * Math.min(2.2, Math.abs(b.y - G.keeper));   // the goalie follows the ball
+    G.keeper = Math.max(270, Math.min(390, G.keeper));
+    if (b.x > 740 && Math.abs(b.y - G.keeper) < 26) { b.vx = -Math.abs(b.vx) - 3; spawnFloatText(740, G.keeper - 30, 'SAVED!', '#FFFFFF', 40); }
+    if (b.x > 770) {
+        if (b.y > FB_GOAL.y0 && b.y < FB_GOAL.y1) footballScored(G, G.mateShot > 0); else footballKickoff(G);
+        return;
+    }
+    // Nobody gets shoved through walls: only the computer players move, and only where it is free
+    for (let i = 0; i < actors.length; i++) {
+        for (let j = i + 1; j < actors.length; j++) footballApart(actors[i], actors[j], 0.5);
+        for (const h of humans) footballApart(actors[i], h, 1);
+    }
+    // If the ball sits still with a pile of players on it, pop it loose
+    const crowd = actors.concat(humans).filter(a => Math.hypot(a.x - b.x, a.y - b.y) < 30).length;
+    G.stuck = (Math.hypot(b.vx, b.vy) < 0.3 && crowd >= 2) ? G.stuck + 1 : 0;
+    if (G.stuck >= FB_STUCK_FRAMES) {
+        const a = Math.random() * Math.PI * 2;
+        footballKick(G, Math.cos(a) * 6, Math.sin(a) * 6); G.stuck = 0; m.hold = 0;
+        for (const o of opps) if (Math.hypot(o.x - b.x, o.y - b.y) < 40) o.recover = Math.max(o.recover, 40);
+    }
+}
+// Push computer player a away from c (all of the overlap if c is a person, half each if c is a computer player too)
+function footballApart(a, c, share) {
+    const d = Math.hypot(a.x - c.x, a.y - c.y);
+    if (d >= FB_APART) return;
+    const ux = d > 0.01 ? (a.x - c.x) / d : 1, uy = d > 0.01 ? (a.y - c.y) / d : 0, push = (FB_APART - d) * share;
+    footballMove(a, ux * push, uy * push);
+    if (share < 1) footballMove(c, -ux * push, -uy * push);
+}
+function drawFootball(G, emoji) {
+    const t = Date.now() / 1000;
+    ctx.fillStyle = '#FFF'; ctx.fillRect(776, 260, 6, 140); ctx.fillRect(740, 260, 40, 4); ctx.fillRect(740, 396, 40, 4);
+    const ring = (x, y, color) => { ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(x, y + 19, 17, 6, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore(); };
+    const kit = (a, color) => {
+        drawGroundShadow(a.x + 3, a.y + 19, 16, 5);
+        ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 8; drawAvatar(a.x, a.y, player.w, color, 'plain', a.walk); ctx.restore();
+        ring(a.x, a.y, color);
+    };
+    kit({ x: 752, y: G.keeper, walk: 0 }, FB_KIT.keeper);
+    emoji('🧤', 752, G.keeper, 22);
+    for (const o of G.opps) { kit(o, FB_KIT.them); if (o.recover > 0) emoji('💫', o.x, o.y - 30, 14); }
+    kit(G.mate, FB_KIT.you);
+    ring(player.x, player.y, FB_KIT.you);
+    for (const f of activeFriends()) if (!f.down) ring(f.x, f.y, FB_KIT.you);
+    // the helper waves a little "!" while you have the ball and they are free
+    const mine = Math.hypot(G.ball.x - player.x, G.ball.y - player.y) < 70;
+    if (mine && !G.held) { ctx.save(); ctx.fillStyle = FB_KIT.you; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.fillText('!', G.mate.x, G.mate.y - 32 + Math.sin(t * 10) * 2); ctx.restore(); }
+    emoji('⚽', G.ball.x, G.ball.y, 22);
 }
 // 🏃 Tag
 function startTag() {
@@ -2965,21 +3133,8 @@ function updateMiniGame() {
         if (G.kids.every(k => k.found)) { miniGame = null; winMiniGame('You found everyone!', 40); }
     }
     if (G.kind === 'ball') {
-        const b = G.ball, kickers = [{ x: player.x, y: player.y }, ...activeFriends()];
-        for (const k of kickers) {
-            const d = Math.hypot(b.x - k.x, b.y - k.y);
-            if (d < 26 && d > 0) { b.vx = (b.x - k.x) / d * 8; b.vy = (b.y - k.y) / d * 8; sfx('boing'); }
-        }
-        b.x += b.vx; b.y += b.vy; b.vx *= 0.97; b.vy *= 0.97;
-        if (b.y < 90 || b.y > 570) { b.vy *= -1; b.y = Math.max(90, Math.min(570, b.y)); }
-        if (b.x < 30) { b.vx *= -1; b.x = 30; }
-        G.keeper += Math.sign(b.y - G.keeper) * Math.min(2.2, Math.abs(b.y - G.keeper));   // the goalie follows the ball
-        G.keeper = Math.max(270, Math.min(390, G.keeper));
-        if (b.x > 740 && Math.abs(b.y - G.keeper) < 26) { b.vx = -Math.abs(b.vx) - 3; spawnFloatText(740, G.keeper - 30, 'SAVED!', '#FFFFFF', 40); }
-        if (b.x > 770) {
-            if (b.y > 260 && b.y < 400) { G.goals++; giveAward('goal'); sfx('win'); spawnConfettiAt(760, b.y); showToast('⚽ GOOOOOAL!!!', '#FFE066', 120); }
-            Object.assign(b, { x: 400, y: 330, vx: 0, vy: 0 });
-        }
+        if (state.room !== ROOM.STADIUM) { miniGame = null; return; }   // you left the pitch some other way
+        updateFootball(G);
     }
     if (G.kind === 'snow' && state.room === ROOM.SNOWFORT && place().enemies.every(e => !e.alive)) { miniGame = null; winMiniGame('You won the SNOWBALL FIGHT!', 40); }
     if (G.kind === 'tag') {
@@ -3015,11 +3170,7 @@ function drawMiniGame() {
         if (k.found) emoji(k.icon, k.x, k.y, 26);
         else if (Math.sin(t * 2 + k.x) > 0.95) emoji('👀', k.x, k.y, 12);   // a tiny peek…
     }
-    if (G.kind === 'ball') {
-        ctx.fillStyle = '#FFF'; ctx.fillRect(776, 260, 6, 140); ctx.fillRect(740, 260, 40, 4); ctx.fillRect(740, 396, 40, 4);
-        emoji('🧤', 752, G.keeper, 26);
-        emoji('⚽', G.ball.x, G.ball.y, 22);
-    }
+    if (G.kind === 'ball' && state.room === ROOM.STADIUM) drawFootball(G, emoji);
     if (G.kind === 'tag' && !G.friends) for (const r of G.runners) if (!r.caught) emoji(r.icon, r.x, r.y + Math.sin(t * 10 + r.x) * 2, 24);
     if (G.kind === 'tag' && G.friends) {
         const it = G.it === 1 ? player : activeFriends().find(f => f.n === G.it);
