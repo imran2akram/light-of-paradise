@@ -82,7 +82,7 @@ python3 -m http.server 8000
 ```
 light-of-paradise/
 ├── index.html                    # The page: HTML, CSS and the <script> tags for js/
-├── js/                           # The game: 14 plain scripts loaded in order (~13,000 lines in all)
+├── js/                           # The game: 22 plain scripts, one topic each, loaded in order (~13,000 lines in all)
 ├── Light of paradise opening.mp4 # Intro cinematic
 ├── test/                         # Headless tests: scripts.js, regress.js, fuzz.js, reporter.js, worker.js (+ headless.js, a fake browser)
 ├── worker/                       # Cloudflare Worker that collects error reports from players' screens

@@ -6,9 +6,10 @@ const fs = require('fs'), path = require('path'), assert = require('assert');
 const { loadGame } = require('./headless');
 
 // whatever ERROR_LOG_URL is set to in js/, run the game with a test URL
+let patchedFiles = 0;
 function withErrorUrl(source) {
     const patched = source.replace(/const ERROR_LOG_URL\s*=\s*'[^']*';/, "const ERROR_LOG_URL      = 'https://lop-errors.example.workers.dev/report';");
-    assert.notStrictEqual(patched, source, 'could not find the ERROR_LOG_URL line in js/');
+    if (patched !== source) patchedFiles++;
     return patched;
 }
 
@@ -35,3 +36,4 @@ console.log('reporter: all checks passed');
 `;
 global.assert = assert;
 loadGame({ driver, patch: withErrorUrl });
+assert.strictEqual(patchedFiles, 1, 'could not find the ERROR_LOG_URL line in js/');

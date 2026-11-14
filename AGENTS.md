@@ -6,7 +6,7 @@ This file gives AI coding agents the orientation they need to work on this codeb
 
 ## What this project is
 
-A browser action-adventure game written in **vanilla JavaScript** using the **HTML5 Canvas 2D API**. No framework, no bundler, no package manager, no modules. `index.html` holds the page and CSS; the game is 14 plain scripts in `js/` (~13,000 lines in all), loaded in order by `<script src="js/NN-name.js">` tags. There is no build step: the repo root is served as it is.
+A browser action-adventure game written in **vanilla JavaScript** using the **HTML5 Canvas 2D API**. No framework, no bundler, no package manager, no modules. `index.html` holds the page and CSS; the game is 22 plain scripts in `js/`, one topic each (~13,000 lines in all), loaded in order by `<script src="js/NN-name.js">` tags. There is no build step: the repo root is served as it is.
 
 Features are requested by a young player, so they come often and should be playful and kid-friendly. Keep text on screen short and simple.
 
@@ -26,7 +26,7 @@ There is no test framework, but `test/` has a headless harness (no dependencies)
 3. `node test/fuzz.js --seed 1 --frames 30000` — plays the game with random keys, taps, controller input, menus, room changes and deaths, and fails if any frame throws or the loop stops. Run a few seeds; bigger `--frames` finds rarer bugs. `--canvas` draws for real through `node-canvas` (`npm i canvas`, keep `node_modules` out of git), so drawing calls that throw in a browser throw here too.
 4. Play it in a browser (desktop, touch and a game controller).
 
-`.gitignore` keeps `.claude/worktrees/` out. `test/headless.js` is the fake browser underneath both scripts (stub DOM, Web Audio, `localStorage`, gamepads). It reads the `<script src>` tags from `index.html` and joins those files in the page's order, so the tests load exactly what the page loads. Because the game scripts use top-level `let`/`const`, test code is run as a "driver" string in the same scope rather than imported.
+`.gitignore` keeps `.claude/worktrees/` out. `test/headless.js` is the fake browser underneath both scripts (stub DOM, Web Audio, `localStorage`, gamepads). It reads the `<script src>` tags from `index.html` and runs those files one at a time, in the page's order, the way a browser does (a function declared in a later file is not callable at load time, just as on the page), so the tests load exactly what the page loads. Because the game scripts use top-level `let`/`const`, test code is run as a "driver" string in the same scope rather than imported.
 
 `loop()` catches errors from `update()` / `draw()` and passes them to `reportError()`, which logs to the console and, when `ERROR_LOG_URL` is set, sends a small report to the Cloudflare Worker in `worker/` (see `worker/README.md`) so bugs on players' screens can be read later. `node test/worker.js` tests the Worker with a fake database and `node test/reporter.js` the game side. Never call `changeRoom()` from inside an index loop over an array it resets (`projectiles`, `enemyProjectiles`, `heartPickups`, `bolts`, `gadgetObjs`, ...); respawning defers its room change to the end of `update()` for this reason.
 
@@ -42,24 +42,32 @@ Merging to `main` publishes to the live site straight away. So never merge with 
 
 ## Files
 
-The scripts are classic scripts sharing one global scope, so a top-level `let`/`const`/`function` in one file is visible in all later ones. Load order matters only at load time: a file can use at load time (top-level code, `const X = f()`) only what earlier files defined; inside functions anything can be called, because everything exists by the time the game runs. The split follows the original order of the code, so a topic can span two files; search for the banner comment.
+The scripts are classic scripts sharing one global scope, so a top-level `let`/`const`/`function` in one file is visible in all later ones. Load order matters only at load time: a file can use at load time (top-level code, `const X = f()`, `PLACES.x = ...`) only what earlier files defined (a function is hoisted only inside its own file, not across files); inside functions anything can be called, because everything exists by the time the game runs. Each file holds one topic with its data, update code and drawing together; search for the `// ── NAME ───` banner comments. A few statements run when the file loads and their order matters: listeners on the same event (the intro video's keydown handler in `01-core.js` must run before the game's), `Math.random()` at load (`chickenRain`, then the `addToPlace` calls, then the room objects in `13-rooms.js`), the `PLACES.x = ...` run in `12-places.js`, and `settings`. The last lines of `22-main-loop.js` start the game, so that file stays last.
 
 | File | Holds |
 |---|---|
-| `01-constants.js` | canvas and screen size, intro video, constants, secret rooms, weapons, bad-guy types, levels, skins, pets, fighting moves and fighting weapons |
-| `02-powers-and-town.js` | magic powers, rides, gadgets, hell caves and dig spots, settings, Paradise town data, weather |
-| `03-state-and-input.js` | `state`, player, input (keyboard, mouse), readable text, pop-up menus, pause, friends (players 2–4), game controller |
-| `04-world-extras.js` | World 2 (Demigod Camp, Olympus, pirates), magic extras, heroes, monsters and bosses, fighting extras, special stuff |
-| `05-minigames-and-home.js` | mini-games, home and building, pets and rides, more places, fun extras, controls panel, virtual touch controls |
-| `06-places.js` | entity factories, your home, the adventure places (`PLACES`) |
-| `07-portals-audio-saving.js` | Heaven, portals, dynamic lists, sound and music, full screen, toasts, awards, saving, born lucky, score |
-| `08-blocks-and-helpers.js` | blocks, reachable pickups, keep-clear spots, scenery, digging, block pictures, helpers |
-| `09-room-change-player-enemies.js` | `changeRoom()`, player update, enemy update, enemy projectiles, shooting, ammo reload |
-| `10-combat-pet-gadgets.js` | projectiles and hits, digging, pet, dance and fart, gadgets and dash, pet races, weather update |
-| `11-schools-town-pickups.js` | schools, Paradise town update, pickups, void healing, particles |
-| `12-draw-rooms-and-monsters.js` | draw helpers, intro screen, portals, Void, weapon chart, Hell, bad guys, Medusa, the Devil |
-| `13-draw-town-and-player.js` | Paradise, room backgrounds, secret rooms, player, projectiles, particles, HUD |
-| `14-screens-and-main-loop.js` | rainbow background, level complete, win, awards, shop and controls screens, `loop()`, error reports |
+| `01-core.js` | canvas, screen fitting (`fitCanvas`, `view`), the opening video, `ROOM` list, readable text (`fitText`, `wrapText`), `drawStar`, `drawCoins` |
+| `02-data-tables.js` | power ids and secret-room constants, `WEAPON_INFO`, bad-guy types (`ENEMY_TYPES`), level configs, avatar skins |
+| `03-pets-and-rides.js` | pets (data, `updatePet`, `drawPet`, pet battles) and rides (`MOUNTS`, golden eggs, ride trails). Loads before `state`, which reads `PETS` |
+| `04-state-and-saving.js` | `state`, `player`, the dynamic lists, saving (`SAVE_FIELDS`), score, New Game and `startFromIntro`, `resetGame`, `advanceLevel` |
+| `05-input.js` | keys, the main button (`pressAction`, `handleTap`, mouse, keyboard), game controller (`PAD`, `pollGamepad`), virtual touch controls (`layoutTouch`, `drawVirtualControls`) |
+| `06-audio.js` | Web Audio: mute, `SFX`, `SONGS`, `musicTick` |
+| `07-menus-and-screens.js` | pop-up menu engine (`openMenu`), the store menus (schools, potions, hats, crafting, forge), settings and mods, full screen, title screen, level complete, win, time machine, TV, ending door and credits |
+| `08-blocks.js` | blocks and building, reachable pickups, keep-clear spots, mineable scenery, digging the ground, block pictures, hotbar |
+| `09-hell-and-caves.js` | Hell caves and dig spots, digging and moles, drawing Hell, the underground and secret rooms, the dig view |
+| `10-paradise-town.js` | Paradise town (data, jobs, talking, `updateTown`, drawing), weather, your home and garden, the backyard builder |
+| `11-minigames.js` | hide and seek, fishing, football, tag, maze race, dance battle, cooking, quiz, Ring Race, Chicken Rain, potions |
+| `12-places.js` | the `PLACES` and `SUBPLACES` tables with their painters, updates and drawing, Boss Rush arena, the mall, treasure maps, sailing |
+| `13-rooms.js` | `changeRoom()`, the room factories and room objects (`hell`, `paradise`, ...), Heaven, `PORTALS`, drawing portals, room backgrounds |
+| `14-player-and-friends.js` | player update and drawing, pickups, hurt and respawn, dance and fart, friends (players 2-4), team-up and battles |
+| `15-combat.js` | projectiles and hits, shooting, ammo, the Smiting Stick, fighting moves and fighting weapons, drawing shots |
+| `16-magic-and-gadgets.js` | spells, wands, creatures, the Snitch, chess and library, gadgets and dash, fight gadgets (ninja stars, hook, ...) |
+| `17-enemies.js` | enemy update and AI (`moveEnemy`), damage and loot, enemy projectiles, new bosses, mini-bosses, Gloop |
+| `18-enemy-drawing.js` | drawing bad guys, Medusa, the enemy bodies, ice blocks and health bars, the Devil |
+| `19-demigods-and-heroes.js` | World 2 (Demigod Camp, quests, Olympus, Pirate Island), the Greek island and the maze, born lucky and the god powers |
+| `20-void-hub.js` | the Void: drawing, weapon chart, Race Master and pet races, void healing, the shop, the awards list and board |
+| `21-hud-and-effects.js` | HUD, toasts, controls panel, particles and floating text, confetti, storms, seasons, party and fireworks |
+| `22-main-loop.js` | pause (tab hidden), `update()`, `draw()`, `drawGame()`, error reports, the frame clock, `loop()` and the start-up lines |
 
 **Adding a file** = create `js/NN-name.js` starting with a `// ── NAME ───` banner and add its `<script>` tag to `index.html` at the right place in the order. `node test/scripts.js` fails if a `js/` file is not loaded or a loaded file is missing. No cache-busting strings or version stamps (there is no build step).
 
@@ -101,7 +109,7 @@ The scripts are classic scripts sharing one global scope, so a top-level `let`/`
 
 ## Adding a new feature — checklist
 
-0. **Where** — put new code in the `js/` file that holds the closest related code (see Files), after the existing code of its section, with its own banner. Don't move code between files just to tidy.
+0. **Where** — put new code in the `js/` file for its topic (see Files): its data, update and drawing go together, after the existing code of its section, with its own banner. If the topic has no file, add one (see "Adding a file"). Don't move code between files just to tidy; a top-level statement that runs at load may only use what earlier files define.
 1. **State** — add fields to `state`, reset them in `resetGame()`, and add them to `SAVE_FIELDS` if they should survive a reload.
 2. **Update / draw** — add an `update*()` call in `update()` and a `draw*()` call in `draw()` (before `drawHUD()` so the HUD stays on top).
 3. **Input** — go through `pressAction()` / `handleTap()` / the keydown and gamepad handlers so every input method works. Show the right key for `lastInput` (`'keyboard' | 'touch' | 'pad'`) with `byInput()` / `mainBtn()`.

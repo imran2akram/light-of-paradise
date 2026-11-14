@@ -2,8 +2,10 @@
 //
 // The game is the <script src> files that index.html loads, in order (js/*.js),
 // sharing one global scope with top-level let/const, so test code can't import
-// it: loadGame() runs those files joined together, then a "driver" script in the
-// same scope, with just enough of a fake browser underneath.
+// it: loadGame() runs those files the way a browser does (one script at a time,
+// in order, so a function declared in a later file is not hoisted into an earlier
+// one), then a "driver" script in the same scope, with just enough of a fake
+// browser underneath.
 //
 // If the optional `canvas` npm package (node-canvas) is installed and
 // options.realCanvas is set, real 2D contexts are used, so drawing calls that
@@ -45,13 +47,12 @@ function checkScripts(htmlFile) {
     return problems;
 }
 
-// patch(source) may rewrite the joined game source before it runs (e.g. to set a constant)
+// patch(source, file) may rewrite each script's source before it runs (e.g. to set a constant)
 function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile = path.join(ROOT, 'index.html'), patch = null }) {
     const scripts = pageScripts(gameFile);
     const missing = scripts.filter(s => s.text === null);
     if (missing.length) throw new Error('index.html loads a missing file: ' + missing.map(s => s.src).join(', '));
-    let script = scripts.map(s => s.text.endsWith('\n') ? s.text : s.text + '\n').join('');
-    if (patch) script = patch(script);
+    const texts = scripts.map(s => { const t = s.text.endsWith('\n') ? s.text : s.text + '\n'; return patch ? patch(t, s.src) : t; });
 
     // Seeded Math.random so every run can be replayed
     let s = (seed >>> 0) || 1;
@@ -120,7 +121,9 @@ function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile =
     g.__h = h;
     g.canvasListeners = gameCanvas.listeners;
 
-    vm.runInThisContext(script + '\n' + driver, { filename: 'game.js' });
+    // each script on its own, like <script> tags: top-level let/const are shared, function hoisting is not
+    texts.forEach((t, i) => vm.runInThisContext(t, { filename: scripts[i].src || 'inline-' + i + '.js' }));
+    vm.runInThisContext(driver, { filename: 'driver.js' });
     return h;
 }
 

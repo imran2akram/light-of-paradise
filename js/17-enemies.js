@@ -1,247 +1,3 @@
-// ── ROOM CHANGE ───────────────────────────────────────────────
-// A random spot on the map, not too close to the player
-function randomSpawnSpot(minDist = 150) {
-    for (let tries = 0; tries < 50; tries++) {
-        const x = 80 + Math.random() * 640, y = 100 + Math.random() * 420;
-        if (Math.hypot(x - player.x, y - player.y) >= minDist) return { x, y };
-    }
-    return { x: 80, y: 100 };
-}
-
-function respawnParadiseWave() {
-    const night = state.paradiseClearCount + 1;
-    paradise.enemies = paradise.enemies.filter(e => !e.temp);   // King Slime's little slimes
-    for (const e of paradise.enemies) {
-        // Monsters climb out of the ground in random places
-        // (bosses and the robot army keep their places — robots march in a line)
-        const spot = e.type === 'king' || e.type === 'ghostking' || e.march ? { x: e.home.x, y: e.home.y } : randomSpawnSpot();
-        const alive = (e.minNight || 1) <= night && (!e.onlyNight || e.onlyNight === night);
-        Object.assign(e, { alive, hp: e.maxHp, hitFlash: 0, hopTimer: 0, frozen: 0, hidden: false, phase: 0,
-                           x: spot.x, y: spot.y, dx: e.home.dx, dy: e.home.dy, emerge: 30 + Math.random() * 60 });
-    }
-    // A boss's home may be next to you if you stand in the square: it comes up a safe distance away
-    if (state.room === ROOM.PARADISE) keepMonstersAwayFromArrival(paradise.enemies);
-}
-
-// Daytime surprise: a few monsters pop out of the ground somewhere
-function spawnAmbush() {
-    const n = 2 + Math.floor(Math.random() * 2);
-    for (let i = 0; i < n; i++) {
-        const type = AMBUSH_TYPES[Math.floor(Math.random() * AMBUSH_TYPES.length)];
-        const spot = randomSpawnSpot(180);
-        const e = makeEnemy(type, spot.x, spot.y, (Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 2.4);
-        e.emerge = 45 + i * 15;
-        paradise.ambushers.push(e);
-    }
-    showToast('⚠ Monsters popped up out of the ground!', '#FF8866');
-    sfx('worm');
-}
-
-const ENTRY_SAFE_FRAMES   = 90;    // 1.5 s nobody can hurt you after walking into a room (a monster may be standing at the door)
-const ENTRY_SAFE_DISTANCE = 120;   // monsters in a fresh mini-world start at least this far from where you arrive
-function changeRoom(dest) {
-    if (state.gamePhase === 'playing') sfx('portal');
-    state.room = dest;
-    state.shopOpen = false;   // close shop when changing rooms
-    state.awardsOpen = false;
-    menu = null;
-    gadgetObjs = [];
-    clones = []; state.cloneTimer = 0; laserBeam = null; timeFreeze = 0; magnetTimer = 0;
-    grabbed = null; slowMo = 0; fight.blocking = false; fight.jump = 0; fight.charge = 0; fight.fx = []; state.fieldTimer = 0;
-    if (dest === ROOM.UNDERGROUND) {   // a fresh cave every time
-        worldBlocks.underground = makeWorldBlocks('underground');
-        scenery.underground = makeRocks(14, 'boulder', (x, y) => Math.hypot(x - 100, y - 300) < 80 || Math.abs(x - 640) < 70
-            || !!blockAtCellIn('underground', x, y));
-    }
-    if (dest === ROOM.HELL) {
-        scenery.hell = makeRocks(8, 'lavaRock', (x, y) => inAnyCave(x, y, 20) || Math.hypot(x - 100, y - 300) < 80
-            || (PORTALS.hell).some(p => Math.hypot(p.x - x, p.y - y) < PORTAL_R + 30) || !!blockAtCellIn('hell', x, y));
-    }
-    if (dest === ROOM.SECRET)      worldBlocks.secret = {};
-    if (worldDirty) saveWorld();
-    projectiles      = [];
-    enemyProjectiles = [];
-    heartPickups     = [];
-    bolts            = [];
-    if (dest === ROOM.VOID)     { player.x = 400; player.y = 300; }
-    if (dest === ROOM.HELL)     {
-        player.x = 100; player.y = 300;
-        // Weapons are buried again (in new places) each visit
-        hell.digSpots = makeDigSpots();
-        hell.foundMsg = null;
-        hell.enemies  = makeWorms();
-        if (Math.random() < SHADOW_CHANCE) {
-            hell.enemies.push({ type: 'shadow', x: 700, y: 300, r: 15, hp: 6, maxHp: 6, alive: true, hitFlash: 0, frozen: 0,
-                                coinDrop: 8, emerge: 60, dx: 0, dy: 0 });
-        }
-        hell.summonTimer = IMP_SUMMON_FRAMES;
-    }
-    if (dest === ROOM.PARADISE) {
-        player.x = 400; player.y = 290;   // the town square
-        paradise.fishing.stage = 'idle';
-    }
-    if (dest === ROOM.SECRET)      { player.x = 400; player.y = 420; secretRoom = makeSecretRoom(); giveAward('secret'); }
-    if (dest === ROOM.UNDERGROUND) { player.x = 100; player.y = 300; underground = makeUnderground(); giveAward('underground'); }
-    if (dest === ROOM.HEAVEN)      { player.x = 400; player.y = 330; heaven = makeHeaven(); giveAward('heaven'); }
-    if (dest === ROOM.HOUSE)       { player.x = HOUSE_DOOR.x; player.y = 520; }
-    if (PLACES[dest]) {
-        placeState[dest] = PLACES[dest].make();
-        [player.x, player.y] = PLACES[dest].spawn;
-        if (dest !== ROOM.SHIP) {
-            state.placesSeen = state.placesSeen || {};
-            state.placesSeen[dest] = true;
-            if (['candy', 'ice', 'haunted', 'sky', 'space'].every(r => state.placesSeen[r])) giveAward('explorer');
-        }
-    }
-    if (state.gamePhase === 'playing') saveGame();
-    goldenPortal = MAIN_ROOMS.includes(dest) && Math.random() < SECRET_PORTAL_CHANCE
-        ? { ...GOLDEN_PORTAL_SPOTS[dest] } : null;
-    placePetBesidePlayer();
-    for (const f of activeFriends()) { f.x = player.x + 30 * (f.n - 1); f.y = player.y; }   // friends come along through portals
-    keepAllMonstersAwayFromArrival();
-    if (state.gamePhase === 'playing') maybeMiniBoss();
-    state.playerInvincible = Math.max(state.playerInvincible, ENTRY_SAFE_FRAMES);
-}
-
-// Slide any monster that is too close to the player straight away from them (inside the room).
-// If that spot is outside the room (you stand by a wall) it tries other directions, so the gap is always real.
-function keepMonstersAwayFromArrival(list) {
-    for (const e of list || []) {
-        let dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy);
-        if (d >= ENTRY_SAFE_DISTANCE) continue;
-        if (d < 1) { dx = 0; dy = -1; d = 1; }   // exactly on top of you: up
-        const base = Math.atan2(dy, dx);
-        let nx = e.x, ny = e.y;
-        for (let k = 0; k < 24; k++) {   // 0, +15, -15, +30 ... degrees from the straight-away direction
-            const a = base + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * Math.PI / 12;
-            const tx = player.x + Math.cos(a) * ENTRY_SAFE_DISTANCE, ty = player.y + Math.sin(a) * ENTRY_SAFE_DISTANCE;
-            if (tx >= 40 && tx <= 760 && ty >= 80 && ty <= 560) { nx = tx; ny = ty; break; }
-        }
-        if (e.home) { e.home.x += nx - e.x; e.home.y += ny - e.y; }   // its patrol spot moves with it
-        e.x = nx; e.y = ny;
-    }
-}
-
-// Every monster of the room you are in, standing or waiting to climb out: bosses, wave monsters, ambushers, the Devil
-function keepAllMonstersAwayFromArrival() {
-    if (state.room === ROOM.PARADISE)    keepMonstersAwayFromArrival([...paradise.enemies, ...paradise.ambushers]);
-    if (state.room === ROOM.HELL)        keepMonstersAwayFromArrival([...hell.enemies, hell.devil]);
-    if (state.room === ROOM.UNDERGROUND) keepMonstersAwayFromArrival(underground.enemies);
-    if (PLACES[state.room] && place())   keepMonstersAwayFromArrival(place().enemies);
-}
-
-// ── UPDATE: PLAYER ────────────────────────────────────────────
-function updatePlayer() {
-    if (state.won || state.levelComplete || state.gamePhase !== 'playing') return;
-    if (updateYardRide()) return;   // 🎢 on a ride in the backyard
-
-    const spd = (state.room === ROOM.PARADISE ? BASE_SPEED * 1.2 : BASE_SPEED) * (state.lessons.running ? 1.2 : 1) * mountSpeed() * playerSpeedFactor()
-              * (godPassive('fast') ? 1.3 : 1) * (godSpeedTimer > 0 ? 1.7 : 1) * (state.house === 'slytherin' ? 1.15 : 1) * (state.heroSuit === 'on' ? 1.25 : 1)
-              * (state.tiny > 0 ? 1.4 : state.giant > 0 ? 0.9 : 1);
-    let dx = 0, dy = 0;
-    if (!state.shopOpen && !state.awardsOpen && !menu) {
-        const arrows = !p2.active;   // with 2 players, the arrow keys belong to Player 2
-        if ((arrows && keys['ArrowLeft'])  || keys['KeyA']) dx -= 1;
-        if ((arrows && keys['ArrowRight']) || keys['KeyD']) dx += 1;
-        if ((arrows && keys['ArrowUp'])    || keys['KeyW']) dy -= 1;
-        if ((arrows && keys['ArrowDown'])  || keys['KeyS']) dy += 1;
-        // Virtual joystick
-        const deadzone = VJOY.maxDist * JOYSTICK_DEADZONE_RATIO;
-        if (vTouch.joyDX < -deadzone) dx -= 1;
-        if (vTouch.joyDX >  deadzone) dx += 1;
-        if (vTouch.joyDY < -deadzone) dy -= 1;
-        if (vTouch.joyDY >  deadzone) dy += 1;
-        // Controller stick (analog — push a little to walk slowly)
-        dx += padMove.x; dy += padMove.y;
-    }
-    if (state.stoned > 0) { state.stoned--; dx = dy = 0; }   // 🗿 turned to stone by Medusa
-    const len = Math.hypot(dx, dy);
-    if (len > 1) { dx /= len; dy /= len; }   // diagonals aren't faster
-    if (len > 0.2) { const l = Math.hypot(dx, dy); state.faceX = dx / l; state.faceY = dy / l; state.walkPhase += 0.32; }   // remember which way you're going
-    dx *= spd; dy *= spd;
-    if (fight.blocking) { dx *= 0.4; dy *= 0.4; }   // slow while holding your shield up
-    if (state.room === ROOM.ICE || state.room === ROOM.SPACE || state.room === ROOM.UNDERWATER || state.room === ROOM.MOONBASE || state.room === ROOM.ICECAVE || state.mount === 'kart' || state.mount === 'skates' || mod('lowGravity')) {
-        // Slippery ice / floaty space: you speed up and slow down gently
-        const grip = state.mount === 'kart' ? 0.12 : state.mount === 'skates' ? 0.07 : state.room === ROOM.ICE ? 0.05 : 0.035;
-        state.vx = (state.vx || 0) + (dx - (state.vx || 0)) * grip;
-        state.vy = (state.vy || 0) + (dy - (state.vy || 0)) * grip;
-        dx = state.vx; dy = state.vy;
-    }
-    if (state.dashTimer > 0) {   // ZOOM!
-        state.dashTimer--;
-        dx = state.faceX * 15; dy = state.faceY * 15;
-        particles.push({ x: player.x, y: player.y, dx: 0, dy: 0, life: 12, maxLife: 12, color: 'rgba(255,255,255,0.6)', r: 12 });
-    }
-
-    // Move, but blocks are solid (try each direction separately so you slide along walls)
-    const nx = Math.max(18, Math.min(GAME_W - 18, player.x + dx));
-    const ny = Math.max(52, Math.min(GAME_H - 18, player.y + dy));
-    const flying = ['dragon', 'broom', 'car', 'pegasus', 'jetpack'].includes(state.mount) || state.heroSuit === 'on' || settings.creative || godPassive('fly');   // dragons, Zeus's kids (and Creative Mode) fly over blocks
-    if (flying || !playerHitsBlock(nx, player.y)) player.x = nx;
-    if (flying || !playerHitsBlock(player.x, ny)) player.y = ny;
-    if (state.mount === 'duck' && (dx || dy) && Math.random() < 0.01) { tone(700, 0.12, 'square', 0.12, 500); spawnFloatText(player.x, player.y - 30, 'QUACK!', '#FFE066', 40); }
-
-    for (const p of PORTALS[state.room]) {
-        if (Math.hypot(player.x - p.x, player.y - p.y) < PORTAL_R * 0.75) {
-            changeRoom(randomDoorDestination());
-            return;
-        }
-    }
-    if (updatePlaceExits()) return;
-    // Out through your front door, back to the house you came in by
-    if (state.room === ROOM.HOUSE && player.y > 560 && Math.abs(player.x - HOUSE_DOOR.x) < 24) {
-        const door = houseDoors().find(d => d.id === state.houseFrom) || houseDoors()[0];
-        changeRoom(ROOM.PARADISE);
-        player.x = door.x; player.y = door.y + 22;
-        return;
-    }
-    if (goldenPortal && Math.hypot(player.x - goldenPortal.x, player.y - goldenPortal.y) < PORTAL_R * 0.75) {
-        sfx('win');
-        changeRoom(ROOM.SECRET);
-        return;
-    }
-    // A dig spot dug to the bottom becomes a tunnel (step off it first, then jump in)
-    if (state.room === ROOM.HELL) {
-        for (const s of hell.digSpots) {
-            if (s.depth < DIG_MAX_DEPTH || !s.tunnel) continue;
-            const d = Math.hypot(player.x - s.x, player.y - s.y);
-            if (d > 30) s.tunnelReady = true;
-            else if (s.tunnelReady && d < 14) { changeRoom(ROOM.UNDERGROUND); return; }
-        }
-    }
-
-    if (state.playerFlash     > 0) state.playerFlash--;
-    if (state.playerInvincible > 0) state.playerInvincible--;
-    if (state.digAnim > 0) state.digAnim--;
-
-    // ── CAVE TIMER ─────────────────────────────────────────────
-    if (isPlayerPhysicallyInCave()) {
-        state.caveTimer++;
-        if (state.caveTimer >= caveMax()) {
-            state.caveProtectionExpired = true;
-        }
-    } else {
-        // Reset when player leaves the cave
-        if (state.caveTimer > 0) {
-            state.caveTimer = 0;
-            state.caveProtectionExpired = false;
-        }
-    }
-
-    // Brimstone spark trail
-    if (state.power === POWER.BRIMSTONE && Math.random() < 0.5) {
-        particles.push({
-            x: player.x + (Math.random() - 0.5) * 14,
-            y: player.y + (Math.random() - 0.5) * 14,
-            dx: (Math.random() - 0.5) * 1.5,
-            dy: (Math.random() - 0.5) * 1.5,
-            life: 14, maxLife: 14,
-            color: Math.random() < 0.5 ? '#FF4422' : '#FF8800',
-            r: 2 + Math.random() * 2,
-        });
-    }
-}
-
 // ── UPDATE: ENEMIES ───────────────────────────────────────────
 function weaponDamage(power, enemyType) {
     if (power === POWER.RAINBOW || ENEMY_TYPES[enemyType].weakTo === power) return DAMAGE_STRONG;
@@ -930,55 +686,120 @@ function updateEnemyProjectiles() {
     }
 }
 
-// ── UPDATE: SHOOTING ──────────────────────────────────────────
-function shoot() {
-    if (state.won || state.levelComplete || state.room === ROOM.VOID) return;
-    if (state.power === POWER.NONE) { stickSwing(); return; }   // no element yet: swing the stick
-    lastP1Shot = Date.now(); tryTeamUp();
-    if (fight.blocking) return;
-    if (state.ammoReloading || state.ammo <= 0) { stickSwing(); return; }   // reloading: the stick is better than nothing
-
-    const enemies = [];
-    enemies.push(...targetableEnemies());
-    if (state.room === ROOM.HELL && hell.devil.alive) enemies.push(hell.devil);
-    if (!enemies.length) return;
-
-    const target = enemies.reduce((best, e) => {
-        const d = Math.hypot(e.x - player.x, e.y - player.y);
-        return d < best.dist ? { en: e, dist: d } : best;
-    }, { en: null, dist: Infinity }).en;
-
-    if (!target) return;
-    const a = Math.atan2(target.y - player.y, target.x - player.x);
-    const w     = WEAPON_INFO[state.power];
-    const color = state.power === POWER.RAINBOW ? `hsl(${Math.random() * 360}, 100%, 60%)` : w.color;
-    // SUPER and RAINBOW weapons fire 3 shots in a spread for the same ammo
-    const spread = state.powerTier >= 2 ? [-0.2, 0, 0.2] : state.lessons.double ? [-0.08, 0.08] : [0];
-    for (const off of spread) {
-        projectiles.push({ x: player.x, y: player.y, dx: Math.cos(a + off) * w.speed, dy: Math.sin(a + off) * w.speed,
-            color, power: state.power, life: 90, r: w.size });
+// ── MONSTERS & BOSSES: new bosses, mini-bosses, the Mega Boss and Gloop the friendly monster ──
+function moveNewBoss(e, chase) {
+    const minion = (type, n) => { for (let k = 0; k < n; k++) spawnList().push(e0(type, e.x + (k ? 40 : -40), e.y + 30, { emerge: 20, r: 13 })); };
+    if (e.type === 'minizombie') { chase(0.8); return true; }
+    if (['chocoblob', 'snake', 'dustbunny', 'penguinpal'].includes(e.type)) { chase(1.2); return true; }
+    if (e.type === 'minibot' || e.type === 'bonesaur' || e.type === 'knight') { chase(1.1); return true; }
+    if (e.type === 'ant') { chase(1.5); e.x += Math.sin(Date.now() / 90 + e.home.x) * 0.8; return true; }
+    if (e.type === 'dragonking') { chase(0.6); if (Math.random() < 0.012) { enemyShoot(e, 4.5, '#FF5522', [-0.3, 0, 0.3]); sfx('dragonRoar'); } return true; }
+    if (e.type === 'snowkid') {   // pops up behind its snow fort and throws snowballs
+        e.x = e.home.x + Math.sin(Date.now() / 700 + e.home.y) * 60;
+        if (Math.random() < 0.012) { enemyShoot(e, 4.5, '#FFFFFF'); spawnFloatText(e.x, e.y - 24, 'Take that!', '#FFFFFF', 40); }
+        return true;
     }
-
-    sfx('shoot');
-    // Shadow You copies that too!
-    for (const sh of targetableEnemies().filter(e => e.type === 'shadow')) {
-        const sa = Math.atan2(player.y - sh.y, player.x - sh.x);
-        enemyProjectiles.push({ x: sh.x, y: sh.y, dx: Math.cos(sa) * 6, dy: Math.sin(sa) * 6, color: '#8844CC', life: 100, r: 6, enemyType: 'shadow' });
+    if (e.type === 'giant')   { chase(0.6); if (Math.random() < 0.006) { triggerShake(8); spawnFloatText(e.x, e.y - e.r - 10, 'FEE FI FO FUM!', '#FFCC88', 60); } return true; }
+    if (e.type === 'bonerex') { chase(0.9); if (Math.random() < 0.008) { spawnFloatText(e.x, e.y - e.r - 10, 'ROOOAR!', '#FFFFFF', 50); sfx('dragonRoar'); triggerShake(6); } return true; }
+    if (e.type === 'bedmonster') { chase(0.7); if (Math.random() < 0.01) enemyShoot(e, 4, '#AA66FF', [-0.3, 0, 0.3]); return true; }
+    if (e.type === 'babyalien')  { chase(1.5); return true; }
+    if (e.type === 'babyspider') { chase(1.9); return true; }
+    if (e.type === 'megarobot') {
+        chase(0.6);
+        if (--e.laserTimer <= 0) { e.laserTimer = 140; enemyShoot(e, 6, '#FF2222', [-0.4, -0.2, 0, 0.2, 0.4]); triggerShake(4); sfx('zap'); }
+        return true;
     }
-    state.ammo--;
-    if (state.ammo <= 0) {
-        state.ammoReloading = true;
-        state.ammoReloadTimer = LEVEL_CONFIGS[state.level - 1].reloadFrames;
+    if (e.type === 'kraken') {   // stays put, sprays ink and pulls you in with its tentacles
+        e.x = e.home.x + Math.sin(Date.now() / 600) * 40;
+        const d = Math.hypot(player.x - e.x, player.y - e.y) || 1;
+        if (d < 300) { player.x -= (player.x - e.x) / d * 0.6; player.y -= (player.y - e.y) / d * 0.6; }
+        if (--e.inkTimer <= 0) { e.inkTimer = 120; enemyShoot(e, 3.5, '#331133', [-1.2, -0.6, 0, 0.6, 1.2]); sfx('splash'); }
+        return true;
+    }
+    if (e.type === 'yeti') {
+        chase(1.1);
+        if (--e.throwTimer <= 0) { e.throwTimer = 150; enemyShoot(e, 5, '#FFFFFF', [-0.15, 0.15]); spawnFloatText(e.x, e.y - e.r - 10, 'RAAAWR!', '#AADDFF', 50); sfx('dragonRoar'); }
+        return true;
+    }
+    if (e.type === 'zombieking')  { chase(0.6); if (--e.summonTimer <= 0) { e.summonTimer = 300; minion('minizombie', 2); spawnFloatText(e.x, e.y - e.r - 10, 'RISE, MY ZOMBIES!', '#88CC88', 70); sfx('groan'); } return true; }
+    if (e.type === 'alienqueen')  { chase(0.7); if (--e.summonTimer <= 0) { e.summonTimer = 260; minion('babyalien', 2); spawnFloatText(e.x, e.y - e.r - 10, 'BLEEP BLOOP!', '#88FF88', 60); } return true; }
+    if (e.type === 'spiderqueen') { chase(0.6); if (--e.summonTimer <= 0) { e.summonTimer = 220; minion('babyspider', 2); sfx('hiss'); } return true; }
+    if (e.type === 'lasershark') {
+        chase(1.2);
+        if (--e.laserTimer <= 0) { e.laserTimer = 100; enemyShoot(e, 8, '#FF0000'); spawnFloatText(e.x, e.y - e.r - 10, 'PEW PEW!', '#FF6666', 40); sfx('zap'); }
+        return true;
+    }
+    if (e.type === 'megaboss') {   // takes turns doing every boss's best move
+        if (--e.moveTimer <= 0) {
+            e.moveTimer = 120; e.move = (e.move + 1) % 4;
+            const name = ['🔥 FIRE BREATH!', '🐍 HEADS!', '🐂 CHARGE!', '👁 DON\'T LOOK!'][e.move];
+            spawnFloatText(e.x, e.y - e.r - 14, name, '#FF88FF', 70);
+            if (e.move === 0) enemyShoot(e, 4.5, '#FF5522', [-0.6, -0.3, 0, 0.3, 0.6]);
+            if (e.move === 1) minion('hydrahead', 2);
+            if (e.move === 2) { const a = Math.atan2(player.y - e.y, player.x - e.x); e.dx = Math.cos(a) * 6; e.dy = Math.sin(a) * 6; e.charge = 30; }
+            if (e.move === 3) e.gazeTimer = 80;
+        }
+        if (e.charge > 0) { e.charge--; e.x += e.dx; e.y += e.dy; e.x = Math.max(50, Math.min(750, e.x)); e.y = Math.max(90, Math.min(560, e.y)); }
+        else chase(0.5);
+        if (--e.gazeTimer === 0) {
+            const dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy) || 1;
+            if ((state.faceX * dx + state.faceY * dy) / d > 0.3 && !state.invisible) { state.stoned = 90; showToast('🗿 You looked! STONE!', '#AAAAAA', 120); }
+        }
+        return true;
+    }
+    return false;
+}
+
+// ⚠ Mini-bosses: sometimes one of the monsters in a room is BIG and tough
+const MINI_BOSS_CHANCE = 0.35;
+function maybeMiniBoss() {
+    if (Math.random() >= MINI_BOSS_CHANCE || [ROOM.ARENA, ROOM.CHESS, ROOM.MAZE].includes(state.room)) return;
+    const list = spawnList();
+    const normal = list.filter(e => e.alive && !BOSS_TYPES.includes(e.type) && !e.mini && e.type !== 'worm' && e.type !== 'shadow');
+    if (!normal.length) return;
+    const base = normal[Math.floor(Math.random() * normal.length)];
+    const spot = randomSpawnSpot(220), hp = ENEMY_TYPES[base.type].hp * 4;
+    list.push({ ...base, x: spot.x, y: spot.y, home: { ...(base.home || {}), x: spot.x, y: spot.y }, r: base.r * 1.7, hp, maxHp: hp, coinDrop: 15, mini: true, emerge: 40 });
+    showToast(`⚠ A MINI-BOSS ${ENEMY_TYPES[base.type].name.toUpperCase()} is here!`, '#FFAA44', 180);
+}
+function drawMiniBossLabels() {
+    for (const e of roomEnemies()) if (e.mini && e.alive && !e.hidden) {
+        ctx.fillStyle = '#FFAA44'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚠ MINI-BOSS', e.x, e.y - e.r - 16);
     }
 }
 
-// ── UPDATE: AMMO RELOAD ───────────────────────────────────────
-function updateAmmo() {
-    if (!state.ammoReloading) return;
-    state.ammoReloadTimer--;
-    if (state.ammoReloadTimer <= 0) {
-        state.ammoReloading  = false;
-        state.ammo           = state.ammoMax;
+// 👾 Gloop: a lonely monster in Paradise. Give it 3 cookies and it becomes your friend!
+const GLOOP = { x: 640, y: 400 };
+const GLOOP_COOKIE = 5;
+let gloopTimer = 0;
+function befriendGloop() {
+    if (state.gloop >= 3) { spawnFloatText(GLOOP.x, GLOOP.y - 30, '👾 Gloop loves you!', '#AAFFAA', 60); return; }
+    if (!spend(GLOOP_COOKIE)) return;
+    state.gloop = (state.gloop || 0) + 1;
+    spawnFloatText(GLOOP.x, GLOOP.y - 30, `🍪 Nom nom! ${'💚'.repeat(state.gloop)}`, '#AAFFAA', 80);
+    if (state.gloop >= 3) { giveAward('gloop'); sfx('win'); showToast('👾 Gloop is your FRIEND now! It will follow you and help fight!', '#AAFFAA', 240); }
+}
+function updateGloop() {
+    if (state.gloop < 3 || !playing() || ++gloopTimer < 100) return;
+    gloopTimer = 0;
+    const gx = player.x + 34, gy = player.y - 26, e = nearestTarget(320);
+    if (!e) return;
+    const a = Math.atan2(e.y - gy, e.x - gx);
+    projectiles.push({ x: gx, y: gy, dx: Math.cos(a) * 7, dy: Math.sin(a) * 7, color: '#66FF66', power: POWER.WATER, life: 60, r: 6, fromPet: true });
+}
+function drawGloop() {
+    const t = Date.now() / 1000;
+    const draw = (x, y, sad) => {
+        ctx.save(); ctx.font = '26px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('👾', x, y + Math.sin(t * 4) * 2); if (sad) { ctx.font = '12px Arial'; ctx.fillText('💧', x + 12, y - 8); } ctx.restore();
+    };
+    if (state.gloop >= 3) { if (state.gamePhase === 'playing') draw(player.x + 34, player.y - 26, false); return; }
+    if (state.room !== ROOM.PARADISE) return;
+    draw(GLOOP.x, GLOOP.y, true);
+    ctx.fillStyle = '#FFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center'; ctx.fillText('Gloop (lonely)', GLOOP.x, GLOOP.y + 24);
+    if (Math.hypot(player.x - GLOOP.x, player.y - GLOOP.y) < 40 && !menu) {
+        const verb = mainBtn();
+        drawSpeech({ x: GLOOP.x, y: GLOOP.y - 14 }, `${verb}: Give a cookie (🪙${GLOOP_COOKIE}) ${state.gloop || 0}/3`);
     }
 }
 
