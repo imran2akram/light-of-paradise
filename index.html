@@ -2127,9 +2127,9 @@ const RIDDLES = [
     ['What is full of holes but still holds water?', 'A sponge', ['A bucket', 'A net']],
 ];
 
-// The maze is rebuilt every visit: 11 × 7 rooms, walls of stone blocks between them
+// The maze is rebuilt every visit: 11 × 7 rooms, walls of Maze Stone (can't be mined) between them
 function makeMazeBlocks() {
-    const b = {}, W = 11, H = 7, seen = new Set(), put = (cx, cy) => { b[cellKey(cx, cy)] = { type: 'brick', hits: 0 }; };
+    const b = {}, W = 11, H = 7, seen = new Set(), put = (cx, cy) => { b[cellKey(cx, cy)] = { type: 'mazeStone', hits: 0 }; };
     const walls = new Set();
     for (let cx = 0; cx <= 3 * W; cx++) for (let cy = 2; cy <= 3 + 3 * H; cy++) walls.add(cellKey(cx, cy));
     const open = (i, j) => { for (let dx = 1; dx <= 2; dx++) for (let dy = 1; dy <= 2; dy++) walls.delete(cellKey(3 * i + dx, 2 + 3 * j + dy)); };
@@ -5286,6 +5286,7 @@ const SFX = {
     place:    () => { tone(200, 0.06, 'square', 0.15, 120); noise(0.05, 0.2, 800); },
     groan:    () => { tone(140, 0.6, 'sawtooth', 0.08, 90); },
     hiss:     () => noise(0.8, 0.25, 5000),
+    clink:    () => { tone(1500, 0.05, 'square', 0.1, 900); tone(700, 0.08, 'triangle', 0.12, 500, 0.03); },
     stick:    () => { noise(0.08, 0.2, 1800); tone(260, 0.1, 'triangle', 0.18, 120); },
     whoosh:   () => { noise(0.2, 0.2, 2500); tone(300, 0.2, 'sine', 0.08, 900); },
     boom:     () => { noise(0.6, 0.5, 600); tone(80, 0.5, 'sawtooth', 0.3, 30); },
@@ -5825,6 +5826,7 @@ const BLOCKS = {
     leaves:     { name: 'Leaves',      hits: 1, drop: 'leaves'  },
     planks:     { name: 'Planks',      hits: 3, drop: 'planks'  },
     brick:      { name: 'Bricks',      hits: 4, drop: 'brick'   },
+    mazeStone:  { name: 'Maze Wall',   hits: 1, drop: null, unbreakable: true },   // only the maze uses it: never craftable, placeable or dropped
     glass:      { name: 'Glass',       hits: 1, drop: 'glass'   },
     gold:       { name: 'Gold Block',  hits: 4, drop: 'gold'    },
     cloud:      { name: 'Cloud',       hits: 1, drop: 'cloud'   },
@@ -5834,6 +5836,9 @@ const BLOCKS = {
     goldOre:    { name: 'Gold Ore',    hits: 5, drop: 'gold'    },
     diamondOre: { name: 'Diamond Ore', hits: 6, drop: 'diamond' },
 };
+const HARD_MSG_FRAMES = 60;   // "Too hard!" shows at most this often while you bash an unbreakable block
+let lastHardMsg = -999;
+function isUnbreakable(b) { return !!(b && BLOCKS[b.type] && BLOCKS[b.type].unbreakable); }
 const HOTBAR = ['dirt', 'grass', 'stone', 'log', 'planks', 'brick', 'glass', 'leaves', 'gold', 'cloud', 'tnt'];   // blocks you can place
 const MATERIALS = { iron: '⛓ Iron', diamond: '💎 Diamond' };
 const BUILD_REACH   = 170;    // how far away you can click to build
@@ -5932,6 +5937,12 @@ function buildAt(cx, cy, aimX, aimY) {
     const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
     state.digAnim = 14;
     if (!b && mineScenery(aimX !== undefined ? aimX : x, aimY !== undefined ? aimY : y)) return;   // chop trees, mine rocks
+    if (b && isUnbreakable(b)) {   // maze walls: a clink and a short message, nothing breaks
+        sfx('clink');
+        spawnParticles(x, y, '#9A9AB0', 3);
+        if (frameNo - lastHardMsg >= HARD_MSG_FRAMES) { lastHardMsg = frameNo; spawnFloatText(x, y - 10, 'Too hard!', '#FFFFFF', 50); }
+        return;
+    }
     if (b) {
         b.hits++;
         const need = state.diamondPickaxe || isCreative() ? 1 : BLOCKS[b.type].hits;
@@ -6159,7 +6170,7 @@ function blastBlocks(x, y, radius) {
             litTnt.push({ room: state.room, cx: ccx + dx, cy: ccy + dy, t: 12 });   // chain reaction!
             continue;
         }
-        if (b.type !== 'tnt') delete blocks[k];
+        if (b.type !== 'tnt' && !isUnbreakable(b)) delete blocks[k];
     }
     worldDirty = true;
 }
@@ -6171,7 +6182,7 @@ function updateBlocks() {
         if (--t.t > 0) continue;
         litTnt.splice(i, 1);
         const blocks = roomBlocks();
-        delete blocks[cellKey(t.cx, t.cy)];
+        if (!isUnbreakable(blocks[cellKey(t.cx, t.cy)])) delete blocks[cellKey(t.cx, t.cy)];
         const x = t.cx * CELL + CELL / 2, y = t.cy * CELL + CELL / 2;
         blastBlocks(x, y, 2);
         for (const e of targetableEnemies()) if (Math.hypot(e.x - x, e.y - y) < 85) damageEnemy(e, POWER.NONE, false, 2);
@@ -6185,7 +6196,7 @@ function updateBlocks() {
 const blockArt = {};
 function blockColor(type) {
     return { grass: '#5DA84A', dirt: '#8A5A34', stone: '#8A8A8A', log: '#7A5230', leaves: '#3F8F2F', planks: '#B88A50', brick: '#A0442E',
-             glass: '#BFE8FF', gold: '#F2C82E', cloud: '#FFFFFF', tnt: '#D23A2A', netherrack: '#7A2A26', ironOre: '#8A8A8A',
+             glass: '#BFE8FF', gold: '#F2C82E', cloud: '#FFFFFF', tnt: '#D23A2A', netherrack: '#7A2A26', mazeStone: '#3B3B4A', ironOre: '#8A8A8A',
              goldOre: '#7A2A26', diamondOre: '#8A8A8A' }[type];
 }
 function blockCanvas(type) {
@@ -6214,6 +6225,12 @@ function blockCanvas(type) {
     if (type === 'gold')  { g.fillStyle = '#FFF0A0'; g.fillRect(3, 3, 6, 3); g.fillStyle = '#C89A10'; g.fillRect(0, CELL - 3, CELL, 3); }
     if (type === 'cloud') { g.fillStyle = '#E8F4FF'; g.fillRect(0, CELL - 4, CELL, 4); }
     if (type === 'leaves'){ g.fillStyle = 'rgba(0,40,0,0.5)'; for (let i = 0; i < 8; i++) g.fillRect(Math.floor(R() * 8) * px, Math.floor(R() * 8) * px, px, px); }
+    if (type === 'mazeStone') {   // dark, heavy stone slabs with a pale edge and cracks: clearly not brick
+        g.fillStyle = '#23232E'; g.fillRect(0, 0, CELL, 3); g.fillRect(0, 11, CELL, 2); g.fillRect(0, 21, CELL, 3);
+        g.fillRect(8, 3, 2, 8); g.fillRect(16, 13, 2, 8);
+        g.fillStyle = '#5A5A70'; g.fillRect(1, 3, 6, 1); g.fillRect(11, 13, 5, 1); g.fillRect(1, 13, 6, 1);
+        g.strokeStyle = '#14141C'; g.lineWidth = 1; g.beginPath(); g.moveTo(14, 4); g.lineTo(12, 9); g.lineTo(15, 10); g.stroke();
+    }
     if (type === 'tnt')   { g.fillStyle = '#F2F2F2'; g.fillRect(0, 8, CELL, 8); g.fillStyle = '#222'; g.font = 'bold 8px Arial'; g.textAlign = 'center'; g.fillText('TNT', CELL / 2, 15); }
     if (type === 'ironOre')    spots('#D8B890', 6);
     if (type === 'goldOre')    spots('#FFD84A', 6);
@@ -6230,7 +6247,7 @@ function drawBlocks() {
         const x = cx * CELL, y = cy * CELL;
         ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x + 3, y + 3, CELL, CELL);   // little shadow
         ctx.drawImage(blockCanvas(b.type), x, y);
-        if (b.hits > 0) {   // cracks as you mine it
+        if (b.hits > 0 && !isUnbreakable(b)) {   // cracks as you mine it
             ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1.2;
             ctx.beginPath(); ctx.moveTo(x + 4, y + 5); ctx.lineTo(x + 11, y + 12); ctx.lineTo(x + 9, y + 19);
             if (b.hits > 1) { ctx.moveTo(x + 11, y + 12); ctx.lineTo(x + 19, y + 9); }
@@ -6244,7 +6261,7 @@ function drawBlocks() {
     }
     if (!state.buildMode && !menu) {   // walked up to something you can chop or mine
         const m = nearbyMineable();
-        if (m) {
+        if (m && !(m.cx !== undefined && isUnbreakable(blockAtCell(m.cx, m.cy)))) {   // (no invitation to mine maze walls)
             const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
             const o = m.scenery, x = o ? o.x : m.cx * CELL + CELL / 2, y = o ? o.y - o.r - 14 : m.cy * CELL - 6;
             const what = o ? (o.kind === 'tree' ? '🪓 Chop the tree' : '⛏ Mine the rock') : `⛏ Mine the ${BLOCKS[blockAtCell(m.cx, m.cy).type].name}`;

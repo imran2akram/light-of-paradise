@@ -81,6 +81,42 @@ scenario('smiting stick hurts a monster with no element', () => {
     return '';
 });
 
+// Is there a walkable path from the maze start to the treasure? (cells without a block)
+const mazeConnected = b => {
+    const c = p => [Math.floor(p.x / CELL), Math.floor(p.y / CELL)];
+    const [sx, sy] = c(MAZE_START), [gx, gy] = c(MAZE_GOAL), seen = new Set([cellKey(sx, sy)]), todo = [[sx, sy]];
+    while (todo.length) {
+        const [x, y] = todo.pop();
+        if (x === gx && y === gy) return true;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const k = cellKey(x + dx, y + dy);
+            if (x + dx < 0 || x + dx > 33 || y + dy < 0 || y + dy > 24 || b[k] || seen.has(k)) continue;
+            seen.add(k); todo.push([x + dx, y + dy]);
+        }
+    }
+    return false;
+};
+
+scenario('maze walls: start connects to the goal in 200 mazes', () => {
+    globalThis.__bad = 0;
+    for (let i = 0; i < 200; i++) if (!mazeConnected(makeMazeBlocks())) globalThis.__bad++;
+}, () => globalThis.__bad ? globalThis.__bad + ' unsolvable mazes' : '');
+
+scenario('maze walls cannot be mined, even with a diamond pickaxe or in Creative', () => {
+    delete worldBlocks.maze; changeRoom(ROOM.MAZE); roomBlocks();
+    const key = Object.keys(worldBlocks.maze).find(k => worldBlocks.maze[k].type === 'mazeStone');
+    const [cx, cy] = key.split(',').map(Number);
+    globalThis.__wall = [];
+    for (const mode of ['normal', 'pickaxe', 'creative']) {
+        state.diamondPickaxe = mode === 'pickaxe'; settings.creative = mode === 'creative';
+        for (let i = 0; i < 12; i++) buildAt(cx, cy);
+        globalThis.__wall.push(!!blockAtCell(cx, cy));
+    }
+    blastBlocks(cx * CELL + 12, cy * CELL + 12, 3);
+    globalThis.__wall.push(!!blockAtCell(cx, cy));
+    state.diamondPickaxe = false; settings.creative = false;
+}, () => globalThis.__wall.every(Boolean) ? '' : 'a maze wall was removed: ' + globalThis.__wall);
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;
