@@ -433,6 +433,157 @@ check('blocks cannot be placed on portals, exits, doors, the rocket, race master
     return out.join('; ');
 });
 
+
+// ── PHONES: touch buttons, build-mode taps, hotbar, menu ✕ ──
+const PHONE_SIZES = [[844, 390], [740, 360], [1024, 768]];   // two sideways phones and a tablet
+function phoneMode(w, h) {
+    innerWidth = w; innerHeight = h; isTouchDevice = true;
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: parseFloat(canvas.style.width), height: parseFloat(canvas.style.height) });
+    fitCanvas(); layoutTouch();
+}
+function desktopMode() {
+    innerWidth = 1280; innerHeight = 800; isTouchDevice = false;
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 });
+    fitCanvas();
+}
+// a finger down and up at game position (gx, gy)
+function fingerTap(gx, gy, id = 9) {
+    const r = canvas.getBoundingClientRect();
+    const t = { identifier: id, clientX: (gx + view.offX) * r.width / view.w, clientY: gy * r.height / GAME_H };
+    cfire('touchstart', { preventDefault() {}, changedTouches: [t], touches: [t] });
+    cfire('touchend',   { preventDefault() {}, changedTouches: [t], touches: [] });
+}
+function startPlaying() {
+    state.gamePhase = 'playing'; state.won = false; state.levelComplete = false; menu = null; state.shopOpen = false; state.awardsOpen = false;
+    changeRoom(ROOM.VOID); player.x = 400; player.y = 300; settings.creative = false;
+    state.spell = SPELLS[0].id; state.lastMount = MOUNTS[0].id; state.gadget = GADGETS[0].id; state.hasDash = true; state.demigod = GOD_PARENTS[0].id;
+}
+
+check('touch buttons are finger-sized (48 px on screen) and never overlap, in fight and build mode', () => {
+    const out = [];
+    for (const [w, h] of PHONE_SIZES) for (const build of [false, true]) {
+        phoneMode(w, h); startPlaying(); state.buildMode = build;
+        const list = touchButtonList().map(([b, icon]) => ({ name: icon || 'SHOOT', x: b.x, y: b.y, r: b.r }));
+        list.push({ name: 'STICK', x: VJOY.x, y: VJOY.y, r: joyGrabR() });
+        const tag = w + 'x' + h + (build ? ' build' : ' fight');
+        for (const b of list) {
+            if (b.name === 'STICK') continue;
+            if (b.r * 2 * view.fit < 47.5 && b.r < TOUCH_R_MAX) out.push(tag + ': ' + b.name + ' only ' + Math.round(b.r * 2 * view.fit) + ' px');
+            if (b.x - b.r < -view.offX - 0.5 || b.x + b.r > GAME_W + view.offX + 0.5 || b.y - b.r < 0 || b.y + b.r > GAME_H) out.push(tag + ': ' + b.name + ' is off the screen');
+        }
+        for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+            const a = list[i], b = list[j];
+            if (Math.hypot(a.x - b.x, a.y - b.y) < a.r + b.r) out.push(tag + ': ' + a.name + ' overlaps ' + b.name);
+        }
+        if (build) {   // the block row must not cover any button either
+            const p = hotbarPanel();
+            for (const b of list) {
+                const nx = Math.max(p.x, Math.min(b.x, p.x + p.w)), ny = Math.max(p.y, Math.min(b.y, p.y + p.h));
+                if (Math.hypot(b.x - nx, b.y - ny) < b.r) out.push(tag + ': the hotbar covers ' + b.name);
+            }
+        }
+    }
+    desktopMode();
+    return out.join('; ');
+});
+
+check('build mode on a phone: a tap mines the block there, places on an empty cell, ignores buttons and the stick', () => {
+    const out = [];
+    phoneMode(844, 390); startPlaying(); state.buildMode = true; state.hotbar = 0; state.inv.dirt = 10;
+    const cx = 17, cy = 11, gx = cx * CELL + CELL / 2, gy = cy * CELL + CELL / 2;   // near the player
+    worldBlocks[ROOM.VOID] = {}; const blocks = roomBlocks();
+    fingerTap(gx, gy);
+    if (!blocks[cellKey(cx, cy)]) out.push('tap on an empty cell did not place a block');
+    if (state.inv.dirt !== 9) out.push('placing did not use a block');
+    if (!buildFlash) out.push('the tapped cell is not marked');
+    state.diamondPickaxe = true;   // one hit mines
+    fingerTap(gx, gy);
+    if (blocks[cellKey(cx, cy)]) out.push('tap on a block did not mine it');
+    // far away: nothing happens
+    const farX = 40, farY = 150, before = Object.keys(blocks).length;
+    fingerTap(farX, farY);
+    if (Object.keys(blocks).length !== before) out.push('a tap out of reach built something');
+    // taps on buttons and the stick never build
+    for (const [b, icon] of touchButtonList().concat([[VJOY, 'STICK']])) {
+        if (!icon) continue;   // (the big PLACE button builds in front of you on purpose)
+        const n = Object.keys(blocks).length; state.buildMode = true; menu = null;
+        fingerTap(b.x, b.y);
+        if (Object.keys(blocks).length !== n) out.push('a tap on ' + (icon || 'SHOOT') + ' built a block');
+        state.buildMode = true; vTouch.joyId = null; vTouch.shootId = null; vTouch.meleeId = null; vTouch.blockId = null; fight.holding = false; fight.blocking = false;
+    }
+    state.buildMode = false; state.diamondPickaxe = false;
+    desktopMode();
+    return out.join('; ');
+});
+
+check('hotbar slots can be tapped (finger) and clicked (mouse)', () => {
+    const out = [];
+    phoneMode(844, 390); startPlaying(); state.buildMode = true;
+    const { n, W, x0, y0 } = hotbarGeom();
+    for (const i of [0, 4, n - 1]) {
+        state.hotbar = (i + 1) % n;
+        fingerTap(x0 + i * W + W / 2, y0 + W / 2);
+        if (state.hotbar !== i) out.push('finger on slot ' + i + ' gave ' + state.hotbar);
+    }
+    desktopMode(); state.buildMode = true; lastInput = 'keyboard';
+    const g = hotbarGeom(), blocksBefore = Object.keys(roomBlocks()).length;
+    state.hotbar = 0;
+    for (const f of (canvasListeners.click || [])) f({ clientX: g.x0 + 3 * g.W + 5, clientY: g.y0 + 5 });
+    if (state.hotbar !== 3) out.push('mouse click on slot 3 gave ' + state.hotbar);
+    if (Object.keys(roomBlocks()).length !== blocksBefore) out.push('a hotbar click also built');
+    state.buildMode = false;
+    return out.join('; ');
+});
+
+check('the menu has a close button that works with a finger and a mouse', () => {
+    const out = [];
+    phoneMode(844, 390); startPlaying();
+    openMenu('TEST', () => [{ icon: '🪙', name: 'Thing', desc: 'A thing', cost: 0, status: null, action() {} }]);
+    fingerTap(MENU_CLOSE.x, MENU_CLOSE.y);
+    if (menu) out.push('finger on the ✕ did not close the menu');
+    desktopMode();
+    openMenu('TEST', () => [{ icon: '🪙', name: 'Thing', desc: 'A thing', cost: 0, status: null, action() {} }]);
+    for (const f of (canvasListeners.click || [])) f({ clientX: MENU_CLOSE.x, clientY: MENU_CLOSE.y });
+    if (menu) out.push('click on the ✕ did not close the menu');
+    return out.join('; ');
+});
+
+check('an upright phone pauses behind a turn-me message; a tall desktop window does not', () => {
+    const out = [];
+    desktopMode(); innerWidth = 700; innerHeight = 1000; fitCanvas();
+    if (needTurn || paused) out.push('a tall desktop window was paused');
+    phoneMode(390, 844);
+    if (!needTurn || !paused) out.push('an upright phone did not pause');
+    initAudio(); resumeGame();
+    if (!paused) out.push('a tap un-paused it while still upright');
+    phoneMode(844, 390); resumeGame();
+    if (needTurn || paused) out.push('turning the phone sideways did not resume');
+    desktopMode();
+    return out.join('; ');
+});
+
+check('safe-area insets shrink the picture, and the stick is drawn where the finger is', () => {
+    const out = [];
+    phoneMode(844, 390); startPlaying();
+    const plain = view.fit;
+    window.getComputedStyle = () => ({ paddingLeft: '44px', paddingRight: '44px', paddingTop: '0px', paddingBottom: '20px' });
+    fitCanvas();
+    if (!(view.fit < plain)) out.push('the bottom inset did not shrink the picture');
+    if (parseFloat(canvas.style.width) > 844 - 88) out.push('the canvas is wider than the safe area');
+    window.getComputedStyle = undefined; fitCanvas();
+    // stick: finger lands off the resting spot
+    const mid = { x: VJOY.x + 30, y: VJOY.y - 20 }, r = canvas.getBoundingClientRect();
+    const t = { identifier: 3, clientX: (mid.x + view.offX) * r.width / view.w, clientY: mid.y * r.height / GAME_H };
+    cfire('touchstart', { preventDefault() {}, changedTouches: [t], touches: [t] });
+    let arcs = [];
+    const realArc = ctx.arc; ctx.arc = (x, y, rad) => arcs.push([x, y, rad]);
+    drawVirtualControls(); ctx.arc = realArc;
+    if (!arcs.some(a => Math.abs(a[0] - mid.x) < 0.1 && Math.abs(a[1] - mid.y) < 0.1)) out.push('the stick base is not drawn under the finger');
+    cfire('touchend', { preventDefault() {}, changedTouches: [t], touches: [] });
+    desktopMode();
+    return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;

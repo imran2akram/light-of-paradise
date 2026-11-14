@@ -3,11 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
     <title>The Light of Paradise</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; font-family: Arial, sans-serif; overflow: hidden; }
+        /* The black bars around the game must not pull-to-refresh, zoom, select text or pop up a callout on a phone.
+           (touch-action: none still delivers touch events, so the intro's tap-to-skip keeps working.) */
+        html, body { overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none;
+                     -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh;
+               position: fixed; top: 0; left: 0; width: 100%; font-family: Arial, sans-serif; overflow: hidden;
+               /* notches and home bars: the game is fitted inside the safe area (fitCanvas reads this padding) */
+               padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
         canvas { display: block; cursor: pointer; touch-action: none; }
+
+        /* Phone held upright: a big "turn me" message instead of a tiny game */
+        #turnPhone {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 200;
+            background: #080018; color: #FFE066; display: none;
+            flex-direction: column; align-items: center; justify-content: center; text-align: center;
+            font-weight: bold; font-size: 7vw; padding: 24px;
+        }
+        #turnPhone svg { width: 34vw; max-width: 180px; margin-bottom: 20px; animation: turn 2.4s ease-in-out infinite; }
+        @keyframes turn { 0%, 25% { transform: rotate(0deg); } 65%, 100% { transform: rotate(-90deg); } }
 
         #videoOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -39,6 +60,10 @@
     <div id="skipHint">Tap, click, or press SPACE, ENTER or any button to skip</div>
 </div>
 <canvas id="gameCanvas"></canvas>
+<div id="turnPhone">
+    <svg viewBox="0 0 60 100" aria-hidden="true"><rect x="6" y="4" width="48" height="92" rx="9" fill="none" stroke="#FFE066" stroke-width="5"/><circle cx="30" cy="85" r="4" fill="#FFE066"/></svg>
+    Turn your phone sideways
+</div>
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -47,19 +72,60 @@ const ctx = canvas.getContext('2d');
 // The game always thinks in 800×600. The canvas is stretched to fill the
 // window (keeping its shape), and drawn with more real pixels on big or
 // sharp screens so it stays crisp instead of blurry.
+// On a phone the window is much wider than 4:3, so the canvas grows sideways into the spare room:
+// the game stays in the middle (0..800) and the touch buttons sit out in the side margins, off the picture.
+// Everything is fitted inside the safe area, so a notch or home bar never covers a button.
 const GAME_W = 800, GAME_H = 600;
 const MAX_RENDER_SCALE = 3;   // more than this gets slow on big 4K screens
+const MAX_VIEW_W = 1500;      // the widest picture (very wide phones): more margin than this is just black bars
+const PHONE_MAX_SIDE = 600;   // a touch screen whose short side is under this is a phone: held upright it asks to be turned
 let renderScale = 1;
+let isTouchDevice = false;    // set by the first touch
+let gameReady = false;        // false while this script is still loading (pausing needs the rest of it)
+// view: how wide the canvas is in game pixels (w), how far the game is pushed in from the left (offX),
+// and CSS pixels per game pixel (fit). Desktop: w = 800, offX = 0.
+const view = { w: GAME_W, offX: 0, fit: 1, margin: false };
+let layoutDirty = true;       // the touch buttons are placed again before they are next drawn or tapped
+let needTurn = false;         // a phone is held upright
+
+function usesTouchLayout() {
+    return isTouchDevice || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);
+}
+function safeInsets() {   // the body padding is env(safe-area-inset-*): read back as real pixels
+    const out = { l: 0, r: 0, t: 0, b: 0 };
+    try {
+        const cs = window.getComputedStyle(document.body);
+        out.l = parseFloat(cs.paddingLeft) || 0;  out.r = parseFloat(cs.paddingRight) || 0;
+        out.t = parseFloat(cs.paddingTop) || 0;   out.b = parseFloat(cs.paddingBottom) || 0;
+    } catch (e) { /* no styles (tests): no insets */ }
+    return out;
+}
 
 function fitCanvas() {
-    const fit = Math.min(window.innerWidth / GAME_W, window.innerHeight / GAME_H);
-    canvas.style.width  = Math.floor(GAME_W * fit) + 'px';
+    const sa = safeInsets();
+    const availW = Math.max(1, window.innerWidth - sa.l - sa.r), availH = Math.max(1, window.innerHeight - sa.t - sa.b);
+    const fit = Math.min(availW / GAME_W, availH / GAME_H);
+    view.fit = fit;
+    view.w = usesTouchLayout() ? Math.max(GAME_W, Math.min(MAX_VIEW_W, availW / fit)) : GAME_W;
+    view.offX = (view.w - GAME_W) / 2;
+    view.margin = view.offX > 0;
+    canvas.style.width  = Math.floor(view.w * fit) + 'px';
     canvas.style.height = Math.floor(GAME_H * fit) + 'px';
     renderScale = Math.max(1, Math.min(MAX_RENDER_SCALE, fit * (window.devicePixelRatio || 1)));
-    canvas.width  = Math.round(GAME_W * renderScale);
+    canvas.width  = Math.round(view.w * renderScale);
     canvas.height = Math.round(GAME_H * renderScale);
+    layoutDirty = true;
+    // A phone held upright is too small to play on: the game waits behind a "turn me" message
+    const turn = usesTouchLayout() && window.innerHeight > window.innerWidth && Math.min(window.innerWidth, window.innerHeight) < PHONE_MAX_SIDE;
+    if (turn !== needTurn) {
+        needTurn = turn;
+        const el = document.getElementById('turnPhone');
+        if (el) el.style.display = turn ? 'flex' : 'none';
+        if (gameReady) { if (turn) pauseGame(); else resumeGame(); }
+    }
 }
 window.addEventListener('resize', fitCanvas);
+window.addEventListener('orientationchange', fitCanvas);
 fitCanvas();
 
 // ── VIDEO INTRO ───────────────────────────────────────────────
@@ -97,6 +163,7 @@ const introVideo = (function setupVideoIntro() {
     }
 
     function dismiss() {
+        initAudio();   // a tap or key press: the moment browsers allow sound (does nothing twice)
         if (dismissed) return;
         dismissed = true;
         document.removeEventListener('keydown', onKey);
@@ -107,6 +174,7 @@ const introVideo = (function setupVideoIntro() {
     video.addEventListener('ended',   dismiss);
     overlay.addEventListener('click',      dismiss);
     overlay.addEventListener('touchstart', e => { e.preventDefault(); dismiss(); }, { passive: false });
+    overlay.addEventListener('touchend',   e => { e.preventDefault(); initAudio(); }, { passive: false });   // (iOS counts the lift as the tap)
     function onKey(e) {
         if (e.code !== 'Space' && e.code !== 'Enter') return;
         e.preventDefault(); e.stopImmediatePropagation();   // (that press only skips the video: it must not also start the game)
@@ -1454,6 +1522,7 @@ function shopSelect(i) {
 // Each item: { icon, name, desc, cost?, status?, action() }
 let menu = null;   // { title, items, cursor }
 const MENU = { X: 130, Y: 70, W: 540, H: 430 };
+const MENU_CLOSE = { x: MENU.X + MENU.W - 26, y: MENU.Y + 20, r: 15, hitR: 34 };   // the ✕ (the tap area stays above the first row of items)
 
 // opts (optional): hint = the small line under the title, h = a shorter panel for menus with only a few items
 function openMenu(title, items, opts = {}) { menu = { title, items, cursor: 0, hint: opts.hint, h: opts.h || MENU.H }; }
@@ -1523,10 +1592,14 @@ function pressStart() {
 
 // A tap or click at canvas position (x, y). Returns true if it hit a button.
 function handleTap(x, y) {
-    if (Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < MUTE_BTN.r * 1.5) { toggleMute(); return true; }
-    if (state.gamePhase === 'playing' && Math.hypot(x - SETTINGS_BTN.x, y - SETTINGS_BTN.y) < SETTINGS_BTN.r * 1.4) { openSettings(); return true; }
+    if (layoutDirty && usesTouchLayout()) layoutTouch();
+    // (on a phone these two are big round touch buttons, drawn with the others and only while they are on screen)
+    const touchSys = usesTouchLayout();
+    if ((!touchSys || touchUiShown()) && Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < (touchSys ? MUTE_BTN.r : MUTE_BTN.r * 1.5)) { toggleMute(); return true; }
+    if (state.gamePhase === 'playing' && (!touchSys || touchUiShown()) && Math.hypot(x - SETTINGS_BTN.x, y - SETTINGS_BTN.y) < (touchSys ? SETTINGS_BTN.r : SETTINGS_BTN.r * 1.4)) { openSettings(); return true; }
     if (state.gamePhase === 'intro' && !menu) {   // (the New Game question is a menu: it gets the taps)
-        if (savedGame && inRect(x, y, NEW_GAME_BTN)) askNewGame();
+        if (fullscreenOK() && inRect(x, y, FULLSCREEN_BTN)) toggleFullscreen();
+        else if (savedGame && inRect(x, y, NEW_GAME_BTN)) askNewGame();
         else startFromIntro();
         return true;
     }
@@ -1537,25 +1610,31 @@ function handleTap(x, y) {
     if (lastInput !== 'touch' && state.gamePhase === 'playing' && !menu && !state.shopOpen && inRect(x, y, BUILD_BTN)) { toggleBuild(); return true; }
     if (state.awardsOpen) { state.awardsOpen = false; return true; }
     if (menu) {
+        if (Math.hypot(x - MENU_CLOSE.x, y - MENU_CLOSE.y) < MENU_CLOSE.hitR) { menu = null; return true; }   // the ✕
         const list = menu.items();
         for (let i = 0; i < list.length; i++) if (inRect(x, y, menuItemRect(i))) { menuSelect(i); return true; }
         if (!inRect(x, y, { x: MENU.X, y: MENU.Y, w: MENU.W, h: menu.h }) || y < MENU.Y + 40) menu = null;   // tap outside / title bar closes
         return true;
     }
+    if (state.buildMode && state.gamePhase === 'playing' && !state.shopOpen && !state.won && !state.levelComplete) {
+        const slot = hotbarSlotAt(x, y);   // the block row along the bottom: tap a block to pick it
+        if (slot >= 0) { state.hotbar = slot; sfx('clink'); return true; }
+        if (inRect(x, y, hotbarPanel())) return true;   // (the gaps in it are not the world)
+    }
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
-        if (Math.hypot(x - VBUILD.x, y - VBUILD.y) < VBUILD.r * 1.3) { toggleBuild(); return true; }
-        if (state.spell && Math.hypot(x - VSPELL.x, y - VSPELL.y) < VSPELL.r * 1.3) { castSpell(); return true; }
-        if (godParent() && Math.hypot(x - VGOD.x, y - VGOD.y) < VGOD.r * 1.3) { useGodPower(); return true; }
-        if (state.lastMount && Math.hypot(x - VMOUNT.x, y - VMOUNT.y) < VMOUNT.r * 1.3) { toggleMount(); return true; }
-        if (state.buildMode && Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { nextBlock(); return true; }
-        if (Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { useGadget(); return true; }
-        if (Math.hypot(x - VDASH.x,   y - VDASH.y)   < VDASH.r * 1.3)   { dash();      return true; }
+        if (inBtn(x, y, VBUILD)) { toggleBuild(); return true; }
+        if (state.spell && inBtn(x, y, VSPELL)) { castSpell(); return true; }
+        if (godParent() && inBtn(x, y, VGOD)) { useGodPower(); return true; }
+        if (state.lastMount && inBtn(x, y, VMOUNT)) { toggleMount(); return true; }
+        if (state.buildMode && inBtn(x, y, VGADGET)) { nextBlock(); return true; }
+        if (inBtn(x, y, VGADGET)) { useGadget(); return true; }
+        if (inBtn(x, y, VDASH))   { dash();      return true; }
     }
     if (!state.shopOpen && canOpenShop() && inRect(x, y, AWARDS_BTN)) { state.awardsOpen = true; return true; }
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
-        if (Math.hypot(x - VDANCE.x, y - VDANCE.y) < VDANCE.r * 1.3) { dance(); return true; }
-        if (Math.hypot(x - VFART.x,  y - VFART.y)  < VFART.r * 1.3)  { fart();  return true; }
-        if (Math.hypot(x - VSILLY.x, y - VSILLY.y) < VSILLY.r * 1.3) { (sillyTurn++ % 2 ? sneeze : burp)(); return true; }
+        if (inBtn(x, y, VDANCE)) { dance(); return true; }
+        if (inBtn(x, y, VFART))  { fart();  return true; }
+        if (inBtn(x, y, VSILLY)) { (sillyTurn++ % 2 ? sneeze : burp)(); return true; }
     }
     if ((state.won || state.levelComplete) && inRect(x, y, END_BTN)) { pressStart(); return true; }
     if (state.shopOpen) {
@@ -1661,12 +1740,13 @@ function pauseGame() {
     vTouch.joyId = vTouch.shootId = vTouch.meleeId = vTouch.blockId = null;
     vTouch.joyDX = vTouch.joyDY = 0;
     padMove.x = padMove.y = 0; padPrev = [];
+    buildFlash = null;
     // Let go without hitting: stopping a held punch must not fire a spin attack
     fight.holding = false; fight.hold = 0; fight.charge = 0; fight.blocking = false;
     if (audioCtx && audioCtx.state === 'running') audioCtx.suspend();   // the music timer keeps ticking in a hidden tab
 }
 function resumeGame() {
-    if (!paused || document.hidden) return;
+    if (!paused || document.hidden || needTurn) return;   // (a phone still held upright stays paused)
     paused = false; padResync = true;
     resetFrameClock();
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
@@ -1680,7 +1760,7 @@ window.addEventListener('focus', resumeGame);
 
 // Shown when the window is visible but not in front (a hidden tab needs no picture)
 function drawPaused() {
-    if (!paused) return;
+    if (!paused || needTurn) return;   // (the turn-your-phone page covers everything)
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, GAME_W, GAME_H);
     ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
@@ -3701,43 +3781,123 @@ window.addEventListener('gamepadconnected', () => {   // (hints switch to the co
 });
 
 // ── VIRTUAL TOUCH CONTROLS ────────────────────────────────────
-let isTouchDevice = false;
+// Rules for the layout: every button is at least TOUCH_MIN_CSS wide on the real screen (a child's thumb),
+// the tap area is exactly the drawn circle, and no two buttons overlap. layoutTouch() places them again
+// whenever the window changes, so a small phone gets bigger buttons (in game pixels) than a tablet.
+// Sideways phones have spare room left and right of the picture (view.offX): the buttons go there, off the game.
+const TOUCH_MIN_CSS  = 48;           // the smallest a button may be on the real screen (about 9 mm)
+const TOUCH_R_MIN    = 30;           // …but never smaller than this many game pixels
+const TOUCH_R_MAX    = 44;           // …or bigger than this (a tablet would get giant buttons)
+const TOUCH_GAP      = 6;            // space between two buttons
+const TOUCH_PAD      = 10;           // space between a button and the screen edge
+const SHOOT_SIZE     = 1.4;          // the big action button is this many times a normal one
+const JOY_SIZE       = 1.4;          // the joystick base, in normal button radii
+const JOY_GRAB       = 1.5;          // you can start the stick this far (× its radius) from its middle
+const JOYSTICK_DEADZONE_RATIO = 0.2; // fraction of maxDist before movement starts
 const VJOY   = { x: 100, y: 490, baseR: 55, maxDist: 40 };
 const VSHOOT = { x: 700, y: 490, r: 45 };
-const TOUCH_AREA_MULTIPLIER  = 1.5;  // expand tap hit area beyond visible radius
-const JOYSTICK_DEADZONE_RATIO = 0.2; // fraction of maxDist before movement starts
 const vTouch = { joyId: null, joyDX: 0, joyDY: 0, joyOriX: 0, joyOriY: 0, shootId: null, meleeId: null, blockId: null };
 const VMELEE = { x: 620, y: 350, r: 22 };
 const VBLOCK = { x: 760, y: 350, r: 20 };
 const VJUMP  = { x: 560, y: 405, r: 20 };
+let buildFlash = null;   // the block a finger just tapped in build mode: { cx, cy, t, ok }
+const BUILD_FLASH_FRAMES = 24;
+
+function touchR() { return Math.max(TOUCH_R_MIN, Math.min(TOUCH_R_MAX, TOUCH_MIN_CSS / 2 / view.fit)); }
+function inBtn(x, y, b) { return Math.hypot(x - b.x, y - b.y) <= b.r; }
+function joyGrabR() { return VJOY.baseR * JOY_GRAB; }
+
+// Thumb-friendly places. Right thumb: the big button with PUNCH beside it, JUMP above it and BLOCK
+// between them; then two columns of extras going up. Left thumb: the joystick, with the silly buttons above it.
+function layoutTouch() {
+    layoutDirty = false;
+    const tr = touchR(), step = 2 * tr + TOUCH_GAP;
+    const xL = -view.offX + TOUCH_PAD, xR = GAME_W + view.offX - TOUCH_PAD, yB = GAME_H - TOUCH_PAD;
+    VJOY.baseR = Math.round(tr * JOY_SIZE); VJOY.maxDist = Math.round(tr);
+    VJOY.x = xL + VJOY.baseR; VJOY.y = yB - VJOY.baseR;
+    const sr = VSHOOT.r = Math.round(tr * SHOOT_SIZE);
+    VSHOOT.x = xR - sr; VSHOOT.y = yB - sr;
+    for (const b of [VMELEE, VBLOCK, VJUMP, VSILLY, VDANCE, VFART, VBUILD, VSPELL, VMOUNT, VGOD, VDASH, VGADGET, MUTE_BTN, SETTINGS_BTN]) b.r = tr;
+    VMELEE.x = VSHOOT.x - sr - tr - TOUCH_GAP;   VMELEE.y = yB - tr;
+    VJUMP.x  = xR - tr;                          VJUMP.y  = VSHOOT.y - sr - tr - TOUCH_GAP;
+    VBLOCK.x = VMELEE.x;                         VBLOCK.y = VJUMP.y;
+    const col1 = VJUMP.x, col2 = VMELEE.x, up = k => VJUMP.y - k * step;
+    [[VDASH, 1], [VGADGET, 2], [VSPELL, 3], [VGOD, 4]].forEach(([b, k]) => { b.x = col1; b.y = up(k); });
+    [[VBUILD, 1], [VMOUNT, 2]].forEach(([b, k]) => { b.x = col2; b.y = up(k); });
+    const first = VJOY.y - joyGrabR() - tr - TOUCH_GAP;
+    [VDANCE, VFART, VSILLY, SETTINGS_BTN, MUTE_BTN].forEach((b, k) => { b.x = xL + tr; b.y = first - k * step; });
+}
+
+// Everything round on screen right now: [button, icon, held?]. Drawing and the tests both use this.
+function touchButtonList() {
+    const list = [[VSHOOT, '', vTouch.shootId !== null],
+                  [VMELEE, '👊', vTouch.meleeId !== null], [VBLOCK, '🛡', vTouch.blockId !== null], [VJUMP, '🦘', false],
+                  [VDANCE, '💃', false], [VFART, '💨', false], [VSILLY, sillyTurn % 2 ? '🤧' : '🫢', false],
+                  [SETTINGS_BTN, '⚙', false], [MUTE_BTN, muted ? '🔇' : '🔊', false],
+                  [VBUILD, state.buildMode ? '⚔' : '🧱', state.buildMode]];
+    if (state.spell) list.push([VSPELL, SPELLS.find(x => x.id === state.spell).icon, false]);
+    if (godParent()) list.push([VGOD, nextGodPower().icon, false]);
+    if (state.lastMount) list.push([VMOUNT, state.mount ? '🚶' : MOUNTS.find(m => m.id === state.lastMount).icon, !!state.mount]);
+    if (state.buildMode) list.push([VGADGET, '🔄', false]);
+    else if (state.gadget) list.push([VGADGET, GADGETS.find(g => g.id === state.gadget).icon, false]);
+    if (state.hasDash) list.push([VDASH, '⚡', false]);
+    return list;
+}
+
+// The touch buttons are only there while you are playing and nothing is covering them
+function touchUiShown() {
+    return isTouchDevice && state.gamePhase === 'playing' && !state.won && !state.levelComplete
+        && !menu && !state.shopOpen && !state.awardsOpen && !race && !petBattle && !tvShow && !credits && !danceBattle;
+}
 
 function canvasPos(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (GAME_W / rect.width);
-    const y = (clientY - rect.top)  * (GAME_H / rect.height);
-    const flipX = mod('upsideDown') !== mod('mirror'), flipY = mod('upsideDown');   // the picture may be turned or mirrored
-    return { x: flipX ? GAME_W - x : x, y: flipY ? GAME_H - y : y };
+    let x = (clientX - rect.left) * (view.w  / rect.width);
+    let y = (clientY - rect.top)  * (GAME_H / rect.height);
+    if (mod('upsideDown') !== mod('mirror')) x = view.w - x;   // the picture may be turned or mirrored
+    if (mod('upsideDown')) y = GAME_H - y;
+    return { x: x - view.offX, y };
+}
+
+// Build mode, finger on the world: mine the block under it, or place the chosen block on an empty spot
+// (the same rules as a mouse click). Returns true if the tap was used.
+function touchBuildTap(p) {
+    if (!state.buildMode || state.gamePhase !== 'playing' || menu || state.shopOpen || state.won || state.levelComplete) return false;
+    if (p.x < 0 || p.x > GAME_W || p.y < 0 || p.y > GAME_H) return false;
+    const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
+    if (Math.hypot(p.x - player.x, p.y - player.y) > BUILD_REACH) {
+        buildFlash = { cx, cy, t: BUILD_FLASH_FRAMES, ok: false };
+        spawnFloatText(p.x, p.y, 'Come closer!', '#FFFFFF', 40);
+        return true;
+    }
+    buildFlash = { cx, cy, t: BUILD_FLASH_FRAMES, ok: true };
+    buildAt(cx, cy, p.x, p.y);
+    return true;
 }
 
 canvas.addEventListener('touchstart', e => {
     e.preventDefault();
-    isTouchDevice = true;
+    if (!isTouchDevice) { isTouchDevice = true; fitCanvas(); }   // (the first touch: the side margins appear)
+    if (layoutDirty) layoutTouch();
     initAudio();
     lastInput = 'touch';
     for (const t of e.changedTouches) {
         const p = canvasPos(t.clientX, t.clientY);
         if (state.gamePhase === 'playing' && !menu && !state.shopOpen) {   // the fighting buttons can be held
-            if (Math.hypot(p.x - VMELEE.x, p.y - VMELEE.y) < VMELEE.r * 1.3) { vTouch.meleeId = t.identifier; meleePress(); continue; }
-            if (Math.hypot(p.x - VBLOCK.x, p.y - VBLOCK.y) < VBLOCK.r * 1.3) { vTouch.blockId = t.identifier; startBlock(); continue; }
-            if (Math.hypot(p.x - VJUMP.x,  p.y - VJUMP.y)  < VJUMP.r * 1.3)  { superJump(); continue; }
+            if (inBtn(p.x, p.y, VMELEE)) { vTouch.meleeId = t.identifier; meleePress(); continue; }
+            if (inBtn(p.x, p.y, VBLOCK)) { vTouch.blockId = t.identifier; startBlock(); continue; }
+            if (inBtn(p.x, p.y, VJUMP))  { superJump(); continue; }
         }
         if (handleTap(p.x, p.y)) continue;
-        if (vTouch.joyId === null && Math.hypot(p.x - VJOY.x, p.y - VJOY.y) < VJOY.baseR * TOUCH_AREA_MULTIPLIER) {
+        const onJoy = Math.hypot(p.x - VJOY.x, p.y - VJOY.y) < joyGrabR(), onShoot = inBtn(p.x, p.y, VSHOOT);
+        if (vTouch.joyId === null && onJoy) {
             vTouch.joyId = t.identifier; vTouch.joyOriX = p.x; vTouch.joyOriY = p.y;
             vTouch.joyDX = 0; vTouch.joyDY = 0;
-        } else if (vTouch.shootId === null && Math.hypot(p.x - VSHOOT.x, p.y - VSHOOT.y) < VSHOOT.r * TOUCH_AREA_MULTIPLIER) {
+        } else if (vTouch.shootId === null && onShoot) {
             vTouch.shootId = t.identifier;
             pressAction();
+        } else if (!onJoy && !onShoot) {
+            touchBuildTap(p);   // a tap on the world itself (never on a button or the stick)
         }
     }
 }, { passive: false });
@@ -3761,8 +3921,10 @@ function clearTouchId(id) {
     if (id === vTouch.meleeId) { vTouch.meleeId = null; meleeRelease(); }
     if (id === vTouch.blockId) { vTouch.blockId = null; stopBlock(); }
 }
-canvas.addEventListener('touchend',    e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
+// (iOS counts the finger LIFTING as the tap that allows sound: so the audio is unlocked here too)
+canvas.addEventListener('touchend',    e => { e.preventDefault(); initAudio(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
 canvas.addEventListener('touchcancel', e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
+document.addEventListener('pointerup', () => initAudio());
 
 // ── ENTITY FACTORIES ─────────────────────────────────────────
 function makeDigSpots() {
@@ -5316,6 +5478,29 @@ function initAudio() {
     noiseBuf   = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.5, audioCtx.sampleRate);
     const data = noiseBuf.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    if (audioCtx.state === 'suspended' && !paused) audioCtx.resume();   // (iOS makes a new context start asleep)
+}
+
+// ── FULL SCREEN ───────────────────────────────────────────────
+// Hides the browser bars on a phone. Not every browser can (iPhone Safari can't): then there is no button.
+const FULLSCREEN_BTN = { x: 616, y: 12, w: 172, h: 40 };   // on the title screen
+function fullscreenRoot() { return document.documentElement; }
+function fullscreenOK() {
+    const el = fullscreenRoot();
+    return !!(el && (el.requestFullscreen || el.webkitRequestFullscreen));
+}
+function inFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+    try {
+        if (inFullscreen()) {
+            (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+        } else {
+            const el = fullscreenRoot(), go = el.requestFullscreen || el.webkitRequestFullscreen;
+            const done = go.call(el);
+            // Android can also keep the phone sideways while the game is full screen
+            if (done && done.then) done.then(() => { try { screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} }).catch(() => {});
+        }
+    } catch (e) { /* a browser that says no: nothing happens */ }
 }
 
 function toggleMute() {
@@ -5527,13 +5712,15 @@ function settingsItems() {
           action: () => openMenu('🧩 MODS — change how the game works!', modItems) },
         { icon: '💾', name: 'Save Now', desc: 'The game also saves by itself', cost: 0, status: 'SAVE',
           action: () => { saveGame(); saveWorld(); showToast('💾 Saved!', '#88EEFF', 90); } },
+        ...(fullscreenOK() ? [{ icon: '⛶', name: 'Full Screen', desc: 'Hide the browser bars', cost: 0, status: inFullscreen() ? 'ON' : 'OFF', action: toggleFullscreen }] : []),
     ];
 }
 
+const SETTINGS_MENU_H = 470;   // taller than a normal menu: 13 items, in rows of two
 function openSettings() {
     if (state.gamePhase !== 'playing') return;
     if (menu) { menu = null; return; }
-    openMenu('⚙ SETTINGS', settingsItems);
+    openMenu('⚙ SETTINGS', settingsItems, { h: SETTINGS_MENU_H });
 }
 
 // ── TOASTS (big messages at the top of the screen) ───────────
@@ -6465,18 +6652,48 @@ function drawBlocks() {
         }
         ctx.setLineDash([]);
     }
+    if (buildFlash && state.buildMode) {   // the spot a finger just tapped
+        if (--buildFlash.t <= 0) buildFlash = null;
+        else {
+            ctx.globalAlpha = Math.min(1, buildFlash.t / 10);
+            ctx.strokeStyle = buildFlash.ok ? '#FFFFFF' : '#FF6666'; ctx.lineWidth = 3;
+            ctx.strokeRect(buildFlash.cx * CELL + 1, buildFlash.cy * CELL + 1, CELL - 2, CELL - 2);
+            ctx.globalAlpha = 1;
+        }
+    }
 }
 
 // Minecraft-style hotbar along the bottom while building
+// Bigger slots on a phone (a finger taps them); they shrink to fit between the joystick and the buttons
+const HOTBAR_W_MIN = 34, HOTBAR_W_MAX = 52;
+function hotbarGeom() {
+    const n = HOTBAR.length;
+    let left = 0, right = GAME_W;
+    if (usesTouchLayout()) {   // keep clear of the stick (left) and the punch / block buttons (right) when they sit over the picture
+        if (layoutDirty) layoutTouch();
+        left  = Math.max(0, VJOY.x + joyGrabR());
+        right = Math.min(GAME_W, VBLOCK.x - VBLOCK.r - TOUCH_GAP);
+    }
+    const W = usesTouchLayout() ? Math.max(HOTBAR_W_MIN, Math.min(HOTBAR_W_MAX, Math.floor((right - left - 12) / n))) : HOTBAR_W_MIN;
+    const mid = usesTouchLayout() ? (left + right) / 2 : GAME_W / 2;
+    return { n, W, x0: Math.round(mid - (n * W) / 2), y0: 580 - W };
+}
+function hotbarPanel() { const { n, W, x0, y0 } = hotbarGeom(); return { x: x0 - 6, y: y0 - 26, w: n * W + 12, h: W + 32 }; }
+function hotbarSlotAt(x, y) {
+    const { n, W, x0, y0 } = hotbarGeom();
+    if (y < y0 || y > y0 + W || x < x0 || x >= x0 + n * W) return -1;
+    return Math.floor((x - x0) / W);
+}
 function drawHotbar() {
     if (!state.buildMode) return;
-    const n = HOTBAR.length, W = 34, x0 = 400 - (n * W) / 2, y0 = 548;
+    const { n, W, x0, y0 } = hotbarGeom(), panel = hotbarPanel();
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(x0 - 6, y0 - 26, n * W + 12, W + 32);
-    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap BUILD' : 'SPACE / click';
-    const cyc  = lastInput === 'pad' ? 'B' : lastInput === 'touch' ? '🔄' : 'Q or 1-9';
-    ctx.fillText(`🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${verb}: place / mine / chop trees   ${cyc}: pick block`, 400, y0 - 12);
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+    const hint = lastInput === 'touch'
+        ? `🧱 BUILD MODE${isCreative() ? ' — ∞ BLOCKS!' : ''}   Tap the ground: mine / place   🔄 next block   ⚔ fight`
+        : `🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${lastInput === 'pad' ? 'A' : 'SPACE / click'}: place / mine / chop trees   ${lastInput === 'pad' ? 'B' : 'Q or 1-9'}: pick block`;
+    ctx.fillText(hint, panel.x + panel.w / 2, y0 - 10);
     HOTBAR.forEach((type, i) => {
         const x = x0 + i * W, count = invCount(type);
         ctx.fillStyle = i === state.hotbar ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.08)';
@@ -6486,12 +6703,12 @@ function drawHotbar() {
         ctx.globalAlpha = 1;
         ctx.strokeStyle = i === state.hotbar ? '#FFFFFF' : '#555'; ctx.lineWidth = i === state.hotbar ? 2.5 : 1;
         ctx.strokeRect(x, y0, W - 2, W - 2);
-        ctx.fillStyle = '#FFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'right';
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'right';
         ctx.fillText(isCreative() ? '∞' : String(count), x + W - 5, y0 + W - 5);
     });
     const mats = Object.keys(MATERIALS).filter(m => invCount(m) > 0).map(m => `${MATERIALS[m]} ${invCount(m)}`).join('   ');
-    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = '10px Arial';
-    ctx.fillText(`${BLOCKS[HOTBAR[state.hotbar]].name}${mats ? '   ·   ' + mats : ''}${state.diamondPickaxe ? '   ·   ⛏ Diamond Pickaxe' : ''}`, 400, y0 + W + 6);
+    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = '12px Arial';
+    ctx.fillText(`${BLOCKS[HOTBAR[state.hotbar]].name}${mats ? '   ·   ' + mats : ''}${state.diamondPickaxe ? '   ·   ⛏ Diamond Pickaxe' : ''}`, panel.x + panel.w / 2, y0 + W + 4);
     ctx.restore();
 }
 
@@ -8771,8 +8988,13 @@ function drawMenu() {
     ctx.strokeStyle = '#FFB347'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
     ctx.fillStyle = '#FFB347'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
     ctx.fillText(menu.title, 400, Y + 26);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px Arial';
-    ctx.fillText(menu.hint || `Your coins: 🪙${state.coins}   ·   ${lastInput === 'pad' ? 'A to buy, B to close' : lastInput === 'touch' ? 'Tap to buy, tap the title to close' : 'Arrows + SPACE (or click) to buy, E to close'}`, 400, Y + 44);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '12px Arial';
+    ctx.fillText(menu.hint || `Your coins: 🪙${state.coins}   ·   ${lastInput === 'pad' ? 'A to buy, B to close' : lastInput === 'touch' ? 'Tap to buy, ✕ to close' : 'Arrows + SPACE (or click) to buy, E to close'}`, 400, Y + 44);
+    ctx.beginPath(); ctx.arc(MENU_CLOSE.x, MENU_CLOSE.y, MENU_CLOSE.r, 0, Math.PI * 2);   // ✕ close button
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill(); ctx.strokeStyle = '#FFB347'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath();
+    for (const dir of [-1, 1]) { ctx.moveTo(MENU_CLOSE.x - 6, MENU_CLOSE.y - 6 * dir); ctx.lineTo(MENU_CLOSE.x + 6, MENU_CLOSE.y + 6 * dir); }
+    ctx.stroke();
     menu.items().forEach((it, i) => {
         const r = menuItemRect(i);
         const cursor = i === menu.cursor && lastInput !== 'touch';
@@ -9360,9 +9582,18 @@ function drawIntro() {
         }
     }
 
+    if (fullscreenOK() && usesTouchLayout()) {   // ⛶ full screen, for phones
+        const b = FULLSCREEN_BTN;
+        ctx.fillStyle = 'rgba(30,20,70,0.9)'; ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(inFullscreen() ? '⛶ Exit full screen' : '⛶ Full screen', b.x + b.w / 2, b.y + b.h / 2 + 1);
+        ctx.textBaseline = 'alphabetic';
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = '11px Arial';
-    ctx.fillText('Move: WASD / Arrows  |  Shoot: Space  |  Dance: G  |  Fart: F  |  Mystery portals go anywhere!', 400, 562);
+    ctx.fillText(usesTouchLayout() ? 'Move: left stick  |  Shoot: big button  |  Mystery portals go anywhere!'
+                                   : 'Move: WASD / Arrows  |  Shoot: Space  |  Dance: G  |  Fart: F  |  Mystery portals go anywhere!', 400, 562);
 }
 
 // ── DRAW: PORTALS ─────────────────────────────────────────────
@@ -12004,6 +12235,7 @@ function drawHUD() {
     }
 
     // ── MUTE BUTTON (M) ───────────────────────────────────────
+    if (!usesTouchLayout()) {   // (on a phone these are drawn with the other touch buttons)
     ctx.save();
     ctx.globalAlpha = 0.6;
     ctx.beginPath(); ctx.arc(MUTE_BTN.x, MUTE_BTN.y, MUTE_BTN.r, 0, Math.PI * 2);
@@ -12015,6 +12247,7 @@ function drawHUD() {
     ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
     ctx.fillStyle = '#FFF'; ctx.fillText('⚙', SETTINGS_BTN.x, SETTINGS_BTN.y + 1);
     ctx.restore();
+    }
     if (settings.creative) {   // a badge so you know you're in Creative Mode
         ctx.save();
         ctx.fillStyle = 'rgba(60,160,60,0.9)'; ctx.fillRect(364, 50, 72, 16);
@@ -12315,65 +12548,51 @@ function drawShop() {
 // ── DRAW: CONTROLS ────────────────────────────────────────────
 function drawControls() {
     if (!settings.hints) return;
+    if (lastInput === 'touch') {   // a short line a child can read, in the gap between the stick and the buttons
+        if (state.buildMode || state.gamePhase !== 'playing' || !touchUiShown()) return;
+        ctx.save();
+        ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+        const text = 'Left: walk  ·  Big button: shoot or dig', w = ctx.measureText(text).width + 20;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(400 - w / 2, 576, w, 20);
+        ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillText(text, 400, 590);
+        ctx.restore();
+        return;
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
     const hint = lastInput === 'pad'   ? 'Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back'
-               : lastInput === 'touch' ? 'Move: joystick  |  Shoot / Dig: button'
                : p2.active ? 'P1: WASD + Space   ·   P2: Arrows + Enter   ·   P: Player 2 leaves'
                : 'Move: WASD  |  Shoot: Space (hold = charge)  |  Punch: J  |  Block: X  |  Jump: C  |  Build: B  |  Settings: O';
     ctx.fillText(hint, 792, 592);
 }
 
 function drawVirtualControls() {
-    if (!isTouchDevice || state.gamePhase === 'intro' || state.won || state.levelComplete) return;
+    if (!touchUiShown() || paused) return;
+    if (layoutDirty) layoutTouch();
     ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
-    // Joystick base
-    ctx.beginPath();
-    ctx.arc(VJOY.x, VJOY.y, VJOY.baseR, 0, Math.PI * 2);
-    ctx.fillStyle   = 'rgba(255,255,255,0.10)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth   = 2;
-    ctx.stroke();
+    // Joystick: drawn where the finger really is (the stick starts wherever you first touch)
+    const held = vTouch.joyId !== null;
+    const jx = held ? vTouch.joyOriX : VJOY.x, jy = held ? vTouch.joyOriY : VJOY.y;
+    ctx.beginPath(); ctx.arc(jx, jy, VJOY.baseR, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(jx + vTouch.joyDX, jy + vTouch.joyDY, VJOY.baseR * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.32)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.stroke();
 
-    // Joystick stick
-    ctx.beginPath();
-    ctx.arc(VJOY.x + vTouch.joyDX, VJOY.y + vTouch.joyDY, 22, 0, Math.PI * 2);
-    ctx.fillStyle   = 'rgba(255,255,255,0.28)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.60)';
-    ctx.lineWidth   = 2;
-    ctx.stroke();
-
-    // Shoot button
-    ctx.beginPath();
-    ctx.arc(VSHOOT.x, VSHOOT.y, VSHOOT.r, 0, Math.PI * 2);
-    ctx.fillStyle   = vTouch.shootId !== null ? 'rgba(255,220,50,0.40)' : 'rgba(255,220,50,0.15)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,220,50,0.70)';
-    ctx.lineWidth   = 2;
-    ctx.stroke();
-    ctx.fillStyle   = 'rgba(255,255,255,0.80)';
-    ctx.font        = 'bold 13px Arial';
-    ctx.textAlign   = 'center';
-    ctx.textBaseline = 'middle';
-    const touchBtns = [[VDANCE, '💃'], [VFART, '💨'], [VSILLY, sillyTurn % 2 ? '🤧' : '🫢'], [VMELEE, '👊'], [VBLOCK, '🛡'], [VJUMP, '🦘']];
-    touchBtns.push([VBUILD, state.buildMode ? '⚔' : '🧱']);
-    if (state.spell) touchBtns.push([VSPELL, SPELLS.find(x => x.id === state.spell).icon]);
-    if (godParent()) touchBtns.push([VGOD, nextGodPower().icon]);
-    if (state.lastMount) touchBtns.push([VMOUNT, state.mount ? '🚶' : MOUNTS.find(m => m.id === state.lastMount).icon]);
-    if (state.buildMode) touchBtns.push([VGADGET, '🔄']);
-    else if (state.gadget) touchBtns.push([VGADGET, GADGETS.find(g => g.id === state.gadget).icon]);
-    if (state.hasDash) touchBtns.push([VDASH, '⚡']);
-    for (const [b, icon] of touchBtns) {
+    // Round buttons: lit up while a finger holds them
+    for (const [b, icon, on] of touchButtonList()) {
+        const big = b === VSHOOT;
         ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
-        ctx.fillStyle = '#FFF'; ctx.font = '16px Arial'; ctx.fillText(icon, b.x, b.y + 1);
+        ctx.fillStyle = big ? (on ? 'rgba(255,220,50,0.45)' : 'rgba(255,220,50,0.18)') : (on ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.16)'); ctx.fill();
+        ctx.strokeStyle = big ? 'rgba(255,220,50,0.8)' : 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2.5; ctx.stroke();
+        if (!icon) continue;
+        ctx.fillStyle = '#FFF'; ctx.font = `${Math.round(b.r * 0.95)}px Arial`; ctx.fillText(icon, b.x, b.y + 2);
     }
-    ctx.font = 'bold 13px Arial';
-    ctx.fillText(state.buildMode ? 'BUILD' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : nearbyMineable() ? 'MINE'
+    ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.font = `bold ${Math.round(VSHOOT.r * 0.3)}px Arial`;
+    ctx.fillText(state.buildMode ? 'PLACE' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : nearbyMineable() ? 'MINE'
                  : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : wouldDigGround() ? 'DIG' : state.power === POWER.NONE ? 'SWING' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
@@ -12436,8 +12655,20 @@ function update() {
 }
 let lastSave = 0;
 
+// The game paints its 800×600 picture in the middle of the canvas; on a wide phone the margins are
+// black and only the touch buttons are drawn there.
 function draw() {
-    ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);   // 800×600 drawing onto however many real pixels we have
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (view.margin) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+    ctx.setTransform(renderScale, 0, 0, renderScale, view.offX * renderScale, 0);   // 800×600 drawing onto however many real pixels we have
+    ctx.save();
+    if (view.margin) { ctx.beginPath(); ctx.rect(0, 0, GAME_W, GAME_H); ctx.clip(); }
+    drawGame();
+    ctx.restore();
+    drawVirtualControls();
+}
+
+function drawGame() {
     ctx.save();
     if (state.screenShake > 0) {
         const s = state.screenShake * 0.8;
@@ -12492,7 +12723,6 @@ function draw() {
     drawControlsPanel();
     drawHUD();
     drawControls();
-    drawVirtualControls();
     drawHotbar();
     drawShop();
     drawAwards();
@@ -12573,6 +12803,8 @@ function loop(now) {
     requestAnimationFrame(loop);
 }
 
+gameReady = true;
+if (needTurn) pauseGame();   // (a phone opened upright)
 loop();
 </script>
 </body>
