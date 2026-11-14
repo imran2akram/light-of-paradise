@@ -18,6 +18,23 @@ function scenario(name, setup, check) {
     results.push([name, problem]);
     console.log((problem ? 'FAIL ' : 'ok   ') + name + (problem ? '  (' + problem + ')' : ''));
 }
+
+// A plain check with no extra frames: fn() returns '' when fine, or a description of the problem
+function check(name, fn) {
+    logged = [];
+    let problem;
+    try { problem = fn() || ''; } catch (e) { problem = 'threw: ' + e.message; }
+    if (!problem && logged.length) problem = 'logged: ' + logged.join('; ');
+    results.push([name, problem]);
+    console.log((problem ? 'FAIL ' : 'ok   ') + name + (problem ? '  (' + problem + ')' : ''));
+}
+// Counts update() steps while fn() feeds loop() timestamps
+function countSteps(fn) {
+    let n = 0; const real = update;
+    update = () => { n++; real(); };
+    try { fn(); } finally { update = real; }
+    return n;
+}
 const shot = () => ({ x: player.x, y: player.y, dx: 0, dy: 0, r: 6, life: 50, color: '#f00', enemyType: 'devil' });
 
 startFromIntro(true);
@@ -146,6 +163,30 @@ scenario('minotaur coins land only where the player can walk', () => {
         if (new Set(coins.map(c => Math.round(c.x) + ',' + Math.round(c.y))).size < 25) globalThis.__coinProblem = 'coins stacked on a few pixels';
     }
 }, () => globalThis.__coinProblem);
+
+
+check('game speed is 60 steps a second on 144 Hz, 60 Hz and 30 Hz screens', () => {
+    changeRoom(ROOM.VOID);
+    const run = hz => countSteps(() => { resetFrameClock(); let t = 10000; loop(t); for (let i = 0; i < hz; i++) { t += 1000 / hz; loop(t); } });
+    const out = [];
+    for (const hz of [144, 120, 60, 30, 75]) { const n = run(hz); if (Math.abs(n - 60) > 2) out.push(hz + ' Hz ran ' + n + ' steps'); }
+    return out.join('; ');
+});
+
+check('a long gap does not fast-forward the game', () => {
+    changeRoom(ROOM.VOID);
+    resetFrameClock(); loop(1000); loop(1016.7);
+    const gap = countSteps(() => loop(1016.7 + 5000));     // tab was hidden for 5 s
+    const slow = countSteps(() => loop(1016.7 + 5000 + 120));   // one slow frame: catches up, but only a little
+    if (gap > 1) return 'a 5 s gap ran ' + gap + ' steps';
+    if (slow > 4) return 'a slow frame ran ' + slow + ' steps';
+    return '';
+});
+
+check('loop() with no timestamp is exactly one step', () => {
+    const n = countSteps(() => { loop(); loop(); loop(); });
+    return n === 3 ? '' : 'ran ' + n + ' steps for 3 frames';
+});
 
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');

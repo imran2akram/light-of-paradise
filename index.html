@@ -12372,11 +12372,37 @@ function reportError(where, e) {
 window.addEventListener('error', ev => reportError('window', ev.error || ev.message));
 window.addEventListener('unhandledrejection', ev => reportError('promise', ev.reason));
 
+// The game counts in frames, so it must always run at 60 steps a second, whatever the screen's refresh rate:
+// a 144 Hz monitor would run it 2.4x fast and a 30 Hz tablet at half speed. Real time is collected in
+// stepAccum and spent in fixed 1/60 s update() steps; draw() runs once per screen frame.
+const STEP_MS         = 1000 / 60;   // one game step
+const MAX_STEPS_FRAME = 4;           // never catch up more than this in one frame: a hitch must not fast-forward the game
+const STEP_SNAP_MS    = 2;           // a frame this close to one step counts as exactly one (60 Hz timers wobble by a ms or so)
+const MAX_FRAME_GAP   = 250;         // a longer gap (hidden tab, slow device) just restarts the clock
+let lastFrameTime = null, stepAccum = 0;
+function resetFrameClock() { lastFrameTime = null; stepAccum = 0; }
+
+// How many update steps this frame is owed. Called without a timestamp (tests, the first call) = exactly one.
+function stepsOwed(now) {
+    if (now === undefined) { resetFrameClock(); return 1; }
+    const dt = lastFrameTime === null ? NaN : now - lastFrameTime;
+    lastFrameTime = now;
+    if (!(dt >= 0) || dt > MAX_FRAME_GAP) { stepAccum = 0; return 1; }
+    stepAccum += Math.abs(dt - STEP_MS) < STEP_SNAP_MS ? STEP_MS : dt;
+    let n = Math.floor(stepAccum / STEP_MS);
+    stepAccum -= n * STEP_MS;
+    if (n > MAX_STEPS_FRAME) { n = MAX_STEPS_FRAME; stepAccum = 0; }
+    return n;
+}
+
 // If one frame throws, log it and carry on: an uncaught error here would stop
 // requestAnimationFrame from being re-armed and freeze the game until a reload.
-function loop() {
-    try { pollGamepad(); update(); }
-    catch (e) { reportError('update', e); }
+function loop(now) {
+    // pollGamepad() runs once per step so a button press is seen exactly once, never lost or doubled
+    for (let n = stepsOwed(now); n > 0; n--) {
+        try { pollGamepad(); update(); }
+        catch (e) { reportError('update', e); }
+    }
     try { draw(); }
     catch (e) { reportError('draw', e); fitCanvas(); }   // resizing the canvas also resets any half-finished ctx.save()/clip
     requestAnimationFrame(loop);
