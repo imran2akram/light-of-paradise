@@ -52,12 +52,17 @@ const FB_PASS_CONE    = 0.45;   // kick roughly at your helper (within about 26 
 const FB_SHOOT_X      = 520;    // the helper shoots when the ball reaches them this close to goal, and passes back otherwise
 const FB_MATE_CHASE   = 90;     // the helper only runs for a loose ball this close, so you get the kick-off
 const FB_KEEPER_REACH = 26;    // the goalie stops a ball this close to the middle of the goal line (and says SAVED! once per save)
+const FB_SHOT_SPEED   = 11;     // the hardest kick in the game (the helper's shot)
+const FB_BALL_R       = 8;      // the ball's size for bumping into blocks you placed
+const FB_BOUNCE       = 0.8;    // a ball keeps this much of its speed when it hits a block
+const FB_BALL_STEP    = 6;      // the ball moves at most this far at a time, so even a hard shot cannot jump over a block (a block is 24)
 const FB_KIT          = { you: '#3A7BFF', them: '#E8392F', keeper: '#FFD23A' };   // team colours
 const FB_KICKOFF      = { ball: [400, 330], mate: [520, 330], opps: [[580, 250], [580, 410]] };
 function footballActor(x, y) { return { x, y, walk: 0, recover: 0, react: 0, tx: x, ty: y }; }
 function footballKickoff(G) {
     Object.assign(G.ball, { x: FB_KICKOFF.ball[0], y: FB_KICKOFF.ball[1], vx: 0, vy: 0 });
     G.held = false; G.stuck = 0;
+    footballFreeBall(G.ball);   // (a block may stand on the kick-off spot)
     Object.assign(G.mate, footballActor(...FB_KICKOFF.mate), { hold: 0 });
     G.opps.forEach((o, i) => Object.assign(o, footballActor(...FB_KICKOFF.opps[i])));
 }
@@ -72,6 +77,26 @@ function footballMove(a, dx, dy) {
     const nx = Math.max(FB_PITCH.x0, Math.min(FB_PITCH.x1, a.x + dx)), ny = Math.max(FB_PITCH.y0, Math.min(FB_PITCH.y1, a.y + dy));
     if (!playerHitsBlock(nx, a.y)) a.x = nx;
     if (!playerHitsBlock(a.x, ny)) a.y = ny;
+}
+// Blocks you placed are solid for the ball too: it bounces off them
+function footballBallHits(x, y) {
+    return solidAt(x - FB_BALL_R, y) || solidAt(x + FB_BALL_R, y) || solidAt(x, y - FB_BALL_R) || solidAt(x, y + FB_BALL_R) || solidAt(x, y);
+}
+function footballBallMove(b) {
+    const steps = Math.max(1, Math.ceil(Math.hypot(b.vx, b.vy) / FB_BALL_STEP));
+    for (let i = 0; i < steps; i++) {
+        const sx = b.vx / steps, sy = b.vy / steps;   // (worked out again each step: a bounce turns the rest of the move round)
+        if (footballBallHits(b.x + sx, b.y)) b.vx *= -FB_BOUNCE; else b.x += sx;
+        if (footballBallHits(b.x, b.y + sy)) b.vy *= -FB_BOUNCE; else b.y += sy;
+    }
+}
+// If a block is placed on the ball (or the kick-off spot), move it to the nearest free spot on the pitch
+function footballFreeBall(b) {
+    if (!footballBallHits(b.x, b.y)) return;
+    for (let r = 4; r <= 400; r += 4) for (let k = 0; k < 24; k++) {
+        const a = k * Math.PI / 12, x = b.x + Math.cos(a) * r, y = b.y + Math.sin(a) * r;
+        if (x >= 40 && x <= 760 && y >= 100 && y <= 560 && !footballBallHits(x, y)) { b.x = x; b.y = y; b.vx = b.vy = 0; return; }
+    }
 }
 function footballSeek(a, tx, ty, speed) {
     const d = Math.hypot(tx - a.x, ty - a.y);
@@ -129,7 +154,7 @@ function updateFootball(G) {
         if (--m.hold > 0) { b.x = m.x + 12; b.y = m.y; b.vx = b.vy = 0; }
         else if (m.x > FB_SHOOT_X) {
             const ty = (G.keeper > 330 ? 292 : 368) + (Math.random() - 0.5) * 20, d = Math.hypot(FB_GOAL.x - m.x, ty - m.y);   // aim away from the goalie
-            footballKick(G, (FB_GOAL.x - m.x) / d * 11, (ty - m.y) / d * 11); m.recover = FB_MATE_RECOVER; G.mateShot = 90;
+            footballKick(G, (FB_GOAL.x - m.x) / d * FB_SHOT_SPEED, (ty - m.y) / d * FB_SHOT_SPEED); m.recover = FB_MATE_RECOVER; G.mateShot = 90;
             footballSay(G, m.x, m.y, 'Shoot!', FB_KIT.you);
         } else {
             const d = Math.hypot(player.x - m.x, player.y - m.y) || 1, v = Math.max(4, Math.min(9, d * 0.032 + 2.5));
@@ -156,7 +181,7 @@ function updateFootball(G) {
     }
     if (G.mateShot > 0) G.mateShot--;
     // Ball physics (as before)
-    if (!G.held) { b.x += b.vx; b.y += b.vy; b.vx *= 0.97; b.vy *= 0.97; }
+    if (!G.held) { footballFreeBall(b); footballBallMove(b); b.vx *= 0.97; b.vy *= 0.97; }
     if (b.y < 90 || b.y > 570) { b.vy *= -1; b.y = Math.max(90, Math.min(570, b.y)); }
     if (b.x < 30) { b.vx *= -1; b.x = 30; }
     G.keeper += Math.sign(b.y - G.keeper) * Math.min(2.2, Math.abs(b.y - G.keeper));   // the goalie follows the ball

@@ -657,6 +657,46 @@ check('football: a still ball under a pile of players is popped loose', () => {
     }
     return 'ball stayed stuck';
 });
+check('football: the ball bounces off placed blocks (even the hardest shot) and is pushed out of a block placed on it', () => {
+    const out = [];
+    const G = footballStart();
+    const wall = [];   // a wall of stone, one block thick, across the pitch at x 480-504
+    for (let cy = 4; cy < 24; cy++) wall.push(cellKey(20, cy));
+    const put = keys => { for (const k of keys) roomBlocks()[k] = { type: 'stone', hits: 0 }; };
+    const clear = keys => { for (const k of keys) delete roomBlocks()[k]; };
+    const parked = () => { G.opps.forEach(o => { o.x = 120; o.y = 150; o.recover = 9999; }); G.mate.x = 120; G.mate.y = 520; G.mate.recover = 9999; G.held = false; G.mateShot = 0; player.x = 60; player.y = 330; };
+    put(wall);
+    try {
+        for (const speed of [FB_KICK_SPEED, FB_SHOT_SPEED, 14, 40]) for (const vy of [0, 3]) {
+            parked(); Object.assign(G.ball, { x: 440, y: 330 - vy * 6, vx: speed, vy });
+            let bounced = false, maxX = 0;
+            for (let i = 0; i < 80 && miniGame === G; i++) {
+                parked(); loop();
+                maxX = Math.max(maxX, G.ball.x); if (G.ball.vx < 0) bounced = true;
+                if (footballBallHits(G.ball.x, G.ball.y)) { out.push('speed ' + speed + ': ball sits inside a block'); break; }
+            }
+            if (maxX > 480) out.push('speed ' + speed + '/' + vy + ': ball went through the wall (x ' + Math.round(maxX) + ')');
+            if (!bounced) out.push('speed ' + speed + '/' + vy + ': ball did not bounce');
+        }
+        // the goal still counts with no wall in the way
+        clear(wall); const before = G.goals; parked();
+        Object.assign(G.ball, { x: 700, y: 330, vx: 6, vy: 0 }); G.keeper = 270; player.x = 60;
+        for (let i = 0; i < 40 && miniGame === G && G.goals === before; i++) { parked(); loop(); }
+        if (G.goals !== before + 1) out.push('no goal after the wall was removed');
+        // a block placed right on the ball (and one on the kick-off spot)
+        parked(); Object.assign(G.ball, { x: 300, y: 300, vx: 0, vy: 0 });
+        const around = []; for (let cx = 11; cx <= 14; cx++) for (let cy = 11; cy <= 14; cy++) around.push(cellKey(cx, cy));
+        put(around); loop();
+        if (footballBallHits(G.ball.x, G.ball.y)) out.push('a ball under a new block stayed inside it');
+        if (Math.hypot(G.ball.x - 300, G.ball.y - 300) > 70) out.push('the ball was pushed too far (' + Math.round(Math.hypot(G.ball.x - 300, G.ball.y - 300)) + ' px)');
+        clear(around);
+        const spot = []; for (let cx = 15; cx <= 18; cx++) for (let cy = 12; cy <= 15; cy++) spot.push(cellKey(cx, cy));
+        put(spot); footballKickoff(G);
+        if (footballBallHits(G.ball.x, G.ball.y)) out.push('the ball restarted inside a block');
+        clear(spot);
+    } finally { clear(wall); }
+    return out.slice(0, 5).join('; ');
+});
 check('football: computer players never end up inside a block', () => {
     const G = footballStart(), key = cellKey(Math.floor(580 / CELL), Math.floor(330 / CELL));
     roomBlocks()[key] = { type: 'stone' };
