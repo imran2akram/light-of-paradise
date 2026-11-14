@@ -32,6 +32,14 @@ There is no test framework, but `test/` has a headless harness (no dependencies)
 
 ---
 
+## Pull requests
+
+Standing instruction from the owner (the parent): when the work is finished and the `test.yml` checks are green, **merge your own pull request into `main` without asking**. A child is usually the one in the session and cannot review code.
+
+Merging to `main` publishes to the live site straight away. So never merge with failing checks or a feature you know is broken — fix it first, or stop and say what is blocking.
+
+---
+
 ## Big picture
 
 `state` holds almost all saved/progress state; `resetGame()` and `advanceLevel()` reset it. Each room has its own data object:
