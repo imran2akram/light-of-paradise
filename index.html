@@ -1517,12 +1517,35 @@ function shopSelect(i) {
     }
 }
 
+// ── READABLE TEXT ────────────────────────────────────────────
+// Anything a child has to read is at least MIN_READ_FONT px. fitText() shrinks text to fit a space, but never below that
+// (past it the letters are squeezed instead of getting tiny).
+const MIN_READ_FONT = 12;
+function fitText(text, x, y, maxW, px = 14, bold = false) {
+    let size = px;
+    ctx.font = `${bold ? 'bold ' : ''}${size}px Arial`;
+    while (size > MIN_READ_FONT && ctx.measureText(text).width > maxW) { size--; ctx.font = `${bold ? 'bold ' : ''}${size}px Arial`; }
+    ctx.fillText(text, x, y, maxW);   // (maxW squeezes it only if even the smallest size is too wide)
+}
+// Split text into at most maxLines lines that fit maxW (the last line is squeezed if it still does not)
+function wrapText(text, maxW, maxLines) {
+    const words = String(text).split(' '), lines = [];
+    let line = '';
+    for (const w of words) {
+        const tryLine = line ? line + ' ' + w : w;
+        if (line && ctx.measureText(tryLine).width > maxW && lines.length < maxLines - 1) { lines.push(line); line = w; }
+        else line = tryLine;
+    }
+    lines.push(line);
+    return lines;
+}
+
 // ── POP-UP MENUS (the Blacksmith's Forge, and other town shops) ──
 // A menu is a title plus a function that returns the items, so prices and ticks are always up to date.
 // Each item: { icon, name, desc, cost?, status?, action() }
 let menu = null;   // { title, items, cursor }
 const MENU = { X: 130, Y: 70, W: 540, H: 430 };
-const MENU_CLOSE = { x: MENU.X + MENU.W - 26, y: MENU.Y + 20, r: 15, hitR: 34 };   // the ✕ (the tap area stays above the first row of items)
+const MENU_CLOSE = { x: MENU.X + MENU.W - 26, y: MENU.Y + 20, r: 17, hitR: 36 };   // the ✕ (the tap area stays above the first row of items)
 
 // opts (optional): hint = the small line under the title, h = a shorter panel for menus with only a few items
 function openMenu(title, items, opts = {}) { menu = { title, items, cursor: 0, hint: opts.hint, h: opts.h || MENU.H }; }
@@ -1598,8 +1621,8 @@ function handleTap(x, y) {
     if ((!touchSys || touchUiShown()) && Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < (touchSys ? MUTE_BTN.r : MUTE_BTN.r * 1.5)) { toggleMute(); return true; }
     if (state.gamePhase === 'playing' && (!touchSys || touchUiShown()) && Math.hypot(x - SETTINGS_BTN.x, y - SETTINGS_BTN.y) < (touchSys ? SETTINGS_BTN.r : SETTINGS_BTN.r * 1.4)) { openSettings(); return true; }
     if (state.gamePhase === 'intro' && !menu) {   // (the New Game question is a menu: it gets the taps)
-        if (fullscreenOK() && inRect(x, y, FULLSCREEN_BTN)) toggleFullscreen();
-        else if (savedGame && inRect(x, y, NEW_GAME_BTN)) askNewGame();
+        if (fullscreenOK() && inRect(x, y, tapRect(FULLSCREEN_BTN))) toggleFullscreen();
+        else if (savedGame && inRect(x, y, tapRect(NEW_GAME_BTN))) askNewGame();
         else startFromIntro();
         return true;
     }
@@ -1630,7 +1653,7 @@ function handleTap(x, y) {
         if (inBtn(x, y, VGADGET)) { useGadget(); return true; }
         if (inBtn(x, y, VDASH))   { dash();      return true; }
     }
-    if (!state.shopOpen && canOpenShop() && inRect(x, y, AWARDS_BTN)) { state.awardsOpen = true; return true; }
+    if (!state.shopOpen && canOpenShop() && inRect(x, y, tapRect(AWARDS_BTN))) { state.awardsOpen = true; return true; }
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
         if (inBtn(x, y, VDANCE)) { dance(); return true; }
         if (inBtn(x, y, VFART))  { fart();  return true; }
@@ -1638,13 +1661,13 @@ function handleTap(x, y) {
     }
     if ((state.won || state.levelComplete) && inRect(x, y, END_BTN)) { pressStart(); return true; }
     if (state.shopOpen) {
-        if (Math.hypot(x - SHOP_CLOSE.x, y - SHOP_CLOSE.y) < SHOP_CLOSE.r * 1.6) { state.shopOpen = false; return true; }
+        if (Math.hypot(x - SHOP_CLOSE.x, y - SHOP_CLOSE.y) < Math.max(SHOP_CLOSE.r * 1.6, usesTouchLayout() ? touchR() : 0)) { state.shopOpen = false; return true; }
         for (let i = 0; i < SHOP_SLOTS; i++) {
             if (inRect(x, y, shopSlotRect(i))) { shopSelect(i); return true; }
         }
         return inRect(x, y, { x: SHOP.X, y: SHOP.Y, w: SHOP.W, h: SHOP.H });   // taps on the panel do nothing else
     }
-    if (canOpenShop() && inRect(x, y, SHOP_BTN)) { state.shopOpen = true; return true; }
+    if (canOpenShop() && inRect(x, y, tapRect(SHOP_BTN))) { state.shopOpen = true; return true; }
     return false;
 }
 
@@ -2542,7 +2565,7 @@ function maybeMiniBoss() {
 }
 function drawMiniBossLabels() {
     for (const e of roomEnemies()) if (e.mini && e.alive && !e.hidden) {
-        ctx.fillStyle = '#FFAA44'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚠ MINI-BOSS', e.x, e.y - e.r - 16);
+        ctx.fillStyle = '#FFAA44'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚠ MINI-BOSS', e.x, e.y - e.r - 16);
     }
 }
 
@@ -2982,7 +3005,7 @@ function updateMiniGame() {
 function drawMiniGame() {
     if (state.room === ROOM.STADIUM || state.room === ROOM.SNOWFORT) {
         ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
-        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', SUBPLACE_EXIT.x, 556);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', SUBPLACE_EXIT.x, 556);
     }
     const G = miniGame;
     if (!G) return;
@@ -3448,7 +3471,7 @@ function drawSubplaces() {
         ctx.fillText(it.icon, it.x, it.y + Math.sin(t * 3 + it.x) * 3); ctx.restore();
     }
     ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
-    ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Go back', SUBPLACE_EXIT.x, 556);
+    ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Go back', SUBPLACE_EXIT.x, 556);
     const left = P.items.filter(i => !i.got).length;
     if (!P.items.length) return;
     ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(320, 76, 160, 20);
@@ -3806,6 +3829,12 @@ const BUILD_FLASH_FRAMES = 24;
 function touchR() { return Math.max(TOUCH_R_MIN, Math.min(TOUCH_R_MAX, TOUCH_MIN_CSS / 2 / view.fit)); }
 function inBtn(x, y, b) { return Math.hypot(x - b.x, y - b.y) <= b.r; }
 function joyGrabR() { return VJOY.baseR * JOY_GRAB; }
+// A flat on-screen button (SHOP, AWARDS, NEW GAME…) gets a taller tap area on a phone, so a thumb can hit it
+function tapRect(r) {
+    if (!usesTouchLayout()) return r;
+    const need = TOUCH_MIN_CSS / view.fit, padX = Math.max(0, (need - r.w) / 2), padY = Math.max(0, (need - r.h) / 2);
+    return { x: r.x - padX, y: r.y - padY, w: r.w + 2 * padX, h: r.h + 2 * padY };
+}
 
 // Thumb-friendly places. Right thumb: the big button with PUNCH beside it, JUMP above it and BLOCK
 // between them; then two columns of extras going up. Left thumb: the joystick, with the silly buttons above it.
@@ -4204,7 +4233,7 @@ function drawHouse() {
     if (F.bookshelf) { ctx.fillStyle = '#6B3E1E'; ctx.fillRect(530, 70, 60, 64);
                      for (let r = 0; r < 3; r++) for (let b = 0; b < 6; b++) { ctx.fillStyle = ['#C03030', '#3060C0', '#30A050', '#E0A020', '#8040A0', '#20A0A0'][(b + r) % 6]; ctx.fillRect(534 + b * 9, 74 + r * 20, 7, 16); } }
     if (F.tv)      { ctx.fillStyle = '#222'; ctx.fillRect(350, 84, 100, 60); ctx.fillStyle = `hsl(${(t * 40) % 360}, 60%, 55%)`; ctx.fillRect(356, 90, 88, 48);
-                     ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('📺 CARTOONS!', 400, 118);
+                     ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('📺 CARTOONS!', 400, 118);
                      ctx.fillStyle = '#444'; ctx.fillRect(390, 144, 20, 6); }
     if (F.sofa)    { ctx.fillStyle = '#3A6AB0'; pathRoundRect(340, 200, 120, 40, 10); ctx.fill(); ctx.fillStyle = '#4A7AC8'; pathRoundRect(345, 214, 110, 22, 8); ctx.fill(); }
     if (F.lamp)    { ctx.fillStyle = '#555'; ctx.fillRect(688, 150, 4, 50); ctx.fillStyle = '#FFE8A0'; ctx.beginPath(); ctx.moveTo(676, 152); ctx.lineTo(704, 152); ctx.lineTo(698, 134); ctx.lineTo(682, 134); ctx.fill();
@@ -4423,7 +4452,7 @@ function drawMall() {
         if (sh.id === 'magic') for (let k = 0; k < 3; k++) drawStar(x - 40 + k * 40, 120 + Math.sin(t * 3 + k) * 3, 3, '#FFE066');
     }
     ctx.fillStyle = '#6B3E1E'; ctx.fillRect(MALL_EXIT.x - 24, 560, 48, 40);
-    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', MALL_EXIT.x, 556);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', MALL_EXIT.x, 556);
     const sh = nearMallShop();
     if (sh && !menu) drawSpeech({ x: sh.x, y: 230 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Shop at ${sh.name.replace(/^\S+ /, '')}`);
 }
@@ -6644,7 +6673,7 @@ function drawBlocks() {
             ctx.strokeStyle = '#FFFFFF';
             ctx.beginPath(); ctx.arc(sc.x, sc.kind === 'tree' ? sc.y - sc.r * 0.2 : sc.y, sc.r + 6, 0, Math.PI * 2); ctx.stroke();
             ctx.setLineDash([]);
-            ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+            ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
             ctx.fillText(sc.kind === 'tree' ? '🪓 Chop!' : '⛏ Mine!', sc.x, sc.y - sc.r - 14);
         } else {
             ctx.strokeStyle = blockAtCell(cx, cy) ? '#FFFFFF' : canPlaceAt(cx, cy) ? '#FFE066' : '#FF6666';
@@ -8539,7 +8568,7 @@ function drawGadgets() {
 }
 
 // A clickable BUILD button that also shows which block you're holding
-const BUILD_BTN = { x: 272, y: 5, w: 86, h: 22 };   // in the top bar
+const BUILD_BTN = { x: 248, y: 5, w: 118, h: 22 };   // in the top bar
 function drawBuildButton() {
     if (lastInput === 'touch' || state.gamePhase !== 'playing' || state.won || state.levelComplete) return;
     const b = BUILD_BTN, type = HOTBAR[state.hotbar];
@@ -8548,7 +8577,7 @@ function drawBuildButton() {
     ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.strokeStyle = '#FFE066'; ctx.lineWidth = 1.5; ctx.strokeRect(b.x, b.y, b.w, b.h);
     ctx.drawImage(blockCanvas(type), b.x + 3, b.y + 3, 16, 16);
-    ctx.fillStyle = state.buildMode ? '#222' : '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = state.buildMode ? '#222' : '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(`BUILD (B) ${isCreative() ? '∞' : '×' + invCount(type)}`, b.x + 22, b.y + b.h / 2 + 1);
     ctx.restore();
 }
@@ -9003,13 +9032,17 @@ function drawMenu() {
         ctx.strokeStyle = cursor ? '#FFFFFF' : it.status ? '#C8A040' : '#444'; ctx.lineWidth = cursor ? 2.5 : 1;
         ctx.strokeRect(r.x, r.y, r.w, r.h);
         ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(it.icon, r.x + 28, r.y + 40);
+        ctx.fillText(it.icon, r.x + 28, r.y + r.h / 2 + 8);
         ctx.textAlign = 'left';
-        ctx.fillStyle = '#FFE8B0'; ctx.font = 'bold 13px Arial'; ctx.fillText(it.name, r.x + 56, r.y + 20);
-        ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.font = '10px Arial'; ctx.fillText(it.desc, r.x + 56, r.y + 36);
-        ctx.font = 'bold 11px Arial';
+        const tx = r.x + 54, tw = r.w - 58, off = (r.h - 54) / 2;
+        ctx.font = '12px Arial';
+        const desc = wrapText(it.desc, tw, 2), two = desc.length > 1;   // a long description takes two lines
+        ctx.fillStyle = '#FFE8B0'; fitText(it.name, tx, r.y + off + (two ? 13 : 19), tw, two ? 13 : 14, true);
+        ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '12px Arial';
+        desc.forEach((line, k) => ctx.fillText(line, tx, r.y + off + (two ? 26 : 34) + k * 12, tw));
         ctx.fillStyle = it.status ? '#FFD700' : state.coins >= (it.cost || 0) ? '#FFD700' : '#886';
-        ctx.fillText(it.status ? '✓ ' + it.status : it.cost ? `🪙${it.cost}` : '', r.x + 56, r.y + 53);
+        ctx.font = 'bold 12px Arial';
+        ctx.fillText(it.status ? '✓ ' + it.status : it.cost ? `🪙${it.cost}` : '', tx, r.y + off + (two ? 51 : 50), tw);
     });
     ctx.restore();
 }
@@ -9577,8 +9610,8 @@ function drawIntro() {
             ctx.strokeStyle = `rgba(255,255,80,${pulse})`; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
             ctx.fillStyle = '#FFFF80'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
             ctx.fillText(label, b.x + b.w / 2, b.y + 24);
-            ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '10px Arial';
-            ctx.fillText(sub, b.x + b.w / 2, b.y + b.h + 13);
+            ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '12px Arial';
+            ctx.fillText(sub, b.x + b.w / 2, b.y + b.h + 15);
         }
     }
 
@@ -9631,7 +9664,7 @@ function drawGoldenPortal() {
     }
     ctx.restore();
     if (d < SECRET_REVEAL_DIST) {
-        ctx.fillStyle = '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
         ctx.fillText('✨ SECRET! ✨', x, y + PORTAL_R + 18);
     }
 }
@@ -11145,7 +11178,7 @@ function drawTownDetails(night) {
         }
         ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c.x, c.y - 14 + droop); ctx.stroke();
         if (!c.thirsty) { ctx.fillStyle = '#E03A2A'; ctx.beginPath(); ctx.arc(c.x + 3, c.y - 9, 3, 0, Math.PI * 2); ctx.fill(); }
-        else if (!night) { ctx.fillStyle = '#88CCFF'; ctx.font = '10px Arial'; ctx.textAlign = 'center'; ctx.fillText('💧?', c.x, c.y - 20); }
+        else if (!night) { ctx.fillStyle = '#88CCFF'; ctx.font = '12px Arial'; ctx.textAlign = 'center'; ctx.fillText('💧?', c.x, c.y - 20); }
     }
     // Butterflies (daytime)
     if (!night) {
@@ -12188,7 +12221,7 @@ function drawHUD() {
 
     // ── AMMO BAR ──────────────────────────────────────────────
     if (state.power !== POWER.NONE && state.room !== ROOM.VOID) {
-        const bx = 14, by = 54, bh = 10, bw = 130;
+        const bx = 14, by = 54, bh = 14, bw = 130;
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
 
@@ -12197,7 +12230,7 @@ function drawHUD() {
             ctx.fillStyle = '#FF8800';
             ctx.fillRect(bx, by, bw * pct, bh);
             ctx.fillStyle = '#FFA500';
-            ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
+            ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
             const secsLeft = Math.ceil(state.ammoReloadTimer / 60);
             ctx.fillText(`RELOADING… ${secsLeft}s`, bx + 2, by + bh - 1);
         } else {
@@ -12206,8 +12239,8 @@ function drawHUD() {
                 ctx.fillStyle = i < state.ammo ? '#4FC3F7' : '#333';
                 ctx.fillRect(bx + i * (bulletW + 2), by, bulletW, bh);
             }
-            ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            ctx.font = '9px Arial'; ctx.textAlign = 'left';
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
             ctx.fillText(`AMMO ${state.ammo}/${state.ammoMax}`, bx + 2, by + bh - 1);
         }
     }
@@ -12228,9 +12261,11 @@ function drawHUD() {
     drawBuildButton();
     if (state.treasure && !state.buildMode) {
         ctx.save();
-        ctx.fillStyle = 'rgba(60,40,10,0.8)'; ctx.fillRect(250, 50, 300, 18);
-        ctx.fillStyle = '#FFE8A0'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(`🗺 Clue ${state.treasure.step + 1}/3: ${state.treasure.spots[state.treasure.step].clue}`, 400, 63);
+        const clue = `🗺 Clue ${state.treasure.step + 1}/3: ${state.treasure.spots[state.treasure.step].clue}`;
+        ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        const cw = Math.max(300, ctx.measureText(clue).width + 20);
+        ctx.fillStyle = 'rgba(60,40,10,0.8)'; ctx.fillRect(400 - cw / 2, 50, cw, 20);
+        ctx.fillStyle = '#FFE8A0'; ctx.fillText(clue, 400, 65);
         ctx.restore();
     }
 
@@ -12250,8 +12285,8 @@ function drawHUD() {
     }
     if (settings.creative) {   // a badge so you know you're in Creative Mode
         ctx.save();
-        ctx.fillStyle = 'rgba(60,160,60,0.9)'; ctx.fillRect(364, 50, 72, 16);
-        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🎮 CREATIVE', 400, 62);
+        ctx.fillStyle = 'rgba(60,160,60,0.9)'; ctx.fillRect(352, 50, 96, 18);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🎮 CREATIVE', 400, 63);
         ctx.restore();
     }
 }
@@ -12491,29 +12526,29 @@ function drawShop() {
 
         // Key hint
         ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
-        if (lastInput === 'keyboard') ctx.fillText(`[${i + 1}]`, ix, iy + 16);
+        ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        if (lastInput === 'keyboard') ctx.fillText(`[${i + 1}]`, ix, iy + 15);
 
         // Name
         ctx.fillStyle = unlocked ? (col === '#2A2A2A' ? '#BBB' : col) : '#555';
-        ctx.font = '10px Arial';
-        ctx.fillText(name, ix, iy + 27);
+        ctx.font = '12px Arial';
+        ctx.fillText(name, ix, iy + 28, 66);
 
         // Cost or ✓
         if (!unlocked) {
             ctx.fillStyle = state.coins >= cost ? '#FFD700' : '#886';
-            ctx.font = 'bold 9px Arial';
-            ctx.fillText(`🪙${cost}`, ix, iy + 39);
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText(`🪙${cost}`, ix, iy + 41);
         } else if (active) {
             ctx.fillStyle = '#FFD700';
-            ctx.font = 'bold 11px Arial';
-            ctx.fillText('✓', ix, iy + 39);
+            ctx.font = 'bold 14px Arial';
+            ctx.fillText('✓', ix, iy + 41);
         }
     }
 
     // Bottom row: Shield Bubble, then pets
-    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'left';
-    ctx.fillText('ITEMS & PETS — pets follow you, fight with their own powers and LEVEL UP!', SX + 14, SY + 174);
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
+    ctx.fillText('ITEMS & PETS — pets follow you, fight with their own powers and LEVEL UP!', SX + 14, SY + 174, SHOP.W - 28);
     for (let i = 8; i < SHOP_SLOTS; i++) {
         const r = shopSlotRect(i);
         const isPet = i >= 9, j = i - 9;
@@ -12525,22 +12560,21 @@ function drawShop() {
         ctx.strokeRect(r.x, r.y, r.w, r.h);
         if (isPet) {
             drawPetShape(PETS[j].id, r.cx, r.cy, 1.3, 1);
-            if (owned) { ctx.fillStyle = '#FFE066'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'right'; ctx.fillText(`Lv${petLevel(j)}`, r.x + r.w - 3, r.y + 11); }
+            if (owned) { ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'right'; ctx.fillText(`Lv${petLevel(j)}`, r.x + r.w - 3, r.y + 11); }
         } else {
             ctx.beginPath(); ctx.arc(r.cx, r.cy, 16, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(170,230,255,0.25)'; ctx.fill();
             ctx.strokeStyle = '#CCF0FF'; ctx.lineWidth = 2; ctx.stroke();
         }
         ctx.textAlign = 'center';
-        ctx.fillStyle = isPet ? '#FFE8B0' : '#AEE8FF'; ctx.font = 'bold 10px Arial';
-        ctx.fillText(isPet ? PETS[j].name : 'Bubble', r.cx, r.y + 66);
-        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '8px Arial';
-        ctx.fillText(isPet ? PETS[j].power : (lastInput === 'keyboard' ? 'Block 1 hit (9)' : 'Block 1 hit'), r.cx, r.y + 80);
+        ctx.fillStyle = isPet ? '#FFE8B0' : '#AEE8FF';
+        fitText(isPet ? PETS[j].name : 'Bubble', r.cx, r.y + 65, r.w - 2, 12, true);
+        ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '12px Arial';
+        ctx.fillText(isPet ? PETS[j].power : (lastInput === 'keyboard' ? 'Block 1 hit (9)' : 'Block 1 hit'), r.cx, r.y + 81, r.w - 2);
         const cost = isPet ? PETS[j].cost : BUBBLE_COST;
-        ctx.font = 'bold 10px Arial';
         ctx.fillStyle = active ? '#FFD700' : owned ? '#AEE8FF' : state.coins >= cost ? '#FFD700' : '#886';
-        ctx.font = 'bold 9px Arial';
-        ctx.fillText(active ? '✓ WITH YOU' : owned ? (isPet ? 'OWNED' : '✓ HAVE') : `🪙${cost}`, r.cx, r.y + 97);
+        ctx.font = 'bold 12px Arial';
+        ctx.fillText(active ? '✓ WITH YOU' : owned ? (isPet ? 'OWNED' : '✓ HAVE') : `🪙${cost}`, r.cx, r.y + 99, r.w - 2);
     }
     ctx.restore();
 }
