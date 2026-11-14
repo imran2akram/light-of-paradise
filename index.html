@@ -785,7 +785,7 @@ function spellItems() {
         status: state.spell === sp.id ? 'HOLDING' : state.spells[sp.id] ? 'OWNED — pick' : null,
         action: () => {
             if (state.spells[sp.id]) { state.spell = sp.id; return; }
-            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} ${sp.name}! Cast it with R / X / ✨`); giveAward('wizard'); }
+            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} ${sp.name}! Cast it with ${byInput('R', '✨', 'X')}`); giveAward('wizard'); }
         },
     }));
 }
@@ -1518,14 +1518,17 @@ function wrapText(text, maxW, maxLines) {
 // Each item: { icon, name, desc, cost?, status?, action() }
 let menu = null;   // { title, items, cursor }
 const MENU = { X: 130, Y: 70, W: 540, H: 430 };
+// Item boxes: two columns; with more than MENU_TALL_AFTER items the rows are squeezed so they all fit
+const MENU_ITEM = { PAD: 14, COL: 262, TOP: 56, W: 250, ROW: 68, H: 62, ROW_SQUEEZED: 58, H_SQUEEZED: 54 };
+const MENU_TALL_AFTER = 10;
 const MENU_CLOSE = { x: MENU.X + MENU.W - 26, y: MENU.Y + 20, r: 17, hitR: 36 };   // the ✕ (the tap area stays above the first row of items)
 
 // opts (optional): hint = the small line under the title, h = a shorter panel for menus with only a few items
 function openMenu(title, items, opts = {}) { menu = { title, items, cursor: 0, hint: opts.hint, h: opts.h || MENU.H }; }
 function menuItemRect(i) {
     const col = i % 2, row = Math.floor(i / 2);
-    const tall = menu && menu.items().length > 10;   // squeeze rows when there's a lot to show
-    return { x: MENU.X + 14 + col * 262, y: MENU.Y + 56 + row * (tall ? 58 : 68), w: 250, h: tall ? 54 : 62 };
+    const I = MENU_ITEM, tall = menu && menu.items().length > MENU_TALL_AFTER;   // squeeze rows when there's a lot to show
+    return { x: MENU.X + I.PAD + col * I.COL, y: MENU.Y + I.TOP + row * (tall ? I.ROW_SQUEEZED : I.ROW), w: I.W, h: tall ? I.H_SQUEEZED : I.H };
 }
 function menuSelect(i) {
     const list = menu.items();
@@ -1644,6 +1647,11 @@ function handleTap(x, y) {
     return false;
 }
 
+// Menus and the shop both move their cursor with these keys.
+const KEY_NAV = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
+                  ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] };
+function digitKey(code) { const m = /^Digit([1-9])$/.exec(code); return m ? Number(m[1]) - 1 : -1; }   // 1-9 key → 0-8, or -1
+
 document.addEventListener('keydown', e => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;   // browser shortcuts (Ctrl+R, Cmd+W...) are not game buttons
     initAudio();
@@ -1651,12 +1659,10 @@ document.addEventListener('keydown', e => {
     lastInput = 'keyboard';
     if (e.code === 'KeyM') toggleMute();
     if (menu) {
-        const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
-                      ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] }[e.code];
+        const nav = KEY_NAV[e.code];
         if (nav) { e.preventDefault(); moveMenuCursor(nav[0], nav[1]); }
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); menuSelect(menu.cursor); }
-        const d = /^Digit([1-9])$/.exec(e.code);
-        if (d) menuSelect(Number(d[1]) - 1);
+        if (digitKey(e.code) >= 0) menuSelect(digitKey(e.code));
         if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyO') menu = null;
         return;
     }
@@ -1669,12 +1675,10 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyR') castSpell();
     if (e.code === 'KeyV') toggleMount();
     if (e.code === 'KeyQ') { if (state.buildMode) nextBlock(); else useGadget(); }
-    const hb = /^Digit([1-9])$/.exec(e.code);
-    if (hb && state.buildMode && !state.shopOpen) state.hotbar = Math.min(HOTBAR.length - 1, Number(hb[1]) - 1);
+    if (digitKey(e.code) >= 0 && state.buildMode && !state.shopOpen) state.hotbar = Math.min(HOTBAR.length - 1, digitKey(e.code));
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') dash();
     if (state.shopOpen) {
-        const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
-                      ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] }[e.code];
+        const nav = KEY_NAV[e.code];
         if (nav) { e.preventDefault(); moveShopCursor(nav[0], nav[1]); }
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); shopSelect(state.shopCursor); }
     } else {
@@ -1693,8 +1697,7 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyU') burp();
     if (e.code === 'KeyI') sneeze();
     // Number keys in the shop: 1-8 skins, 9 Shield Bubble
-    const digit = /^Digit([1-9])$/.exec(e.code);
-    if (digit && state.shopOpen) shopSelect(Number(digit[1]) - 1);
+    if (digitKey(e.code) >= 0 && state.shopOpen) shopSelect(digitKey(e.code));
 });
 document.addEventListener('keyup', e => {
     keys[e.code] = false;
@@ -1916,6 +1919,10 @@ function stickNavStep(gp) {
     return stickNav.held >= STICK_NAV_REPEAT_FIRST && (stickNav.held - STICK_NAV_REPEAT_FIRST) % STICK_NAV_REPEAT_EVERY === 0 ? [dx, dy] : null;
 }
 let   lastInput       = 'keyboard';   // 'keyboard' | 'touch' | 'pad' — picks which hints to show
+// Pick the hint text for the device in use. Every on-screen prompt goes through these two.
+function byInput(keyboard, touch, pad) { return lastInput === 'pad' ? pad : lastInput === 'touch' ? touch : keyboard; }
+function keyName(keyboard, pad) { return lastInput === 'pad' ? pad : keyboard; }   // for keys that only differ on a controller
+function mainBtn() { return byInput('SPACE', 'Tap', 'A'); }   // the name of the main button
 let   padPrev         = [];
 const padMove         = { x: 0, y: 0 };
 let   padComboUsed    = false;
@@ -2567,7 +2574,7 @@ function drawGloop() {
     draw(GLOOP.x, GLOOP.y, true);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center'; ctx.fillText('Gloop (lonely)', GLOOP.x, GLOOP.y + 24);
     if (Math.hypot(player.x - GLOOP.x, player.y - GLOOP.y) < 40 && !menu) {
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        const verb = mainBtn();
         drawSpeech({ x: GLOOP.x, y: GLOOP.y - 14 }, `${verb}: Give a cookie (🪙${GLOOP_COOKIE}) ${state.gloop || 0}/3`);
     }
 }
@@ -2816,7 +2823,7 @@ function drawTvShow() {
         for (let k = 0; k < 6; k++) ctx.fillText(['🎵', '🎶', '💃', '🕺', '🎸', '🥁'][k], 230 + k * 68, 300 + Math.sin(t * 6 + k) * 20);
         if (tvShow.t % 20 === 0) tone([523, 659, 784, 659][Math.floor(tvShow.t / 20) % 4], 0.15, 'triangle', 0.1);
     }
-    ctx.fillStyle = '#AAA'; ctx.font = '11px Arial'; ctx.fillText(`${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: change channel`, 400, 470);
+    ctx.fillStyle = '#AAA'; ctx.font = '11px Arial'; ctx.fillText(`${mainBtn()}: change channel`, 400, 470);
     ctx.restore();
 }
 
@@ -2861,7 +2868,7 @@ function drawTimeMachineAndHints() {
     ctx.fillStyle = '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textBaseline = 'alphabetic'; ctx.fillText('THE TIME MACHINE', x, y + 46);
     ctx.fillStyle = '#CCAAFF'; ctx.fillText(`🌟 Psst… the secret ending is behind a golden door in Heaven. It needs ${ENDING_AWARDS} awards and the Boss Rush crown!`, 400, 560);
     ctx.restore();
-    if (Math.hypot(player.x - x, player.y - y) < 44 && !menu) drawSpeech({ x, y: y - 30 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Travel in time!`);
+    if (Math.hypot(player.x - x, player.y - y) < 44 && !menu) drawSpeech({ x, y: y - 30 }, `${mainBtn()}: Travel in time!`);
 }
 
 // ── MINI-GAMES (at the Race Master): hide & seek, fishing, treasure, football, snowballs, dancing, cooking, maze race, tag, quiz ──
@@ -3233,7 +3240,7 @@ function drawDanceBattle() {
     }
     ctx.textBaseline = 'alphabetic'; ctx.font = 'bold 22px Arial'; ctx.fillStyle = '#FFE066'; ctx.fillText(D.msg, 400, 410);
     ctx.font = '12px Arial'; ctx.fillStyle = '#DDD';
-    ctx.fillText(lastInput === 'pad' ? 'Push the stick or D-pad that way!' : lastInput === 'touch' ? 'Tap that side of the screen!' : 'Press the arrow keys (or WASD)!', 400, 445);
+    ctx.fillText(byInput('Press the arrow keys (or WASD)!', 'Tap that side of the screen!', 'Push the stick or D-pad that way!'), 400, 445);
     const bounce = Math.abs(Math.sin(t * 6)) * 12;
     ctx.font = '50px Arial'; ctx.fillText('🕺', 160, 330 - bounce); ctx.fillText('💃', 640, 330 - (12 - bounce));
     ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#FFF'; ctx.fillText('YOU', 160, 370); ctx.fillText('DJ Dancey', 640, 370);
@@ -3406,7 +3413,7 @@ function updateYard() {
 yardTimers.swim = 0;
 function drawYard() {
     if (state.room !== ROOM.BACKYARD) return;
-    const t = Date.now() / 1000, verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const t = Date.now() / 1000, verb = mainBtn();
     const emoji = (e, x, y, size) => { ctx.save(); ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); ctx.restore(); };
     const near = (o, r) => Math.hypot(player.x - o.x, player.y - o.y) < r && !menu && !yardRide;
     const label = (text, x, y) => { ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
@@ -3461,7 +3468,7 @@ function drawSecretRoom2() {
     ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
     ctx.fillText(`🏆 Your trophy shelf: ${n} awards!`, 400, 118);
     ctx.fillText('🕵 Nobody knows about this room… except you!', 400, 300);
-    if (!P.chest && Math.hypot(player.x - SECRET_CHEST.x, player.y - SECRET_CHEST.y) < 40 && !menu) drawSpeech({ x: SECRET_CHEST.x, y: SECRET_CHEST.y - 20 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Open your secret chest`);
+    if (!P.chest && Math.hypot(player.x - SECRET_CHEST.x, player.y - SECRET_CHEST.y) < 40 && !menu) drawSpeech({ x: SECRET_CHEST.x, y: SECRET_CHEST.y - 20 }, `${mainBtn()}: Open your secret chest`);
 }
 
 // ── PETS & RIDES: pet battles, golden eggs, ride trails, the hamster ball ──
@@ -3517,7 +3524,7 @@ function drawPetBattle() {
     bar(260, B.you, `Your ${PETS[state.activePet].name}`); bar(540, B.them, `${B.foeName} the ${PETS[B.foe].name}`);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 14px Arial'; ctx.fillText(B.msg, 400, 400);
     ctx.fillStyle = '#FFE066'; ctx.font = '11px Arial';
-    ctx.fillText(`${lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap' : 'Press SPACE'} to CHEER! (cheering makes your pet hit harder)`, 400, 445);
+    ctx.fillText(`${byInput('Press SPACE', 'Tap', 'Press A')} to CHEER! (cheering makes your pet hit harder)`, 400, 445);
     ctx.restore();
 }
 
@@ -3570,7 +3577,7 @@ function updateSubplace() {
     }
 }
 function drawSubplaces() {
-    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const verb = mainBtn();
     const t = Date.now() / 1000;
     for (const [id, sp] of Object.entries(SUBPLACES)) {   // doors in the places you know
         if (state.room !== sp.parent || sp.door.x < 0) continue;   // some places have no door (time machine, shrink ray)
@@ -3791,7 +3798,7 @@ function drawControlsPanel() {
     if (!showControls) {
         ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x, 540, 92, 16);
         ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
-        ctx.fillText(lastInput === 'pad' ? '🎮 Help: ⧉+LB' : '⌨ Help: K', x + 6, 551); ctx.restore();
+        ctx.fillText(keyName('⌨ Help: K', '🎮 Help: ⧉+LB'), x + 6, 551); ctx.restore();
         return;
     }
     const rows = controlsList(), half = Math.ceil(rows.length / 2);
@@ -3799,7 +3806,7 @@ function drawControlsPanel() {
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(x, y, w, h);
     ctx.fillStyle = '#FFD700'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
-    ctx.fillText(lastInput === 'pad' ? '🎮 CONTROLS  (⧉ = View button)' : '⌨ CONTROLS', x + 6, y + 11);
+    ctx.fillText(keyName('⌨ CONTROLS', '🎮 CONTROLS  (⧉ = View button)'), x + 6, y + 11);
     ctx.font = '9px Arial';
     rows.forEach(([what, key], i) => {
         const cx = x + 6 + Math.floor(i / half) * (w / 2), cy = y + 22 + (i % half) * rowH;
@@ -4390,7 +4397,7 @@ function drawHouse() {
     });
     if (bed) label('💤 your pets are sleeping', 635, 346);
     // What the button does here
-    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const verb = mainBtn();
     const i = nearPot();
     if (nearHome(CATALOGUE)) drawSpeech(CATALOGUE, `${verb}: Buy furniture`);
     else if (nearHome(HOUSE_BED, 40)) drawSpeech(HOUSE_BED, `${verb}: Take a nap (free heal)`);
@@ -4572,7 +4579,7 @@ function drawMall() {
     ctx.fillStyle = '#6B3E1E'; ctx.fillRect(MALL_EXIT.x - 24, 560, 48, 40);
     ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', MALL_EXIT.x, 556);
     const sh = nearMallShop();
-    if (sh && !menu) drawSpeech({ x: sh.x, y: 230 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Shop at ${sh.name.replace(/^\S+ /, '')}`);
+    if (sh && !menu) drawSpeech({ x: sh.x, y: 230 }, `${mainBtn()}: Shop at ${sh.name.replace(/^\S+ /, '')}`);
 }
 
 function drawMallDoor() {
@@ -4948,7 +4955,7 @@ function paintJungle(g, R) {
 function drawNewPlaces() {
     const t = Date.now() / 1000, P = place();
     const label = (text, x, y, col = 'rgba(255,255,255,0.9)') => { ctx.fillStyle = col; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
-    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const verb = mainBtn();
     drawWorld2(t, P, label, verb);
     drawMagicPlaces(t, label, verb);
     drawHeroPlaces(t, label, verb);
@@ -5151,7 +5158,7 @@ function drawTreasureX() {
     ctx.beginPath(); ctx.moveTo(sp.x - 9, sp.y - 9); ctx.lineTo(sp.x + 9, sp.y + 9); ctx.moveTo(sp.x + 9, sp.y - 9); ctx.lineTo(sp.x - 9, sp.y + 9); ctx.stroke();
     if (d < 30) {
         ctx.fillStyle = '#FFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(`${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Dig for treasure!`, sp.x, sp.y - 18);
+        ctx.fillText(`${mainBtn()}: Dig for treasure!`, sp.x, sp.y - 18);
     }
     ctx.restore();
 }
@@ -5496,12 +5503,12 @@ function drawHeaven() {
     ctx.fillStyle = '#7A5A10'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
     ctx.fillText(`Angel of Wishes — ${state.heavenWishes} wish${state.heavenWishes === 1 ? '' : 'es'} left`, WISH_ANGEL.x, WISH_ANGEL.y + 34);
     if (nearWishAngel() && !menu) {
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        const verb = mainBtn();
         drawSpeech(WISH_ANGEL, `${verb}: Make a wish! ✨`);
     }
     if (!state.buildMode) {
         ctx.fillStyle = 'rgba(90,70,20,0.75)'; ctx.font = 'bold 12px Arial';
-        ctx.fillText('No monsters up here — it heals you! Press B to build anything with UNLIMITED blocks.', 400, 590);
+        ctx.fillText(`No monsters up here — it heals you! ${byInput('Press B', 'Tap 🧱', 'Click the left stick')} to build anything with UNLIMITED blocks.`, 400, 590);
     }
 }
 
@@ -6188,7 +6195,7 @@ function rollBirthLuck() {
         state.demigod = g.id; g.give(); giveAward('demigod'); sfx('found');
         showToast(`${g.icon} You are a DEMIGOD! ${g.who}`, '#FFD700', 420);
         spawnFloatText(400, 200, `🎁 Gift: ${g.gift}`, '#FFE680', 360);
-        spawnFloatText(400, 222, `${g.powers.map(p => p.icon + ' ' + p.name).join('  ·  ')}  (press T)`, '#FFE680', 360);
+        spawnFloatText(400, 222, `${g.powers.map(p => p.icon + ' ' + p.name).join('  ·  ')}  (${byInput('press T', 'tap the button', 'hold ⧉ + A')})`, '#FFE680', 360);
     }
     if (!state.hogwarts && Math.random() < BORN_WIZARD_CHANCE) {
         state.hogwarts = true; giveAward('hogwarts'); sfx('found');
@@ -6203,14 +6210,16 @@ function askNewGame() {
     openMenu('Start over? Your game will be erased.', () => [
         { icon: '💾', name: 'Keep my game', desc: 'Go back', cost: 0, status: null, action: () => { menu = null; } },
         { icon: '✦',  name: 'Start over',   desc: 'Erase it and begin again', cost: 0, status: null, action: () => { menu = null; startFromIntro(true); } },
-    ], { hint: lastInput === 'pad' ? 'A to choose, B to go back' : lastInput === 'touch' ? 'Tap to choose' : 'Arrows + SPACE to choose', h: 190 });
+    ], { hint: byInput('Arrows + SPACE to choose', 'Tap to choose', 'A to choose, B to go back'), h: 190 });
 }
 
 function startFromIntro(fresh = false) {
     if (fresh || !savedGame) {
         if (fresh) { clearSave(); worldBlocks = {}; saveWorld(); }
         state.gamePhase = 'playing';
-        showToast('⛏ Like Minecraft: SPACE or left-click mines, B builds, right-click places blocks!', '#FFE066', 300);
+        showToast(byInput('⛏ Like Minecraft: SPACE or left-click mines, B builds, right-click places blocks!',
+                          '⛏ Like Minecraft: tap 🧱, then tap the ground to mine and place blocks!',
+                          '⛏ Like Minecraft: A mines, click the left stick to build and place blocks!'), '#FFE066', 300);
         rollBirthLuck();
         return;
     }
@@ -6773,7 +6782,7 @@ function drawBlocks() {
     if (!state.buildMode && !menu) {   // walked up to something you can chop or mine
         const m = nearbyMineable();
         if (m && !(m.cx !== undefined && isUnbreakable(blockAtCell(m.cx, m.cy)))) {   // (no invitation to mine maze walls)
-            const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+            const verb = mainBtn();
             const o = m.scenery, x = o ? o.x : m.cx * CELL + CELL / 2, y = o ? o.y - o.r - 14 : m.cy * CELL - 6;
             const what = o ? (o.kind === 'tree' ? '🪓 Chop the tree' : '⛏ Mine the rock') : `⛏ Mine the ${BLOCKS[blockAtCell(m.cx, m.cy).type].name}`;
             ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
@@ -6838,7 +6847,7 @@ function drawHotbar() {
     ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
     const hint = lastInput === 'touch'
         ? `🧱 BUILD MODE${isCreative() ? ' — ∞ BLOCKS!' : ''}   Tap the ground: mine / place   🔄 next block   ⚔ fight`
-        : `🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${lastInput === 'pad' ? 'A' : 'SPACE / click'}: place / mine / chop trees   ${lastInput === 'pad' ? 'B' : 'Q or 1-9'}: pick block`;
+        : `🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${keyName('SPACE / click', 'A')}: place / mine / chop trees   ${keyName('Q or 1-9', 'B')}: pick block`;
     ctx.fillText(hint, panel.x + panel.w / 2, y0 - 10);
     HOTBAR.forEach((type, i) => {
         const x = x0 + i * W, count = invCount(type);
@@ -8695,7 +8704,7 @@ function drawBuildButton() {
     ctx.strokeStyle = '#FFE066'; ctx.lineWidth = 1.5; ctx.strokeRect(b.x, b.y, b.w, b.h);
     ctx.drawImage(blockCanvas(type), b.x + 3, b.y + 3, 16, 16);
     ctx.fillStyle = state.buildMode ? '#222' : '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText(`BUILD (B) ${isCreative() ? '∞' : '×' + invCount(type)}`, b.x + 22, b.y + b.h / 2 + 1);
+    ctx.fillText(`BUILD (${keyName('B', 'L3')}) ${isCreative() ? '∞' : '×' + invCount(type)}`, b.x + 22, b.y + b.h / 2 + 1);
     ctx.restore();
 }
 
@@ -8704,15 +8713,15 @@ function drawGadgetHud() {
     const slots = [];
     if (state.gadget) {
         const g = GADGETS.find(g => g.id === state.gadget);
-        slots.push({ icon: g.icon, key: lastInput === 'pad' ? 'B' : 'Q', cd: state.gadgetCooldown / g.cooldown });
+        slots.push({ icon: g.icon, key: keyName('Q', 'B'), cd: state.gadgetCooldown / g.cooldown });
     }
-    if (state.hasDash) slots.push({ icon: '💨', key: lastInput === 'pad' ? 'LT' : '⇧', cd: state.dashCooldown / DASH_COOLDOWN });
+    if (state.hasDash) slots.push({ icon: '💨', key: keyName('⇧', 'LT'), cd: state.dashCooldown / DASH_COOLDOWN });
     if (state.spell) {
         const sp = SPELLS.find(x => x.id === state.spell);
-        slots.push({ icon: sp.icon, key: lastInput === 'pad' ? 'X' : 'R', cd: state.spellCooldown / sp.cooldown });
+        slots.push({ icon: sp.icon, key: keyName('R', 'X'), cd: state.spellCooldown / sp.cooldown });
     }
     const gp = nextGodPower();
-    if (gp) slots.push({ icon: gp.icon, key: lastInput === 'pad' ? 'BACK' : 'T', cd: state.godCooldown / gp.cd });
+    if (gp) slots.push({ icon: gp.icon, key: keyName('T', 'BACK'), cd: state.godCooldown / gp.cd });
     slots.forEach((sl, i) => {
         const x = 70 + i * 40, y = 574;
         ctx.save();
@@ -8810,9 +8819,8 @@ function drawRace() {
         ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 60px Arial';
         ctx.fillText(String(Math.ceil(race.countdown / 60)), 400, 330);
     } else if (!race.winner) {
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'TAP' : 'SPACE';
         ctx.fillStyle = Math.floor(Date.now() / 200) % 2 ? '#FFE066' : '#FFFFFF'; ctx.font = 'bold 18px Arial';
-        ctx.fillText(`Press ${verb} as fast as you can to cheer your pet on!`, 400, 496);
+        ctx.fillText(`${byInput('Press SPACE', 'Tap', 'Press A')} as fast as you can to cheer your pet on!`, 400, 496);
     } else {
         ctx.fillStyle = '#FFD700'; ctx.font = 'bold 26px Arial';
         ctx.fillText(race.winner.you ? '🏆 YOU WIN! +50 pet XP' : `${PETS[race.winner.pet].name} wins!`, 400, 496);
@@ -8940,7 +8948,7 @@ function startWizardDuel() {
     const w = e0('wizard', Math.min(740, player.x + 220), Math.max(120, player.y - 80), { r: 26, coinDrop: 30, teleTimer: 150, spellTimer: 100, emerge: 0 });
     w.hp = w.maxHp = 20;
     list.push(w);
-    showToast('⚔ WIZARD DUEL! Use your spells! (R / X / ✨)', '#CC99FF', 200); sfx('laugh');
+    showToast(`⚔ WIZARD DUEL! Use your spells! (${byInput('R', '✨', 'X')})`, '#CC99FF', 200); sfx('laugh');
 }
 
 // 🧪 Potions: mix blocks you've mined
@@ -8972,7 +8980,7 @@ function spellClassItems() {
         status: state.spell === sp.id ? 'HOLDING' : state.spells[sp.id] ? 'LEARNED — pick' : null,
         action: () => {
             if (state.spells[sp.id]) { state.spell = sp.id; return; }
-            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} You learned ${sp.name}! Cast it with R / X / ✨`); giveAward('wizard'); }
+            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} You learned ${sp.name}! Cast it with ${byInput('R', '✨', 'X')}`); giveAward('wizard'); }
         },
     }));
 }
@@ -9095,7 +9103,7 @@ function gadgetItems(page = 0) {
                  status: state.gadget === g.id ? 'HOLDING' : owned ? 'OWNED — pick' : null,
                  action: () => {
                      if (owned) { state.gadget = g.id; return; }
-                     if (spend(g.cost)) { state.ownedGadgets[g.id] = true; state.gadget = g.id; showToast(`${g.icon} ${g.name}! Use it with Q / B / ⚙`); }
+                     if (spend(g.cost)) { state.ownedGadgets[g.id] = true; state.gadget = g.id; showToast(`${g.icon} ${g.name}! Use it with ${byInput('Q', '⚙', 'B')}`); }
                  } };
     });
     if (GADGETS.length > (page + 1) * GADGETS_PER_PAGE)
@@ -9116,12 +9124,12 @@ function meleeItems() {
                          if (spend(m.cost)) {
                              state.ownedMelee[m.id] = true; state.melee = m.id; giveAward('weaponMaster');
                              if (m.id === 'lightsaber') state.saberColor = Math.floor(Math.random() * SABER_COLORS.length);
-                             showToast(`${m.icon} ${m.name.toUpperCase()}! Swing it with J / RB / 👊`);
+                             showToast(`${m.icon} ${m.name.toUpperCase()}! Swing it with ${byInput('J', '👊', 'RB')}`);
                          }
                      } });
     }
     items.push({ icon: '🪞', name: 'Mirror Shield', desc: 'Blocking bounces bullets back at monsters!', cost: 50, status: state.mirrorShield ? 'OWNED' : null,
-                 action: () => { if (!state.mirrorShield && spend(50)) { state.mirrorShield = true; showToast('🪞 MIRROR SHIELD! Block (X / LB) to bounce bullets back!', '#AADDFF', 220); } } });
+                 action: () => { if (!state.mirrorShield && spend(50)) { state.mirrorShield = true; showToast(`🪞 MIRROR SHIELD! Block (${byInput('X', '🛡', 'LB')}) to bounce bullets back!`, '#AADDFF', 220); } } });
     items.push({ icon: '⬅', name: 'Back', desc: 'Back to the Forge', cost: 0, status: 'BACK', action: () => openMenu("🔨 THE BLACKSMITH'S FORGE", forgeItems) });
     return items;
 }
@@ -9135,7 +9143,7 @@ function drawMenu() {
     ctx.fillStyle = '#FFB347'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
     ctx.fillText(menu.title, 400, Y + 26);
     ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '12px Arial';
-    ctx.fillText(menu.hint || `Your coins: 🪙${state.coins}   ·   ${lastInput === 'pad' ? 'A to buy, B to close' : lastInput === 'touch' ? 'Tap to buy, ✕ to close' : 'Arrows + SPACE (or click) to buy, E to close'}`, 400, Y + 44);
+    ctx.fillText(menu.hint || `Your coins: 🪙${state.coins}   ·   ${byInput('Arrows + SPACE (or click) to buy, E to close', 'Tap to buy, ✕ to close', 'A to buy, B to close')}`, 400, Y + 44);
     ctx.beginPath(); ctx.arc(MENU_CLOSE.x, MENU_CLOSE.y, MENU_CLOSE.r, 0, Math.PI * 2);   // ✕ close button
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill(); ctx.strokeStyle = '#FFB347'; ctx.lineWidth = 2; ctx.stroke();
     ctx.beginPath();
@@ -9874,7 +9882,7 @@ function drawRaceMaster() {
     ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
     ctx.fillText('🏁 Race Master', x, y + 30);
     if (nearRaceMaster()) {
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        const verb = mainBtn();
         drawSpeech({ x, y }, `${verb}: Start a race! 🏁`);
     }
 }
@@ -9973,10 +9981,10 @@ function drawVoid() {
         ctx.strokeRect(b.x, b.y, b.w, b.h);
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#FFD700'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const key = lastInput === 'pad' ? 'Y' : lastInput === 'touch' ? '' : 'E';
+        const key = byInput('E', '', 'Y');
         ctx.fillText(`🛒 SHOP${key ? '  (' + key + ')' : ''}`, b.x + b.w / 2, b.y + b.h / 2 + 1);
         // AWARDS button
-        const a = AWARDS_BTN, akey = lastInput === 'pad' ? 'X' : lastInput === 'touch' ? '' : 'H';
+        const a = AWARDS_BTN, akey = byInput('H', '', 'X');
         ctx.fillStyle = 'rgba(40,20,70,0.85)'; ctx.fillRect(a.x, a.y, a.w, a.h);
         ctx.strokeStyle = '#FFD700'; ctx.strokeRect(a.x, a.y, a.w, a.h);
         ctx.fillStyle = '#FFD700';
@@ -10037,7 +10045,7 @@ function drawHell() {
     const digSpot = nearbyDigSpot();
     if (digSpot) drawDigView(digSpot);
     if (digSpot) {
-        const verb = lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap DIG' : 'Press SPACE';
+        const verb = byInput('Press SPACE', 'Tap DIG', 'Press A');
         ctx.fillStyle = canDig() ? '#FFE08A' : '#FF8888';
         ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
         ctx.fillText(!canDig() ? 'Beat the mole monster first!'
@@ -11340,7 +11348,7 @@ function drawParadise() {
             ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(a.x - 2.5, a.y - 2.5, 2, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#33AA33'; ctx.fillRect(a.x - 1, a.y - 11, 4, 5);
         }
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        const verb = mainBtn();
         const n = state.buildMode ? null : nearbyNpc();   // in build mode the button builds instead
         if (n && !(P.speech && P.speech.npc === n)) drawSpeech(n, `${verb}: ${talkLabel(n)}`);
         else if (nearbyCrop()) drawSpeech(nearbyCrop(), `${verb}: Water the crop`);
@@ -11768,7 +11776,7 @@ function drawCaveDarkness() {
     const gem = nearbyGem();
     if (gem) {
         ctx.fillStyle = '#FFE08A'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
-        const verb = lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap DIG' : 'Press SPACE';
+        const verb = byInput('Press SPACE', 'Tap DIG', 'Press A');
         ctx.fillText(`${verb} to mine the gem!`, gem.x, gem.y - 26);
     }
     ctx.fillStyle = 'rgba(255,220,150,0.6)'; ctx.font = '12px Arial'; ctx.textAlign = 'center';
@@ -12424,7 +12432,7 @@ function drawRainbowBg() {
 function drawEndHint() {
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.font = '12px Arial'; ctx.textAlign = 'center';
-    ctx.fillText(lastInput === 'pad' ? 'or press START' : lastInput === 'touch' ? 'tap the button' : 'or press ENTER', 400, 494);
+    ctx.fillText(byInput('or press ENTER', 'tap the button', 'or press START'), 400, 494);
 }
 
 function drawScoreLine(y) {
@@ -12486,9 +12494,9 @@ function drawLevelComplete() {
     ctx.save();
     ctx.shadowColor = '#4FC3F7'; ctx.shadowBlur = 20;
     ctx.fillStyle   = '#0a2840';
-    ctx.fillRect(300, 420, 200, 55);
+    ctx.fillRect(END_BTN.x, END_BTN.y, END_BTN.w, END_BTN.h);
     ctx.strokeStyle = '#4FC3F7'; ctx.lineWidth = 2;
-    ctx.strokeRect(300, 420, 200, 55);
+    ctx.strokeRect(END_BTN.x, END_BTN.y, END_BTN.w, END_BTN.h);
     ctx.fillStyle = '#FFFFFF';
     ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
     ctx.fillText('Next Level  ▶', 400, 454);
@@ -12532,9 +12540,9 @@ function drawWin() {
     ctx.save();
     ctx.shadowColor = '#4488FF'; ctx.shadowBlur = 20;
     ctx.fillStyle   = '#1a3488';
-    ctx.fillRect(300, 420, 200, 55);
+    ctx.fillRect(END_BTN.x, END_BTN.y, END_BTN.w, END_BTN.h);
     ctx.strokeStyle = '#6699FF'; ctx.lineWidth = 2;
-    ctx.strokeRect(300, 420, 200, 55);
+    ctx.strokeRect(END_BTN.x, END_BTN.y, END_BTN.w, END_BTN.h);
     ctx.fillStyle = '#FFFFFF';
     ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
     ctx.fillText('Play Again', 400, 454);
@@ -12599,9 +12607,9 @@ function drawShop() {
 
     ctx.font = '12px Arial'; ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText(lastInput === 'pad'   ? 'D-pad to choose  |  A to buy / wear  |  B to close'
-               : lastInput === 'touch' ? 'Tap an item to buy or wear it  |  ✕ to close'
-               : 'Arrows to choose, SPACE to buy / wear (or click)  |  1-8 skins, 9 bubble  |  E to close', 400, SY + 68);
+    ctx.fillText(byInput('Arrows to choose, SPACE to buy / wear (or click)  |  1-8 skins, 9 bubble  |  E to close',
+                         'Tap an item to buy or wear it  |  ✕ to close',
+                         'D-pad to choose  |  A to buy / wear  |  B to close'), 400, SY + 68);
 
     // Close button
     ctx.beginPath(); ctx.arc(SHOP_CLOSE.x, SHOP_CLOSE.y, SHOP_CLOSE.r, 0, Math.PI * 2);
