@@ -77,7 +77,7 @@ function loadGame({ driver, seed = 1, realCanvas = false, frames = 0, gameFile =
     class Param { constructor() { this.value = 0; } setValueAtTime(v, t) { chk(v, t); } exponentialRampToValueAtTime(v, t) { chk(v, t); if (v <= 0) throw new RangeError('exponential ramp to 0 or negative'); } linearRampToValueAtTime(v, t) { chk(v, t); } setTargetAtTime() {} cancelScheduledValues() {} }
     const node = () => ({ connect() {}, disconnect() {}, start(t) { if (t !== undefined && !Number.isFinite(t)) throw new TypeError('bad start time'); }, stop(t) { if (!Number.isFinite(t)) throw new TypeError('bad stop time'); },
                           frequency: new Param(), gain: new Param(), detune: new Param(), Q: new Param(), playbackRate: new Param(), type: '', buffer: null });
-    g.AudioContext = class { constructor() { this.state = 'running'; this.sampleRate = 44100; this.destination = {}; } get currentTime() { return h.audioTime; } resume() {}
+    g.AudioContext = class { constructor() { this.state = 'running'; this.sampleRate = 44100; this.destination = {}; } get currentTime() { return h.audioTime; } resume() { this.state = 'running'; } suspend() { this.state = 'suspended'; }
                              createGain() { return node(); } createOscillator() { return node(); } createBufferSource() { return node(); } createBiquadFilter() { return node(); }
                              createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; } };
     g.__h = h;

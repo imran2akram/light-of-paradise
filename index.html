@@ -3,11 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
     <title>The Light of Paradise</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; font-family: Arial, sans-serif; overflow: hidden; }
+        /* The black bars around the game must not pull-to-refresh, zoom, select text or pop up a callout on a phone.
+           (touch-action: none still delivers touch events, so the intro's tap-to-skip keeps working.) */
+        html, body { overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none;
+                     -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh;
+               position: fixed; top: 0; left: 0; width: 100%; font-family: Arial, sans-serif; overflow: hidden;
+               /* notches and home bars: the game is fitted inside the safe area (fitCanvas reads this padding) */
+               padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
         canvas { display: block; cursor: pointer; touch-action: none; }
+
+        /* Phone held upright: a big "turn me" message instead of a tiny game */
+        #turnPhone {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 200;
+            background: #080018; color: #FFE066; display: none;
+            flex-direction: column; align-items: center; justify-content: center; text-align: center;
+            font-weight: bold; font-size: 7vw; padding: 24px;
+        }
+        #turnPhone svg { width: 34vw; max-width: 180px; margin-bottom: 20px; animation: turn 2.4s ease-in-out infinite; }
+        @keyframes turn { 0%, 25% { transform: rotate(0deg); } 65%, 100% { transform: rotate(-90deg); } }
 
         #videoOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -36,9 +57,13 @@
 <body>
 <div id="videoOverlay">
     <video id="introVideo" src="Light of paradise opening.mp4" autoplay muted playsinline></video>
-    <div id="skipHint">Press SPACE, click, or tap to skip</div>
+    <div id="skipHint">Tap, click, or press SPACE, ENTER or any button to skip</div>
 </div>
 <canvas id="gameCanvas"></canvas>
+<div id="turnPhone">
+    <svg viewBox="0 0 60 100" aria-hidden="true"><rect x="6" y="4" width="48" height="92" rx="9" fill="none" stroke="#FFE066" stroke-width="5"/><circle cx="30" cy="85" r="4" fill="#FFE066"/></svg>
+    Turn your phone sideways
+</div>
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -47,57 +72,76 @@ const ctx = canvas.getContext('2d');
 // The game always thinks in 800×600. The canvas is stretched to fill the
 // window (keeping its shape), and drawn with more real pixels on big or
 // sharp screens so it stays crisp instead of blurry.
+// On a phone the window is much wider than 4:3, so the canvas grows sideways into the spare room:
+// the game stays in the middle (0..800) and the touch buttons sit out in the side margins, off the picture.
+// Everything is fitted inside the safe area, so a notch or home bar never covers a button.
 const GAME_W = 800, GAME_H = 600;
 const MAX_RENDER_SCALE = 3;   // more than this gets slow on big 4K screens
+const MAX_VIEW_W = 1500;      // the widest picture (very wide phones): more margin than this is just black bars
+const PHONE_MAX_SIDE = 600;   // a touch screen whose short side is under this is a phone: held upright it asks to be turned
 let renderScale = 1;
+let isTouchDevice = false;    // set by the first touch
+let gameReady = false;        // false while this script is still loading (pausing needs the rest of it)
+// view: how wide the canvas is in game pixels (w), how far the game is pushed in from the left (offX),
+// and CSS pixels per game pixel (fit). Desktop: w = 800, offX = 0.
+const view = { w: GAME_W, offX: 0, fit: 1, margin: false };
+let layoutDirty = true;       // the touch buttons are placed again before they are next drawn or tapped
+let needTurn = false;         // a phone is held upright
+
+function usesTouchLayout() {
+    return isTouchDevice || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);
+}
+function safeInsets() {   // the body padding is env(safe-area-inset-*): read back as real pixels
+    const out = { l: 0, r: 0, t: 0, b: 0 };
+    try {
+        const cs = window.getComputedStyle(document.body);
+        out.l = parseFloat(cs.paddingLeft) || 0;  out.r = parseFloat(cs.paddingRight) || 0;
+        out.t = parseFloat(cs.paddingTop) || 0;   out.b = parseFloat(cs.paddingBottom) || 0;
+    } catch (e) { /* no styles (tests): no insets */ }
+    return out;
+}
 
 function fitCanvas() {
-    const fit = Math.min(window.innerWidth / GAME_W, window.innerHeight / GAME_H);
-    canvas.style.width  = Math.floor(GAME_W * fit) + 'px';
+    const sa = safeInsets();
+    const availW = Math.max(1, window.innerWidth - sa.l - sa.r), availH = Math.max(1, window.innerHeight - sa.t - sa.b);
+    const fit = Math.min(availW / GAME_W, availH / GAME_H);
+    view.fit = fit;
+    view.w = usesTouchLayout() ? Math.max(GAME_W, Math.min(MAX_VIEW_W, availW / fit)) : GAME_W;
+    view.offX = (view.w - GAME_W) / 2;
+    view.margin = view.offX > 0;
+    canvas.style.width  = Math.floor(view.w * fit) + 'px';
     canvas.style.height = Math.floor(GAME_H * fit) + 'px';
     renderScale = Math.max(1, Math.min(MAX_RENDER_SCALE, fit * (window.devicePixelRatio || 1)));
-    canvas.width  = Math.round(GAME_W * renderScale);
+    canvas.width  = Math.round(view.w * renderScale);
     canvas.height = Math.round(GAME_H * renderScale);
+    layoutDirty = true;
+    // A phone held upright is too small to play on: the game waits behind a "turn me" message
+    const turn = usesTouchLayout() && window.innerHeight > window.innerWidth && Math.min(window.innerWidth, window.innerHeight) < PHONE_MAX_SIDE;
+    if (turn !== needTurn) {
+        needTurn = turn;
+        const el = document.getElementById('turnPhone');
+        if (el) el.style.display = turn ? 'flex' : 'none';
+        if (gameReady) { if (turn) pauseGame(); else resumeGame(); }
+    }
 }
 window.addEventListener('resize', fitCanvas);
+window.addEventListener('orientationchange', fitCanvas);
 fitCanvas();
 
 // ── VIDEO INTRO ───────────────────────────────────────────────
-let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
+const VOID_BG_COLOR = '#a0a0a0';   // light grey, darker than the white player
 
-(function setupVideoIntro() {
+const introVideo = (function setupVideoIntro() {
     const overlay = document.getElementById('videoOverlay');
     const video   = document.getElementById('introVideo');
+    const hint    = document.getElementById('skipHint');
     let dismissed = false;
 
-    function captureLastFrameColor() {
-        try {
-            const oc   = document.createElement('canvas');
-            oc.width   = video.videoWidth  || 640;
-            oc.height  = video.videoHeight || 360;
-            const octx = oc.getContext('2d');
-            octx.drawImage(video, 0, 0, oc.width, oc.height);
-            // Sample a 5×5 grid across the frame
-            let r = 0, g = 0, b = 0, n = 0;
-            for (let sx = 0.1; sx <= 0.95; sx += 0.2) {
-                for (let sy = 0.1; sy <= 0.95; sy += 0.2) {
-                    const d = octx.getImageData(
-                        Math.floor(sx * oc.width),
-                        Math.floor(sy * oc.height), 1, 1).data;
-                    r += d[0]; g += d[1]; b += d[2]; n++;
-                }
-            }
-            // Darken the average so it works as a subtle game background
-            r = Math.floor(r / n * 0.32);
-            g = Math.floor(g / n * 0.32);
-            b = Math.floor(b / n * 0.32);
-            voidBgColor = `rgb(${r},${g},${b})`;
-        } catch (e) { /* keep default if CORS/decode fails */ }
-    }
-
     function dismiss() {
+        initAudio();   // a tap or key press: the moment browsers allow sound (does nothing twice)
         if (dismissed) return;
         dismissed = true;
+        document.removeEventListener('keydown', onKey);
         overlay.style.opacity = '0';
         overlay.addEventListener('transitionend', () => overlay.remove(), { once: true });
     }
@@ -105,12 +149,23 @@ let voidBgColor = '#a0a0a0'; // light grey, darker than the white player
     video.addEventListener('ended',   dismiss);
     overlay.addEventListener('click',      dismiss);
     overlay.addEventListener('touchstart', e => { e.preventDefault(); dismiss(); }, { passive: false });
-    document.addEventListener('keydown', function onKey(e) {
-        if (e.code === 'Space') { e.preventDefault(); dismiss(); document.removeEventListener('keydown', onKey); }
-    });
+    overlay.addEventListener('touchend',   e => { e.preventDefault(); initAudio(); }, { passive: false });   // (iOS counts the lift as the tap)
+    function onKey(e) {
+        if (e.code !== 'Space' && e.code !== 'Enter') return;
+        e.preventDefault(); e.stopImmediatePropagation();   // (that press only skips the video: it must not also start the game)
+        dismiss();
+    }
+    document.addEventListener('keydown', onKey);
 
     // Fallback: if video fails to load/play, still dismiss after a short wait
     video.addEventListener('error', () => setTimeout(dismiss, 100));
+
+    // The game's controller code uses this: any button skips, and the hint names the controller
+    return {
+        isUp: () => !dismissed,
+        dismiss,
+        setHint(controller) { hint.textContent = controller ? 'Press any button to skip' : 'Tap, click, or press SPACE, ENTER or any button to skip'; },
+    };
 })();
 
 // ── CONSTANTS ────────────────────────────────────────────────
@@ -137,6 +192,7 @@ const POWER = { NONE: 'None', ICE: 'Ice', BRIMSTONE: 'Brimstone', LIGHTNING: 'Li
 
 // ── WEAPONS ──────────────────────────────────────────────────
 const WEAPON_INFO = {
+    None:      { label: 'SMITING STICK', icon: '🪵', color: '#C8964F', speed: 0, size: 0 },   // before you find an element: a swung branch
     Ice:       { label: 'ICE',           icon: '❄', color: '#4488FF', speed: 9,  size: 6 },
     Brimstone: { label: 'FIRE',          icon: '🔥', color: '#FF4422', speed: 9,  size: 6 },
     Lightning: { label: 'LIGHTNING',     icon: '⚡', color: '#FFE033', speed: 13, size: 5 },   // fastest shots
@@ -195,7 +251,7 @@ const ENEMY_TYPES = {
     queen:     { name: 'Chess Queen',  hp: 25, weakTo: POWER.LIGHTNING, color: '#333333', emoji: '♛' },   // Wizard Chess boss
     hydra:     { name: 'The Hydra',    hp: 30, weakTo: POWER.BRIMSTONE, color: '#3A8A4A', emoji: '🐲' },   // Greek Island boss: cut a head, two grow back!
     hydrahead: { name: 'Hydra Head',   hp: 2,  weakTo: POWER.BRIMSTONE, color: '#3A8A4A', emoji: '🐍' },
-    medusa:    { name: 'Medusa',       hp: 28, weakTo: POWER.LIGHTNING, color: '#6A9A5A', emoji: '👸' },   // her stare turns you to stone!
+    medusa:    { name: 'Medusa',       hp: 28, weakTo: POWER.LIGHTNING, color: '#6A9A5A' },   // her stare turns you to stone! (drawn by drawMedusa)
     minotaur:  { name: 'The Minotaur', hp: 30, weakTo: POWER.ICE,       color: '#8A5A3A', emoji: '🐂' },   // lives in the maze
     cerberus:  { name: 'Cerberus',     hp: 32, weakTo: POWER.WATER,     color: '#442222', emoji: '🐕' },   // three-headed guard dog of the Underworld
     troll:     { name: 'Troll',        hp: 6,  weakTo: POWER.BRIMSTONE, color: '#6A7A5A', emoji: '🧌' },   // Viking Island
@@ -268,7 +324,6 @@ const LEVEL_CONFIGS = [
 ];
 const MAX_LEVELS       = 3;
 const DEVIL_BULLET_SPEED = 7.5;   // px/frame (player moves 4)
-const CAVE_MAX_FRAMES  = 3600;  // 1 minute at 60 fps — same for all levels
 
 // ── AVATAR SKINS ─────────────────────────────────────────────
 const AVATAR_COLORS      = ['#FFFFFF', '#4488FF', '#44FF66', '#FF4422', '#FFD700', '#2A2A2A', '#B8C4CC', '#44BB55', '#3AB0C0'];
@@ -339,6 +394,30 @@ function meleeHit(radius, dmg, knock, stun, arc = true, air = 0) {
 }
 
 function meleeFx(kind, r) { fight.fx.push({ kind, x: player.x, y: player.y, a: Math.atan2(state.faceY, state.faceX), r, life: 12 }); }
+
+// ── SMITING STICK (swung when you have no element yet, or while your element reloads) ──
+const STICK_REACH    = 48;   // px past the edge of you — short, so every element feels better
+const STICK_COOLDOWN = 20;   // frames between swings
+const STICK_DAMAGE   = 1;    // weak on purpose (Weapon Level still adds to it)
+const STICK_KNOCK    = 6;
+const STICK_ENGAGE   = 110;  // a bad guy this close means the button swings instead of digging the ground
+
+function stickSwing() {
+    if (!canFight() || fight.cooldown > 0 || fight.blocking) return;
+    // Auto-aim like shoot(): turn to the nearest bad guy that is in reach
+    const foes = targetableEnemies().slice();
+    if (state.room === ROOM.HELL && hell.devil.alive) foes.push(hell.devil);
+    let target = null, best = Infinity;
+    for (const e of foes) {
+        const d = Math.hypot(e.x - player.x, e.y - player.y);
+        if (d - e.r < STICK_REACH && d < best) { best = d; target = e; }
+    }
+    if (target && best > 0) { state.faceX = (target.x - player.x) / best; state.faceY = (target.y - player.y) / best; }
+    meleeFx('stick', STICK_REACH + 12);
+    meleeHit(STICK_REACH, STICK_DAMAGE, STICK_KNOCK, 0);
+    sfx('stick');
+    fight.cooldown = STICK_COOLDOWN;
+}
 
 function meleePress() {
     if (!canFight() || fight.cooldown > 0) return;
@@ -556,6 +635,19 @@ function drawFighting() {
         ctx.beginPath();
         if (f.kind === 'sword') { ctx.strokeStyle = '#DDEEFF'; ctx.lineWidth = 7; ctx.shadowColor = '#AACCFF'; ctx.shadowBlur = 10; }
         if (f.kind === 'hammer') { ctx.strokeStyle = '#C8A070'; ctx.lineWidth = 8; }
+        if (f.kind === 'stick') {   // a brown branch swinging round in front of you
+            ctx.globalAlpha = 1;
+            const swing = f.a + 1.1 - (1 - f.life / 12) * 2.2, len = f.r;
+            const x1 = f.x + Math.cos(swing) * 14, y1 = f.y + Math.sin(swing) * 14, x2 = f.x + Math.cos(swing) * len, y2 = f.y + Math.sin(swing) * len;
+            ctx.strokeStyle = '#6B4423'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            ctx.strokeStyle = '#A8773F'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            const bx = x1 + (x2 - x1) * 0.6, by = y1 + (y2 - y1) * 0.6;   // a little twig and leaf
+            ctx.strokeStyle = '#6B4423'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + Math.cos(swing - 0.8) * 9, by + Math.sin(swing - 0.8) * 9); ctx.stroke();
+            ctx.fillStyle = '#5DBB4A'; ctx.beginPath(); ctx.arc(x2, y2, 3.5, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = f.life / 12 * 0.6; ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 3;   // whoosh trail
+            ctx.beginPath(); ctx.arc(f.x, f.y, len * 0.9, swing - 0.5, swing); ctx.stroke();
+            ctx.restore(); continue;
+        }
         if (f.kind === 'nunchuck') { ctx.strokeStyle = '#FFCC44'; ctx.lineWidth = 3; }
         if (f.kind === 'spear' || f.kind === 'whip') {   // a straight poke / a wiggly whip crack
             const reach = f.r * Math.min(1, (13 - f.life) / 4);
@@ -693,7 +785,7 @@ function spellItems() {
         status: state.spell === sp.id ? 'HOLDING' : state.spells[sp.id] ? 'OWNED — pick' : null,
         action: () => {
             if (state.spells[sp.id]) { state.spell = sp.id; return; }
-            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} ${sp.name}! Cast it with R / X / ✨`); giveAward('wizard'); }
+            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} ${sp.name}! Cast it with ${byInput('R', '✨', 'X')}`); giveAward('wizard'); }
         },
     }));
 }
@@ -1076,6 +1168,11 @@ const DIG_MAX_DEPTH       = 3;                 // layers in each dig spot
 const DIG_HITS_PER_LAYER  = [3, 4, 8];         // Space / DIG presses per layer (deeper = harder)
 const DIG_MOLE_CHANCE     = [0.3, 0.6, 1.0];   // chance a mole monster pops out of each layer
 const DIG_RANGE           = 24;                // how close the player must stand to a dig spot
+const MOLE_MIN_DIST       = 140;               // a mole always comes up at least this far from the PLAYER
+const MOLE_WARN_FRAMES    = 90;                // shaking mound with a "!" before the mole climbs out
+const MOLE_EMERGE_FRAMES  = 45;                // then it climbs out (harmless while emerging)
+const MOLE_SLOW_FRAMES    = 60;                // gentle start: half speed for the first second out
+const MOLE_SLOW_FACTOR    = 0.5;
 // Layer 1: Ice / Fire / Lightning / Water · Layer 2: SUPER (3 shots at once) · Layer 3: RAINBOW (strong vs everything)
 
 // ── SETTINGS (⚙ button / O / Start) ───────────────────────────
@@ -1125,7 +1222,6 @@ const SETTINGS_BTN = { x: 26, y: 534, r: 16 };
 // ── PARADISE ISLAND TOWN ─────────────────────────────────────
 // Daytime is peaceful: talk to the townspeople, do jobs, buy houses.
 // Then MONSTER NIGHT comes — beat the Paradise-only monsters to win a Light Crystal.
-const DAY_FRAMES        = 1800;           // 30 s of daytime (only counts while you're in town)
 const DUSK_FRAMES       = 180;            // 3 s "Monster Night is coming!" warning
 const HEAL_COST         = 3;              // Doctor
 const AMMO_UPGRADE_COST = [10, 15, 20];   // Blacksmith: +1 ammo each
@@ -1394,17 +1490,62 @@ function shopSelect(i) {
     }
 }
 
+// ── READABLE TEXT ────────────────────────────────────────────
+// Anything a child has to read is at least MIN_READ_FONT px. fitText() shrinks text to fit a space, but never below that
+// (past it the letters are squeezed instead of getting tiny).
+const MIN_READ_FONT = 12;
+function fitText(text, x, y, maxW, px = 14, bold = false) {
+    let size = px;
+    ctx.font = `${bold ? 'bold ' : ''}${size}px Arial`;
+    while (size > MIN_READ_FONT && ctx.measureText(text).width > maxW) { size--; ctx.font = `${bold ? 'bold ' : ''}${size}px Arial`; }
+    ctx.fillText(text, x, y, maxW);   // (maxW squeezes it only if even the smallest size is too wide)
+}
+// Split text into at most maxLines lines that fit maxW (the last line is squeezed if it still does not)
+function wrapText(text, maxW, maxLines) {
+    const words = String(text).split(' '), lines = [];
+    let line = '';
+    for (const w of words) {
+        const tryLine = line ? line + ' ' + w : w;
+        if (line && ctx.measureText(tryLine).width > maxW && lines.length < maxLines - 1) { lines.push(line); line = w; }
+        else line = tryLine;
+    }
+    lines.push(line);
+    return lines;
+}
+
 // ── POP-UP MENUS (the Blacksmith's Forge, and other town shops) ──
 // A menu is a title plus a function that returns the items, so prices and ticks are always up to date.
 // Each item: { icon, name, desc, cost?, status?, action() }
 let menu = null;   // { title, items, cursor }
 const MENU = { X: 130, Y: 70, W: 540, H: 430 };
+// Item boxes: two columns; with more than MENU_TALL_AFTER items the rows are squeezed so they all fit
+const MENU_ITEM = { PAD: 14, COL: 262, TOP: 56, W: 250, ROW: 68, H: 62, ROW_SQUEEZED: 58, H_SQUEEZED: 54 };
+const MENU_TALL_AFTER = 10;
+const WEAPON_CHART_H = 470;   // a tall panel: the long monster lists wrap onto 3-4 lines each
+const MENU_CLOSE = { x: MENU.X + MENU.W - 26, y: MENU.Y + 20, r: 17, hitR: 36 };   // the ✕ (the tap area stays above the first row of items)
 
-function openMenu(title, items) { menu = { title, items, cursor: 0 }; }
+// A "wide" menu is a list of full-width rows whose descriptions wrap onto several lines (the weapon chart)
+const MENU_WIDE = { PAD: 14, TOP: 56, GAP: 4, HEAD: 22, LINE: 14, BOTTOM: 8, TEXT_X: 54, MAX_LINES: 5 };
+function wideDescLines(it) {
+    ctx.save(); ctx.font = '12px Arial';
+    const lines = wrapText(it.desc, MENU.W - 2 * MENU_WIDE.PAD - MENU_WIDE.TEXT_X - 14, MENU_WIDE.MAX_LINES);
+    ctx.restore();
+    return lines;
+}
+
+// opts (optional): hint = the small line under the title, h = a shorter panel for menus with only a few items,
+// wide = full-width rows (see MENU_WIDE)
+function openMenu(title, items, opts = {}) { menu = { title, items, cursor: 0, hint: opts.hint, h: opts.h || MENU.H, wide: !!opts.wide }; }
 function menuItemRect(i) {
+    if (menu && menu.wide) {
+        const W = MENU_WIDE, list = menu.items();
+        let y = MENU.Y + W.TOP;
+        for (let k = 0; k < i; k++) y += W.HEAD + wideDescLines(list[k]).length * W.LINE + W.BOTTOM + W.GAP;
+        return { x: MENU.X + W.PAD, y, w: MENU.W - 2 * W.PAD, h: W.HEAD + wideDescLines(list[i]).length * W.LINE + W.BOTTOM };
+    }
     const col = i % 2, row = Math.floor(i / 2);
-    const tall = menu && menu.items().length > 10;   // squeeze rows when there's a lot to show
-    return { x: MENU.X + 14 + col * 262, y: MENU.Y + 56 + row * (tall ? 58 : 68), w: 250, h: tall ? 54 : 62 };
+    const I = MENU_ITEM, tall = menu && menu.items().length > MENU_TALL_AFTER;   // squeeze rows when there's a lot to show
+    return { x: MENU.X + I.PAD + col * I.COL, y: MENU.Y + I.TOP + row * (tall ? I.ROW_SQUEEZED : I.ROW), w: I.W, h: tall ? I.H_SQUEEZED : I.H };
 }
 function menuSelect(i) {
     const list = menu.items();
@@ -1426,6 +1567,12 @@ function spend(cost) {
     return true;
 }
 
+// The win / level-complete screens ignore buttons for their first second, so a kid mashing the attack
+// button when the last monster falls doesn't skip straight past the screen (or restart the game)
+const END_SCREEN_DELAY = 60;   // steps
+let endScreenFrames = 0;
+function endScreenReady() { return endScreenFrames >= END_SCREEN_DELAY; }
+
 // The main button: Space, A on a controller, or the on-screen SHOOT / DIG button
 function pressAction() {
     if (menu) return;
@@ -1440,30 +1587,36 @@ function pressAction() {
     if (tvShow) { nextTvChannel(); return; }
     if (credits) return;
     if (nearRaceMaster() && state.gamePhase === 'playing') { openMenu('🏁 PICK A RACE!', raceItems); return; }
+    if (nearChartSign() && state.gamePhase === 'playing') { openWeaponChart(); return; }
     if (state.buildMode && state.gamePhase === 'playing' && !state.won && !state.levelComplete) {
         const { cx, cy } = buildTargetCell();
         buildAt(cx, cy, player.x + state.faceX * 30, player.y + 5 + state.faceY * 30);
         return;
     }
     if (state.gamePhase === 'intro') startFromIntro();
-    else if (state.levelComplete)   advanceLevel();
+    else if (state.levelComplete)   { if (endScreenReady()) advanceLevel(); }
+    else if (state.won)             { if (endScreenReady()) resetGame(); }   // Play Again: Space and A work too
     else if (!tryTreasureDig() && !tryPlaceAction() && !tryDig() && !tryTalk() && !tryTownAction() && !tryHomeAction() && !tryMineNearby() && !tryDigGround()) shoot();
 }
 
 // Enter / Start: begin, next level, or play again
 function pressStart() {
     if (state.gamePhase === 'intro') startFromIntro();
-    else if (state.levelComplete)   advanceLevel();
-    else if (state.won)             resetGame();
+    else if (state.levelComplete)   { if (endScreenReady()) advanceLevel(); }
+    else if (state.won)             { if (endScreenReady()) resetGame(); }
     else if (lastInput === 'pad')   openSettings();
 }
 
 // A tap or click at canvas position (x, y). Returns true if it hit a button.
 function handleTap(x, y) {
-    if (Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < MUTE_BTN.r * 1.5) { toggleMute(); return true; }
-    if (state.gamePhase === 'playing' && Math.hypot(x - SETTINGS_BTN.x, y - SETTINGS_BTN.y) < SETTINGS_BTN.r * 1.4) { openSettings(); return true; }
-    if (state.gamePhase === 'intro') {
-        if (savedGame && inRect(x, y, NEW_GAME_BTN)) startFromIntro(true);
+    if (layoutDirty && usesTouchLayout()) layoutTouch();
+    // (on a phone these two are big round touch buttons, drawn with the others and only while they are on screen)
+    const touchSys = usesTouchLayout();
+    if ((!touchSys || touchUiShown()) && Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < (touchSys ? MUTE_BTN.r : MUTE_BTN.r * 1.5)) { toggleMute(); return true; }
+    if (state.gamePhase === 'playing' && (!touchSys || touchUiShown()) && Math.hypot(x - SETTINGS_BTN.x, y - SETTINGS_BTN.y) < (touchSys ? SETTINGS_BTN.r : SETTINGS_BTN.r * 1.4)) { openSettings(); return true; }
+    if (state.gamePhase === 'intro' && !menu) {   // (the New Game question is a menu: it gets the taps)
+        if (fullscreenOK() && inRect(x, y, tapRect(FULLSCREEN_BTN))) toggleFullscreen();
+        else if (savedGame && inRect(x, y, tapRect(NEW_GAME_BTN))) askNewGame();
         else startFromIntro();
         return true;
     }
@@ -1474,50 +1627,60 @@ function handleTap(x, y) {
     if (lastInput !== 'touch' && state.gamePhase === 'playing' && !menu && !state.shopOpen && inRect(x, y, BUILD_BTN)) { toggleBuild(); return true; }
     if (state.awardsOpen) { state.awardsOpen = false; return true; }
     if (menu) {
+        if (Math.hypot(x - MENU_CLOSE.x, y - MENU_CLOSE.y) < MENU_CLOSE.hitR) { menu = null; return true; }   // the ✕
         const list = menu.items();
         for (let i = 0; i < list.length; i++) if (inRect(x, y, menuItemRect(i))) { menuSelect(i); return true; }
-        if (!inRect(x, y, { x: MENU.X, y: MENU.Y, w: MENU.W, h: MENU.H }) || y < MENU.Y + 40) menu = null;   // tap outside / title bar closes
+        if (!inRect(x, y, { x: MENU.X, y: MENU.Y, w: MENU.W, h: menu.h }) || y < MENU.Y + 40) menu = null;   // tap outside / title bar closes
         return true;
     }
-    if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
-        if (Math.hypot(x - VBUILD.x, y - VBUILD.y) < VBUILD.r * 1.3) { toggleBuild(); return true; }
-        if (state.spell && Math.hypot(x - VSPELL.x, y - VSPELL.y) < VSPELL.r * 1.3) { castSpell(); return true; }
-        if (godParent() && Math.hypot(x - VGOD.x, y - VGOD.y) < VGOD.r * 1.3) { useGodPower(); return true; }
-        if (state.lastMount && Math.hypot(x - VMOUNT.x, y - VMOUNT.y) < VMOUNT.r * 1.3) { toggleMount(); return true; }
-        if (state.buildMode && Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { nextBlock(); return true; }
-        if (Math.hypot(x - VGADGET.x, y - VGADGET.y) < VGADGET.r * 1.3) { useGadget(); return true; }
-        if (Math.hypot(x - VDASH.x,   y - VDASH.y)   < VDASH.r * 1.3)   { dash();      return true; }
+    if (state.buildMode && state.gamePhase === 'playing' && !state.shopOpen && !state.won && !state.levelComplete) {
+        const slot = hotbarSlotAt(x, y);   // the block row along the bottom: tap a block to pick it
+        if (slot >= 0) { state.hotbar = slot; sfx('clink'); return true; }
+        if (inRect(x, y, hotbarPanel())) return true;   // (the gaps in it are not the world)
     }
-    if (!state.shopOpen && canOpenShop() && inRect(x, y, AWARDS_BTN)) { state.awardsOpen = true; return true; }
     if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
-        if (Math.hypot(x - VDANCE.x, y - VDANCE.y) < VDANCE.r * 1.3) { dance(); return true; }
-        if (Math.hypot(x - VFART.x,  y - VFART.y)  < VFART.r * 1.3)  { fart();  return true; }
-        if (Math.hypot(x - VSILLY.x, y - VSILLY.y) < VSILLY.r * 1.3) { (sillyTurn++ % 2 ? sneeze : burp)(); return true; }
+        if (inBtn(x, y, VBUILD)) { toggleBuild(); return true; }
+        if (state.spell && inBtn(x, y, VSPELL)) { castSpell(); return true; }
+        if (godParent() && inBtn(x, y, VGOD)) { useGodPower(); return true; }
+        if (state.lastMount && inBtn(x, y, VMOUNT)) { toggleMount(); return true; }
+        if (state.buildMode && inBtn(x, y, VGADGET)) { nextBlock(); return true; }
+        if (inBtn(x, y, VGADGET)) { useGadget(); return true; }
+        if (inBtn(x, y, VDASH))   { dash();      return true; }
+    }
+    if (!state.shopOpen && canOpenShop() && inRect(x, y, tapRect(AWARDS_BTN))) { state.awardsOpen = true; return true; }
+    if (state.gamePhase === 'playing' && lastInput === 'touch' && !state.won && !state.levelComplete) {
+        if (inBtn(x, y, VDANCE)) { dance(); return true; }
+        if (inBtn(x, y, VFART))  { fart();  return true; }
+        if (inBtn(x, y, VSILLY)) { (sillyTurn++ % 2 ? sneeze : burp)(); return true; }
     }
     if ((state.won || state.levelComplete) && inRect(x, y, END_BTN)) { pressStart(); return true; }
     if (state.shopOpen) {
-        if (Math.hypot(x - SHOP_CLOSE.x, y - SHOP_CLOSE.y) < SHOP_CLOSE.r * 1.6) { state.shopOpen = false; return true; }
+        if (Math.hypot(x - SHOP_CLOSE.x, y - SHOP_CLOSE.y) < Math.max(SHOP_CLOSE.r * 1.6, usesTouchLayout() ? touchR() : 0)) { state.shopOpen = false; return true; }
         for (let i = 0; i < SHOP_SLOTS; i++) {
             if (inRect(x, y, shopSlotRect(i))) { shopSelect(i); return true; }
         }
         return inRect(x, y, { x: SHOP.X, y: SHOP.Y, w: SHOP.W, h: SHOP.H });   // taps on the panel do nothing else
     }
-    if (canOpenShop() && inRect(x, y, SHOP_BTN)) { state.shopOpen = true; return true; }
+    if (canOpenShop() && inRect(x, y, tapRect(SHOP_BTN))) { state.shopOpen = true; return true; }
     return false;
 }
 
+// Menus and the shop both move their cursor with these keys.
+const KEY_NAV = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
+                  ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] };
+function digitKey(code) { const m = /^Digit([1-9])$/.exec(code); return m ? Number(m[1]) - 1 : -1; }   // 1-9 key → 0-8, or -1
+
 document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;   // browser shortcuts (Ctrl+R, Cmd+W...) are not game buttons
     initAudio();
     keys[e.code] = true;
     lastInput = 'keyboard';
     if (e.code === 'KeyM') toggleMute();
     if (menu) {
-        const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
-                      ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] }[e.code];
+        const nav = KEY_NAV[e.code];
         if (nav) { e.preventDefault(); moveMenuCursor(nav[0], nav[1]); }
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); menuSelect(menu.cursor); }
-        const d = /^Digit([1-9])$/.exec(e.code);
-        if (d) menuSelect(Number(d[1]) - 1);
+        if (digitKey(e.code) >= 0) menuSelect(digitKey(e.code));
         if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyO') menu = null;
         return;
     }
@@ -1530,12 +1693,10 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyR') castSpell();
     if (e.code === 'KeyV') toggleMount();
     if (e.code === 'KeyQ') { if (state.buildMode) nextBlock(); else useGadget(); }
-    const hb = /^Digit([1-9])$/.exec(e.code);
-    if (hb && state.buildMode && !state.shopOpen) state.hotbar = Math.min(HOTBAR.length - 1, Number(hb[1]) - 1);
+    if (digitKey(e.code) >= 0 && state.buildMode && !state.shopOpen) state.hotbar = Math.min(HOTBAR.length - 1, digitKey(e.code));
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') dash();
     if (state.shopOpen) {
-        const nav = { ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
-                      ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1] }[e.code];
+        const nav = KEY_NAV[e.code];
         if (nav) { e.preventDefault(); moveShopCursor(nav[0], nav[1]); }
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); shopSelect(state.shopCursor); }
     } else {
@@ -1544,10 +1705,9 @@ document.addEventListener('keydown', e => {
         if (e.code === 'Enter' && p2.active && (state.won || state.levelComplete)) pressStart();
     }
     if (e.code === 'KeyE' || (e.code === 'Escape' && state.shopOpen)) toggleShop();
-    if (e.code === 'KeyC' && state.room === ROOM.PARADISE && !state.shopOpen) { /* handled by walking up to the table */ }
     if (e.code === 'KeyH' && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
     if (e.code === 'Escape') state.awardsOpen = false;
-    if (e.code === 'KeyN' && state.gamePhase === 'intro') startFromIntro(true);
+    if (e.code === 'KeyN' && state.gamePhase === 'intro') askNewGame();
     if (e.code === 'KeyG') dance();
     if (e.code === 'KeyT') useGodPower();
     if (e.code === 'KeyK') toggleControlsPanel();
@@ -1555,8 +1715,7 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyU') burp();
     if (e.code === 'KeyI') sneeze();
     // Number keys in the shop: 1-8 skins, 9 Shield Bubble
-    const digit = /^Digit([1-9])$/.exec(e.code);
-    if (digit && state.shopOpen) shopSelect(Number(digit[1]) - 1);
+    if (digitKey(e.code) >= 0 && state.shopOpen) shopSelect(digitKey(e.code));
 });
 document.addEventListener('keyup', e => {
     keys[e.code] = false;
@@ -1566,6 +1725,7 @@ document.addEventListener('keyup', e => {
 
 canvas.addEventListener('click', e => {
     initAudio();
+    lastInput = 'keyboard';   // the mouse counts as the keyboard side
     const p = canvasPos(e.clientX, e.clientY);
     if (handleTap(p.x, p.y)) return;
     if (state.gamePhase !== 'playing' || menu || state.shopOpen || state.won || state.levelComplete) return;
@@ -1577,12 +1737,53 @@ canvas.addEventListener('click', e => {
 // Right-click places a block, like Minecraft
 canvas.addEventListener('contextmenu', e => {
     e.preventDefault();
+    lastInput = 'keyboard';
     const p = canvasPos(e.clientX, e.clientY);
     if (state.gamePhase !== 'playing' || menu || state.shopOpen || state.won || state.levelComplete) return;
     if (Math.hypot(p.x - player.x, p.y - player.y) > BUILD_REACH) return;
     const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
     if (!blockAtCell(cx, cy)) buildAt(cx, cy, -9999, -9999);   // (far-away aim so it never chops a tree by accident)
 });
+
+// ── PAUSE (the kid switched tab or window: nothing keeps running or stays held down) ──
+let paused = false;
+let padResync = false;   // after a pause: held buttons count as already held, so they don't fire again
+
+function pauseGame() {
+    if (paused) return;
+    paused = true;
+    for (const k of Object.keys(keys)) keys[k] = false;
+    vTouch.joyId = vTouch.shootId = vTouch.meleeId = vTouch.blockId = null;
+    vTouch.joyDX = vTouch.joyDY = 0;
+    padMove.x = padMove.y = 0; padPrev = [];
+    buildFlash = null;
+    // Let go without hitting: stopping a held punch must not fire a spin attack
+    fight.holding = false; fight.hold = 0; fight.charge = 0; fight.blocking = false;
+    if (audioCtx && audioCtx.state === 'running') audioCtx.suspend();   // the music timer keeps ticking in a hidden tab
+}
+function resumeGame() {
+    if (!paused || document.hidden || needTurn) return;   // (a phone still held upright stays paused)
+    paused = false; padResync = true;
+    resetFrameClock();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+// Closing a tab, switching apps or locking a phone can happen between the 5-second saves
+function saveEverything() { saveGame(); if (state.gamePhase === 'playing' && !state.won) saveWorld(); lastSave = Date.now(); }
+window.addEventListener('pagehide', saveEverything);
+document.addEventListener('visibilitychange', () => { if (document.hidden) { saveEverything(); pauseGame(); } else resumeGame(); });
+window.addEventListener('blur', pauseGame);
+window.addEventListener('focus', resumeGame);
+
+// Shown when the window is visible but not in front (a hidden tab needs no picture)
+function drawPaused() {
+    if (!paused || needTurn) return;   // (the turn-your-phone page covers everything)
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
+    ctx.font = 'bold 44px Arial'; ctx.fillText('⏸ PAUSED', 400, 290);
+    ctx.font = '20px Arial'; ctx.fillText('Click here to play!', 400, 330);
+    ctx.restore();
+}
 
 // ── FRIENDS: Players 2, 3 and 4 on the same screen ──────────
 // P2 can press P (arrow keys + Enter). Anyone can plug in a new controller and HOLD ANY BUTTON to join;
@@ -1613,7 +1814,6 @@ function hurtFriend(f) {
     spawnParticles(f.x, f.y, '#FF4444', 8); sfx('hurt');
     if (f.hp <= 0) { f.down = P2_DOWN_FRAMES; showToast(`Player ${f.n} needs a rest… back in 10 s!`, '#FFAA88', 150); }
 }
-function hurtP2() { hurtFriend(p2); }
 
 function friendShoot(f) {
     if (battle && !battle.result) { battleHit(f.n, f); return; }   // ⚔ Battle Mode: bonk each other
@@ -1650,8 +1850,8 @@ function updateFriend(f, pads) {
     }
     const gp = pads.find(p => p.index === f.pad);   // their own game controller
     if (gp) {
-        if (Math.abs(gp.axes[0] || 0) > PAD_DEADZONE) dx += gp.axes[0];
-        if (Math.abs(gp.axes[1] || 0) > PAD_DEADZONE) dy += gp.axes[1];
+        const st = stickVector(gp.axes[0] || 0, gp.axes[1] || 0);
+        dx += st.x; dy += st.y;
         const b = i => gp.buttons[i] && gp.buttons[i].pressed;
         if (b(PAD.LEFT)) dx -= 1; if (b(PAD.RIGHT)) dx += 1; if (b(PAD.UP)) dy -= 1; if (b(PAD.DOWN)) dy += 1;
         if (b(PAD.A) || b(PAD.RT)) friendShoot(f);
@@ -1713,11 +1913,35 @@ function drawJoinProgress() {
 // ── GAME CONTROLLER (Xbox, PlayStation, Switch Pro… anything the browser maps as "standard") ──
 const PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START: 9, L3: 10, R3: 11, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
 const PAD_DEADZONE    = 0.3;   // ignore tiny stick wobbles
-const PAD_AUTOFIRE    = 10;    // frames between shots while A is held
+// Radial deadzone: the stick is a circle, not two separate axes. Inside the dead circle = 0; past it the push
+// ramps up from 0 to 1, so walking starts gently instead of jumping to a third of full speed.
+function stickVector(x, y) {
+    const m = Math.hypot(x, y);
+    if (m < PAD_DEADZONE) return { x: 0, y: 0 };
+    const k = (Math.min(m, 1) - PAD_DEADZONE) / (1 - PAD_DEADZONE) / m;
+    return { x: x * k, y: y * k };
+}
+// Flicking the stick in a menu: one step when it crosses the line, then repeats while it is held
+const STICK_NAV_THRESHOLD    = 0.6;
+const STICK_NAV_REPEAT_FIRST = 24;   // steps (1/60 s) before a held stick starts repeating
+const STICK_NAV_REPEAT_EVERY = 8;
+const stickNav = { key: '', held: 0 };
+function stickNavStep(gp) {
+    const x = gp.axes[0] || 0, y = gp.axes[1] || 0;
+    let dx = 0, dy = 0;
+    if (Math.hypot(x, y) >= STICK_NAV_THRESHOLD) { if (Math.abs(x) > Math.abs(y)) dx = Math.sign(x); else dy = Math.sign(y); }
+    const key = dx + ',' + dy;
+    if (!dx && !dy) { stickNav.key = ''; stickNav.held = 0; return null; }
+    if (key !== stickNav.key) { stickNav.key = key; stickNav.held = 0; return [dx, dy]; }
+    stickNav.held++;
+    return stickNav.held >= STICK_NAV_REPEAT_FIRST && (stickNav.held - STICK_NAV_REPEAT_FIRST) % STICK_NAV_REPEAT_EVERY === 0 ? [dx, dy] : null;
+}
 let   lastInput       = 'keyboard';   // 'keyboard' | 'touch' | 'pad' — picks which hints to show
+// Pick the hint text for the device in use. Every on-screen prompt goes through these two.
+function byInput(keyboard, touch, pad) { return lastInput === 'pad' ? pad : lastInput === 'touch' ? touch : keyboard; }
+function keyName(keyboard, pad) { return lastInput === 'pad' ? pad : keyboard; }   // for keys that only differ on a controller
+function mainBtn() { return byInput('SPACE', 'Tap', 'A'); }   // the name of the main button
 let   padPrev         = [];
-let   pad2StartHeld   = false;
-let   padHold         = 0;
 const padMove         = { x: 0, y: 0 };
 let   padComboUsed    = false;
 // Not enough buttons, so: hold View (⧉) + another button
@@ -2084,9 +2308,9 @@ const RIDDLES = [
     ['What is full of holes but still holds water?', 'A sponge', ['A bucket', 'A net']],
 ];
 
-// The maze is rebuilt every visit: 11 × 7 rooms, walls of stone blocks between them
+// The maze is rebuilt every visit: 11 × 7 rooms, walls of Maze Stone (can't be mined) between them
 function makeMazeBlocks() {
-    const b = {}, W = 11, H = 7, seen = new Set(), put = (cx, cy) => { b[cellKey(cx, cy)] = { type: 'brick', hits: 0 }; };
+    const b = {}, W = 11, H = 7, seen = new Set(), put = (cx, cy) => { b[cellKey(cx, cy)] = { type: 'mazeStone', hits: 0 }; };
     const walls = new Set();
     for (let cx = 0; cx <= 3 * W; cx++) for (let cy = 2; cy <= 3 + 3 * H; cy++) walls.add(cellKey(cx, cy));
     const open = (i, j) => { for (let dx = 1; dx <= 2; dx++) for (let dy = 1; dy <= 2; dy++) walls.delete(cellKey(3 * i + dx, 2 + 3 * j + dy)); };
@@ -2334,7 +2558,7 @@ function maybeMiniBoss() {
 }
 function drawMiniBossLabels() {
     for (const e of roomEnemies()) if (e.mini && e.alive && !e.hidden) {
-        ctx.fillStyle = '#FFAA44'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚠ MINI-BOSS', e.x, e.y - e.r - 16);
+        ctx.fillStyle = '#FFAA44'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚠ MINI-BOSS', e.x, e.y - e.r - 16);
     }
 }
 
@@ -2368,7 +2592,7 @@ function drawGloop() {
     draw(GLOOP.x, GLOOP.y, true);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center'; ctx.fillText('Gloop (lonely)', GLOOP.x, GLOOP.y + 24);
     if (Math.hypot(player.x - GLOOP.x, player.y - GLOOP.y) < 40 && !menu) {
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        const verb = mainBtn();
         drawSpeech({ x: GLOOP.x, y: GLOOP.y - 14 }, `${verb}: Give a cookie (🪙${GLOOP_COOKIE}) ${state.gloop || 0}/3`);
     }
 }
@@ -2617,7 +2841,7 @@ function drawTvShow() {
         for (let k = 0; k < 6; k++) ctx.fillText(['🎵', '🎶', '💃', '🕺', '🎸', '🥁'][k], 230 + k * 68, 300 + Math.sin(t * 6 + k) * 20);
         if (tvShow.t % 20 === 0) tone([523, 659, 784, 659][Math.floor(tvShow.t / 20) % 4], 0.15, 'triangle', 0.1);
     }
-    ctx.fillStyle = '#AAA'; ctx.font = '11px Arial'; ctx.fillText(`${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: change channel`, 400, 470);
+    ctx.fillStyle = '#AAA'; ctx.font = '11px Arial'; ctx.fillText(`${mainBtn()}: change channel`, 400, 470);
     ctx.restore();
 }
 
@@ -2662,7 +2886,7 @@ function drawTimeMachineAndHints() {
     ctx.fillStyle = '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textBaseline = 'alphabetic'; ctx.fillText('THE TIME MACHINE', x, y + 46);
     ctx.fillStyle = '#CCAAFF'; ctx.fillText(`🌟 Psst… the secret ending is behind a golden door in Heaven. It needs ${ENDING_AWARDS} awards and the Boss Rush crown!`, 400, 560);
     ctx.restore();
-    if (Math.hypot(player.x - x, player.y - y) < 44 && !menu) drawSpeech({ x, y: y - 30 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Travel in time!`);
+    if (Math.hypot(player.x - x, player.y - y) < 44 && !menu) drawSpeech({ x, y: y - 30 }, `${mainBtn()}: Travel in time!`);
 }
 
 // ── MINI-GAMES (at the Race Master): hide & seek, fishing, treasure, football, snowballs, dancing, cooking, maze race, tag, quiz ──
@@ -2674,7 +2898,7 @@ function miniGameItems() {
         go('🙈', 'Hide & Seek',      'Find 3 kids hiding in Paradise!',      startHideSeek),
         go('🎣', 'Fishing Contest',  'Catch more fish than Old Tom',         startFishingContest),
         go('🗺', 'Mega Treasure Hunt', 'Follow 5 clues to big treasure',       () => { if (state.treasure) showToast('🗺 Finish your treasure map first!', '#FFE8A0', 150); else startTreasureMap(5); }),
-        go('⚽', 'Football',         'Score goals past the goalie!',         startFootball),
+        go('⚽', 'Football',         'Score goals with your team!',          startFootball),
         go('☃', 'Snowball Fight',   'Hit all the snowball kids!',           () => { changeRoom(ROOM.SNOWFORT); miniGame = { kind: 'snow' }; showToast('☃ SNOWBALL FIGHT! Hit every kid!', '#AADDFF', 200); }),
         go('💃', 'Dance Battle',     'Press the arrows in time!',            startDanceBattle),
         go('👨‍🍳', 'Cooking Contest', 'Cook a dish for the judges',          startCooking),
@@ -2700,11 +2924,185 @@ function startFishingContest() {
     miniGame = { kind: 'fish', timer: 3600, start: awards.fish || 0, tom: 2 + Math.floor(Math.random() * 3) };
     showToast(`🎣 FISHING CONTEST! Old Tom will catch ${miniGame.tom}. Catch more in 60 s!`, '#88CCFF', 240);
 }
-// ⚽ Football: push the ball into the goal on the right
+// ⚽ Football: you and a helper (blue) against two defenders (red) and a goalie (yellow). Score in the goal on the right
+const FB_PITCH        = { x0: 34, x1: 766, y0: 108, y1: 568 };   // where the computer players may stand: inside the white lines, under the score bar
+const FB_GOAL         = { x: 780, y0: 260, y1: 400 };             // the goal mouth
+const FB_KICK_SPEED   = 8;      // how hard walking into the ball kicks it (this was always so)
+const FB_OPP_SPEED    = 2.3;    // red defenders walk slower than you (4), so a child can always outrun them
+const FB_MATE_SPEED   = 3;      // your blue helper is a bit quicker than the defenders, but still slower than you
+const FB_REACT        = 15;     // defenders only look where the ball is 4 times a second, so a quick dribble fools them
+const FB_RECOVER      = 80;     // after a tackle or a kick a defender stands still for this long: time to win the ball back
+const FB_MATE_RECOVER = 45;     // the helper rests a little after passing or shooting
+const FB_AIM_PAUSE    = 24;     // the helper holds the ball for a moment before kicking, so you can see what is coming
+const FB_TOUCH        = 22;     // how close a computer player must be to reach the ball
+const FB_TACKLE       = 26;     // how close to you a defender must be to take a ball you are dribbling
+const FB_DRIBBLE      = 36;     // the ball is "yours" when it is this close to you
+const FB_APART        = 28;     // computer players push each other apart when closer than this
+const FB_STUCK_FRAMES = 120;    // a still ball with 2 players on it for 2 s gets popped loose
+const FB_PASS_CONE    = 0.45;   // kick roughly at your helper (within about 26 degrees) and the pass flies straight to them
+const FB_SHOOT_X      = 520;    // the helper shoots when the ball reaches them this close to goal, and passes back otherwise
+const FB_MATE_CHASE   = 90;     // the helper only runs for a loose ball this close, so you get the kick-off
+const FB_KEEPER_REACH = 26;    // the goalie stops a ball this close to the middle of the goal line (and says SAVED! once per save)
+const FB_KIT          = { you: '#3A7BFF', them: '#E8392F', keeper: '#FFD23A' };   // team colours
+const FB_KICKOFF      = { ball: [400, 330], mate: [520, 330], opps: [[580, 250], [580, 410]] };
+function footballActor(x, y) { return { x, y, walk: 0, recover: 0, react: 0, tx: x, ty: y }; }
+function footballKickoff(G) {
+    Object.assign(G.ball, { x: FB_KICKOFF.ball[0], y: FB_KICKOFF.ball[1], vx: 0, vy: 0 });
+    G.held = false; G.stuck = 0;
+    Object.assign(G.mate, footballActor(...FB_KICKOFF.mate), { hold: 0 });
+    G.opps.forEach((o, i) => Object.assign(o, footballActor(...FB_KICKOFF.opps[i])));
+}
 function startFootball() {
     changeRoom(ROOM.STADIUM);
-    miniGame = { kind: 'ball', timer: 3600, goals: 0, ball: { x: 400, y: 330, vx: 0, vy: 0 }, keeper: 330 };
-    showToast('⚽ FOOTBALL! Run into the ball to kick it. Score in the goal on the right!', '#FFFFFF', 240);
+    miniGame = { kind: 'ball', timer: 3600, goals: 0, ball: { x: 400, y: 330, vx: 0, vy: 0 }, keeper: 330, mate: {}, opps: [{}, {}], presser: 0, held: false, stuck: 0, said: 0, saving: false };
+    footballKickoff(miniGame);
+    showToast('⚽ FOOTBALL! Kick it to your 🔵 friend!', '#FFFFFF', 240);
+}
+// Move a computer player, never through blocks or off the pitch
+function footballMove(a, dx, dy) {
+    const nx = Math.max(FB_PITCH.x0, Math.min(FB_PITCH.x1, a.x + dx)), ny = Math.max(FB_PITCH.y0, Math.min(FB_PITCH.y1, a.y + dy));
+    if (!playerHitsBlock(nx, a.y)) a.x = nx;
+    if (!playerHitsBlock(a.x, ny)) a.y = ny;
+}
+function footballSeek(a, tx, ty, speed) {
+    const d = Math.hypot(tx - a.x, ty - a.y);
+    if (d < 4) return;
+    const step = Math.min(speed, d);
+    footballMove(a, (tx - a.x) / d * step, (ty - a.y) / d * step);
+    a.walk += 0.3;
+}
+function footballSay(G, x, y, text, color) { if (G.said <= 0) { spawnFloatText(x, y - 28, text, color, 50); G.said = 40; } }   // one shout at a time, so words don't pile up
+function footballKick(G, vx, vy) { G.ball.vx = vx; G.ball.vy = vy; G.held = false; sfx('boing'); }
+function footballScored(G, byMate) {
+    G.goals++; giveAward('goal'); sfx('win'); spawnConfettiAt(760, G.ball.y); showToast(byMate ? '⚽ GOAL! Great pass!' : '⚽ GOOOOOAL!!!', '#FFE066', 120);
+    footballKickoff(G);
+}
+function updateFootball(G) {
+    const b = G.ball, m = G.mate, opps = G.opps;
+    const humans = [{ x: player.x, y: player.y }, ...activeFriends().filter(f => !f.down)];
+    const actors = [m, ...opps];
+    if (G.said > 0) G.said--;
+    // You kick by walking into the ball. A kick toward your helper becomes a neat pass.
+    for (const k of humans) {
+        const d = Math.hypot(b.x - k.x, b.y - k.y);
+        if (d >= 26 || d === 0) continue;
+        let ux = (b.x - k.x) / d, uy = (b.y - k.y) / d, speed = FB_KICK_SPEED;
+        const md = Math.hypot(m.x - b.x, m.y - b.y);
+        if (md > 60 && md < 450 && ux * (m.x - b.x) / md + uy * (m.y - b.y) / md > Math.cos(FB_PASS_CONE)) {
+            ux = (m.x - b.x) / md; uy = (m.y - b.y) / md; speed = Math.max(4, Math.min(9, md * 0.032 + 2.5));
+            footballSay(G, b.x, b.y, 'Pass!', FB_KIT.you);
+        }
+        footballKick(G, ux * speed, uy * speed);
+    }
+    // Red defenders: the nearer one presses the ball, the other covers the space in front of the goal
+    const near0 = Math.hypot(opps[0].x - b.x, opps[0].y - b.y), near1 = Math.hypot(opps[1].x - b.x, opps[1].y - b.y);
+    if (G.presser === 0 && near1 < near0 - 40) G.presser = 1; else if (G.presser === 1 && near0 < near1 - 40) G.presser = 0;
+    opps.forEach((o, i) => {
+        if (o.recover > 0) { o.recover--; return; }
+        if (--o.react <= 0) {
+            o.react = FB_REACT;
+            if (i === G.presser) { o.tx = b.x; o.ty = b.y; }
+            else { o.tx = Math.max(380, Math.min(700, b.x + 110)); o.ty = (b.y + 330) / 2; }
+        }
+        footballSeek(o, o.tx, o.ty, FB_OPP_SPEED);
+        const dribbler = humans.find(h => Math.hypot(h.x - o.x, h.y - o.y) < FB_TACKLE && Math.hypot(b.x - h.x, b.y - h.y) < FB_DRIBBLE);
+        if (dribbler || Math.hypot(b.x - o.x, b.y - o.y) < FB_TOUCH) {
+            // take the ball and boot it away from their goal (to the left), then rest. Nobody gets hurt.
+            const a = Math.PI + (Math.random() - 0.5) * 1.2;
+            footballKick(G, Math.cos(a) * 7, Math.sin(a) * 7);
+            o.recover = FB_RECOVER;
+            if (dribbler) footballSay(G, o.x, o.y, 'Tackled!', FB_KIT.them);
+        }
+    });
+    // Blue helper: finds open space near the goal; when the ball reaches them they shoot, or pass back to you
+    if (m.recover > 0) m.recover--;
+    if (G.held) {
+        if (--m.hold > 0) { b.x = m.x + 12; b.y = m.y; b.vx = b.vy = 0; }
+        else if (m.x > FB_SHOOT_X) {
+            const ty = (G.keeper > 330 ? 292 : 368) + (Math.random() - 0.5) * 20, d = Math.hypot(FB_GOAL.x - m.x, ty - m.y);   // aim away from the goalie
+            footballKick(G, (FB_GOAL.x - m.x) / d * 11, (ty - m.y) / d * 11); m.recover = FB_MATE_RECOVER; G.mateShot = 90;
+            footballSay(G, m.x, m.y, 'Shoot!', FB_KIT.you);
+        } else {
+            const d = Math.hypot(player.x - m.x, player.y - m.y) || 1, v = Math.max(4, Math.min(9, d * 0.032 + 2.5));
+            footballKick(G, (player.x - m.x) / d * v, (player.y - m.y) / d * v); m.recover = FB_MATE_RECOVER;
+            footballSay(G, m.x, m.y, 'Pass!', FB_KIT.you);
+        }
+    } else {
+        const speed = Math.hypot(b.vx, b.vy), md = Math.hypot(b.x - m.x, b.y - m.y);
+        if (m.recover === 0 && md < FB_TOUCH) { G.held = true; m.hold = FB_AIM_PAUSE; b.vx = b.vy = 0; }
+        else {
+            const hd = Math.min(...humans.map(h => Math.hypot(b.x - h.x, b.y - h.y)));
+            if (speed < 3 && md < FB_MATE_CHASE && md < hd) footballSeek(m, b.x, b.y, FB_MATE_SPEED);   // a loose ball close to them: go and get it
+            else {
+                if (--m.react <= 0) {   // otherwise pick the most open spot near the goal
+                    m.react = 45; let best = -1e9;
+                    for (const sx of [560, 620, 680]) for (const sy of [220, 330, 440]) {
+                        const open = Math.min(...opps.map(o => Math.hypot(o.x - sx, o.y - sy))) + Math.hypot(b.x - sx, b.y - sy) * 0.2 - Math.abs(sy - 330) * 0.2;
+                        if (open > best) { best = open; m.tx = sx; m.ty = sy; }
+                    }
+                }
+                footballSeek(m, m.tx, m.ty, FB_MATE_SPEED);
+            }
+        }
+    }
+    if (G.mateShot > 0) G.mateShot--;
+    // Ball physics (as before)
+    if (!G.held) { b.x += b.vx; b.y += b.vy; b.vx *= 0.97; b.vy *= 0.97; }
+    if (b.y < 90 || b.y > 570) { b.vy *= -1; b.y = Math.max(90, Math.min(570, b.y)); }
+    if (b.x < 30) { b.vx *= -1; b.x = 30; }
+    G.keeper += Math.sign(b.y - G.keeper) * Math.min(2.2, Math.abs(b.y - G.keeper));   // the goalie follows the ball
+    G.keeper = Math.max(270, Math.min(390, G.keeper));
+    const inReach = b.x > 740 && Math.abs(b.y - G.keeper) < FB_KEEPER_REACH;
+    if (inReach) {
+        b.vx = -Math.abs(b.vx) - 3;
+        if (!G.saving) spawnFloatText(740, G.keeper - 30, 'SAVED!', '#FFFFFF', 40);   // (a slow ball can stay in reach for many frames: say it once)
+    }
+    G.saving = inReach;
+    if (b.x > 770) {
+        if (b.y > FB_GOAL.y0 && b.y < FB_GOAL.y1) footballScored(G, G.mateShot > 0); else footballKickoff(G);
+        return;
+    }
+    // Nobody gets shoved through walls: only the computer players move, and only where it is free
+    for (let i = 0; i < actors.length; i++) {
+        for (let j = i + 1; j < actors.length; j++) footballApart(actors[i], actors[j], 0.5);
+        for (const h of humans) footballApart(actors[i], h, 1);
+    }
+    // If the ball sits still with a pile of players on it, pop it loose
+    const crowd = actors.concat(humans).filter(a => Math.hypot(a.x - b.x, a.y - b.y) < 30).length;
+    G.stuck = (Math.hypot(b.vx, b.vy) < 0.3 && crowd >= 2) ? G.stuck + 1 : 0;
+    if (G.stuck >= FB_STUCK_FRAMES) {
+        const a = Math.random() * Math.PI * 2;
+        footballKick(G, Math.cos(a) * 6, Math.sin(a) * 6); G.stuck = 0; m.hold = 0;
+        for (const o of opps) if (Math.hypot(o.x - b.x, o.y - b.y) < 40) o.recover = Math.max(o.recover, 40);
+    }
+}
+// Push computer player a away from c (all of the overlap if c is a person, half each if c is a computer player too)
+function footballApart(a, c, share) {
+    const d = Math.hypot(a.x - c.x, a.y - c.y);
+    if (d >= FB_APART) return;
+    const ux = d > 0.01 ? (a.x - c.x) / d : 1, uy = d > 0.01 ? (a.y - c.y) / d : 0, push = (FB_APART - d) * share;
+    footballMove(a, ux * push, uy * push);
+    if (share < 1) footballMove(c, -ux * push, -uy * push);
+}
+function drawFootball(G, emoji) {
+    const t = Date.now() / 1000;
+    ctx.fillStyle = '#FFF'; ctx.fillRect(776, 260, 6, 140); ctx.fillRect(740, 260, 40, 4); ctx.fillRect(740, 396, 40, 4);
+    const ring = (x, y, color) => { ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(x, y + 19, 17, 6, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore(); };
+    const kit = (a, color) => {
+        drawGroundShadow(a.x + 3, a.y + 19, 16, 5);
+        ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 8; drawAvatar(a.x, a.y, player.w, color, 'plain', a.walk); ctx.restore();
+        ring(a.x, a.y, color);
+    };
+    kit({ x: 752, y: G.keeper, walk: 0 }, FB_KIT.keeper);
+    emoji('🧤', 752, G.keeper, 22);
+    for (const o of G.opps) { kit(o, FB_KIT.them); if (o.recover > 0) emoji('💫', o.x, o.y - 30, 14); }
+    kit(G.mate, FB_KIT.you);
+    ring(player.x, player.y, FB_KIT.you);
+    for (const f of activeFriends()) if (!f.down) ring(f.x, f.y, FB_KIT.you);
+    // the helper waves a little "!" while you have the ball and they are free
+    const mine = Math.hypot(G.ball.x - player.x, G.ball.y - player.y) < 70;
+    if (mine && !G.held) { ctx.save(); ctx.fillStyle = FB_KIT.you; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.fillText('!', G.mate.x, G.mate.y - 32 + Math.sin(t * 10) * 2); ctx.restore(); }
+    emoji('⚽', G.ball.x, G.ball.y, 22);
 }
 // 🏃 Tag
 function startTag() {
@@ -2734,21 +3132,8 @@ function updateMiniGame() {
         if (G.kids.every(k => k.found)) { miniGame = null; winMiniGame('You found everyone!', 40); }
     }
     if (G.kind === 'ball') {
-        const b = G.ball, kickers = [{ x: player.x, y: player.y }, ...activeFriends()];
-        for (const k of kickers) {
-            const d = Math.hypot(b.x - k.x, b.y - k.y);
-            if (d < 26 && d > 0) { b.vx = (b.x - k.x) / d * 8; b.vy = (b.y - k.y) / d * 8; sfx('boing'); }
-        }
-        b.x += b.vx; b.y += b.vy; b.vx *= 0.97; b.vy *= 0.97;
-        if (b.y < 90 || b.y > 570) { b.vy *= -1; b.y = Math.max(90, Math.min(570, b.y)); }
-        if (b.x < 30) { b.vx *= -1; b.x = 30; }
-        G.keeper += Math.sign(b.y - G.keeper) * Math.min(2.2, Math.abs(b.y - G.keeper));   // the goalie follows the ball
-        G.keeper = Math.max(270, Math.min(390, G.keeper));
-        if (b.x > 740 && Math.abs(b.y - G.keeper) < 26) { b.vx = -Math.abs(b.vx) - 3; spawnFloatText(740, G.keeper - 30, 'SAVED!', '#FFFFFF', 40); }
-        if (b.x > 770) {
-            if (b.y > 260 && b.y < 400) { G.goals++; giveAward('goal'); sfx('win'); spawnConfettiAt(760, b.y); showToast('⚽ GOOOOOAL!!!', '#FFE066', 120); }
-            Object.assign(b, { x: 400, y: 330, vx: 0, vy: 0 });
-        }
+        if (state.room !== ROOM.STADIUM) { miniGame = null; return; }   // you left the pitch some other way
+        updateFootball(G);
     }
     if (G.kind === 'snow' && state.room === ROOM.SNOWFORT && place().enemies.every(e => !e.alive)) { miniGame = null; winMiniGame('You won the SNOWBALL FIGHT!', 40); }
     if (G.kind === 'tag') {
@@ -2774,7 +3159,7 @@ function updateMiniGame() {
 function drawMiniGame() {
     if (state.room === ROOM.STADIUM || state.room === ROOM.SNOWFORT) {
         ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
-        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', SUBPLACE_EXIT.x, 556);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', SUBPLACE_EXIT.x, 556);
     }
     const G = miniGame;
     if (!G) return;
@@ -2784,11 +3169,7 @@ function drawMiniGame() {
         if (k.found) emoji(k.icon, k.x, k.y, 26);
         else if (Math.sin(t * 2 + k.x) > 0.95) emoji('👀', k.x, k.y, 12);   // a tiny peek…
     }
-    if (G.kind === 'ball') {
-        ctx.fillStyle = '#FFF'; ctx.fillRect(776, 260, 6, 140); ctx.fillRect(740, 260, 40, 4); ctx.fillRect(740, 396, 40, 4);
-        emoji('🧤', 752, G.keeper, 26);
-        emoji('⚽', G.ball.x, G.ball.y, 22);
-    }
+    if (G.kind === 'ball' && state.room === ROOM.STADIUM) drawFootball(G, emoji);
     if (G.kind === 'tag' && !G.friends) for (const r of G.runners) if (!r.caught) emoji(r.icon, r.x, r.y + Math.sin(t * 10 + r.x) * 2, 24);
     if (G.kind === 'tag' && G.friends) {
         const it = G.it === 1 ? player : activeFriends().find(f => f.n === G.it);
@@ -2883,7 +3264,7 @@ function drawDanceBattle() {
     }
     ctx.textBaseline = 'alphabetic'; ctx.font = 'bold 22px Arial'; ctx.fillStyle = '#FFE066'; ctx.fillText(D.msg, 400, 410);
     ctx.font = '12px Arial'; ctx.fillStyle = '#DDD';
-    ctx.fillText(lastInput === 'pad' ? 'Push the stick or D-pad that way!' : lastInput === 'touch' ? 'Tap that side of the screen!' : 'Press the arrow keys (or WASD)!', 400, 445);
+    ctx.fillText(byInput('Press the arrow keys (or WASD)!', 'Tap that side of the screen!', 'Push the stick or D-pad that way!'), 400, 445);
     const bounce = Math.abs(Math.sin(t * 6)) * 12;
     ctx.font = '50px Arial'; ctx.fillText('🕺', 160, 330 - bounce); ctx.fillText('💃', 640, 330 - (12 - bounce));
     ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#FFF'; ctx.fillText('YOU', 160, 370); ctx.fillText('DJ Dancey', 640, 370);
@@ -3056,7 +3437,7 @@ function updateYard() {
 yardTimers.swim = 0;
 function drawYard() {
     if (state.room !== ROOM.BACKYARD) return;
-    const t = Date.now() / 1000, verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const t = Date.now() / 1000, verb = mainBtn();
     const emoji = (e, x, y, size) => { ctx.save(); ctx.font = `${size}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); ctx.restore(); };
     const near = (o, r) => Math.hypot(player.x - o.x, player.y - o.y) < r && !menu && !yardRide;
     const label = (text, x, y) => { ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
@@ -3111,7 +3492,7 @@ function drawSecretRoom2() {
     ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
     ctx.fillText(`🏆 Your trophy shelf: ${n} awards!`, 400, 118);
     ctx.fillText('🕵 Nobody knows about this room… except you!', 400, 300);
-    if (!P.chest && Math.hypot(player.x - SECRET_CHEST.x, player.y - SECRET_CHEST.y) < 40 && !menu) drawSpeech({ x: SECRET_CHEST.x, y: SECRET_CHEST.y - 20 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Open your secret chest`);
+    if (!P.chest && Math.hypot(player.x - SECRET_CHEST.x, player.y - SECRET_CHEST.y) < 40 && !menu) drawSpeech({ x: SECRET_CHEST.x, y: SECRET_CHEST.y - 20 }, `${mainBtn()}: Open your secret chest`);
 }
 
 // ── PETS & RIDES: pet battles, golden eggs, ride trails, the hamster ball ──
@@ -3167,7 +3548,7 @@ function drawPetBattle() {
     bar(260, B.you, `Your ${PETS[state.activePet].name}`); bar(540, B.them, `${B.foeName} the ${PETS[B.foe].name}`);
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 14px Arial'; ctx.fillText(B.msg, 400, 400);
     ctx.fillStyle = '#FFE066'; ctx.font = '11px Arial';
-    ctx.fillText(`${lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap' : 'Press SPACE'} to CHEER! (cheering makes your pet hit harder)`, 400, 445);
+    ctx.fillText(`${byInput('Press SPACE', 'Tap', 'Press A')} to CHEER! (cheering makes your pet hit harder)`, 400, 445);
     ctx.restore();
 }
 
@@ -3211,7 +3592,7 @@ function updateSubplace() {
         FACTORY_BELTS.forEach((y, i) => { if (Math.abs(player.y - y) < 18) player.x = Math.max(18, Math.min(782, player.x + (i % 2 ? -1.6 : 1.6))); });
     }
     if (state.room === ROOM.CANDYVOLCANO && Math.random() < 0.01) {   // 🌋 the volcano ERUPTS sweets (and coins!)
-        for (let k = 0; k < 4; k++) P.coins.push({ x: 300 + Math.random() * 200, y: 120 + Math.random() * 300, picked: false });
+        for (let k = 0; k < 4; k++) { const c = reachablePoint(300 + Math.random() * 200, 120 + Math.random() * 300); P.coins.push({ x: c.x, y: c.y, picked: false }); }
         spawnParticles(400, 70, '#FF66AA', 20); triggerShake(4);
     }
     if (state.room === ROOM.MUSEUM && P.night > 0 && --P.night === 0) {   // 🌙 the museum comes alive!
@@ -3220,7 +3601,7 @@ function updateSubplace() {
     }
 }
 function drawSubplaces() {
-    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const verb = mainBtn();
     const t = Date.now() / 1000;
     for (const [id, sp] of Object.entries(SUBPLACES)) {   // doors in the places you know
         if (state.room !== sp.parent || sp.door.x < 0) continue;   // some places have no door (time machine, shrink ray)
@@ -3240,7 +3621,7 @@ function drawSubplaces() {
         ctx.fillText(it.icon, it.x, it.y + Math.sin(t * 3 + it.x) * 3); ctx.restore();
     }
     ctx.fillStyle = '#6B3E1E'; ctx.fillRect(SUBPLACE_EXIT.x - 24, 560, 48, 40);
-    ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Go back', SUBPLACE_EXIT.x, 556);
+    ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Go back', SUBPLACE_EXIT.x, 556);
     const left = P.items.filter(i => !i.got).length;
     if (!P.items.length) return;
     ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(320, 76, 160, 20);
@@ -3322,7 +3703,7 @@ const RING_COUNT       = 8;
 let ringRace = null;             // { rings, timer, scores, result }
 function startRingRace() {
     ringRace = { timer: RING_RACE_FRAMES, result: 0, scores: {},
-                 rings: Array.from({ length: RING_COUNT }, () => ({ x: 60 + Math.random() * 680, y: 110 + Math.random() * 440, got: false })) };
+                 rings: Array.from({ length: RING_COUNT }, () => { const p = reachablePoint(60 + Math.random() * 680, 110 + Math.random() * 440); return { x: p.x, y: p.y, got: false }; }) };
     showToast(`⭕ RING RACE! Grab all ${RING_COUNT} rings in 40 seconds!`, '#FFE066', 200); sfx('bite');
 }
 function updateRingRace() {
@@ -3441,7 +3822,7 @@ function drawControlsPanel() {
     if (!showControls) {
         ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x, 540, 92, 16);
         ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
-        ctx.fillText(lastInput === 'pad' ? '🎮 Help: ⧉+LB' : '⌨ Help: K', x + 6, 551); ctx.restore();
+        ctx.fillText(keyName('⌨ Help: K', '🎮 Help: ⧉+LB'), x + 6, 551); ctx.restore();
         return;
     }
     const rows = controlsList(), half = Math.ceil(rows.length / 2);
@@ -3449,7 +3830,7 @@ function drawControlsPanel() {
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(x, y, w, h);
     ctx.fillStyle = '#FFD700'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
-    ctx.fillText(lastInput === 'pad' ? '🎮 CONTROLS  (⧉ = View button)' : '⌨ CONTROLS', x + 6, y + 11);
+    ctx.fillText(keyName('⌨ CONTROLS', '🎮 CONTROLS  (⧉ = View button)'), x + 6, y + 11);
     ctx.font = '9px Arial';
     rows.forEach(([what, key], i) => {
         const cx = x + 6 + Math.floor(i / half) * (w / 2), cy = y + 22 + (i % half) * rowH;
@@ -3461,6 +3842,7 @@ function drawControlsPanel() {
 
 function pollGamepad() {
     padMove.x = padMove.y = 0;
+    if (paused) return;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const connected = Array.from(pads).filter(p => p && p.connected);
     for (const f of FRIENDS) {   // a friend's controller was unplugged: they leave
@@ -3489,15 +3871,20 @@ function pollGamepad() {
             sfx('coin');
         }
     }
+    if (introVideo.isUp()) introVideo.setHint(!!gp);
     if (!gp) { padPrev = []; return; }
     const held = gp.buttons.map(b => b.pressed);
-    const was  = padPrev;
+    const was  = padResync ? held : padPrev;   // (right after a pause nothing counts as a new press)
+    padResync = false;
     padPrev = held;
     const pressed = i => held[i] && !was[i];
     if (held.some(Boolean) || Math.abs(gp.axes[0] || 0) > 0.5 || Math.abs(gp.axes[1] || 0) > 0.5) {
         lastInput = 'pad';
         initAudio();
     }
+    // The opening video: any button skips it, and that press is not also a game button
+    if (introVideo.isUp()) { if (held.some(Boolean)) introVideo.dismiss(); padPrev = held; return; }
+    const nav = stickNavStep(gp);   // (tracked all the time, so a stick already held when a menu opens doesn't fire at once)
 
     // View (⧉) is the combo button: hold it and press another button. A quick tap on its own = sound on/off.
     if (held[PAD.BACK] && !menu && state.gamePhase === 'playing') {
@@ -3515,6 +3902,7 @@ function pollGamepad() {
         if (pressed(PAD.RIGHT)) moveMenuCursor(1, 0);
         if (pressed(PAD.UP))    moveMenuCursor(0, -1);
         if (pressed(PAD.DOWN))  moveMenuCursor(0, 1);
+        if (nav)                moveMenuCursor(nav[0], nav[1]);
         if (pressed(PAD.A))     menuSelect(menu.cursor);
         if (pressed(PAD.B) || pressed(PAD.Y)) menu = null;
         return;
@@ -3528,7 +3916,7 @@ function pollGamepad() {
     if (was[PAD.RB] && !held[PAD.RB]) meleeRelease();
     if (pressed(PAD.LB)) startBlock();
     if (was[PAD.LB] && !held[PAD.LB]) stopBlock();
-    if (pressed(PAD.X) && state.gamePhase === 'intro') startFromIntro(true);
+    if (pressed(PAD.X) && state.gamePhase === 'intro') askNewGame();
     if (pressed(PAD.X) && canOpenShop() && !state.shopOpen) state.awardsOpen = !state.awardsOpen;
     if (state.awardsOpen && pressed(PAD.B)) state.awardsOpen = false;
     if (pressed(PAD.START)) pressStart();
@@ -3540,6 +3928,7 @@ function pollGamepad() {
         if (pressed(PAD.RIGHT)) moveShopCursor(1, 0);
         if (pressed(PAD.UP))    moveShopCursor(0, -1);
         if (pressed(PAD.DOWN))  moveShopCursor(0, 1);
+        if (nav)                moveShopCursor(nav[0], nav[1]);
         if (pressed(PAD.A))     shopSelect(state.shopCursor);
         return;
     }
@@ -3551,9 +3940,7 @@ function pollGamepad() {
 }
 
 function readPadStick(gp, held) {
-    let x = gp.axes[0] || 0, y = gp.axes[1] || 0;
-    if (Math.abs(x) < PAD_DEADZONE) x = 0;
-    if (Math.abs(y) < PAD_DEADZONE) y = 0;
+    let { x, y } = stickVector(gp.axes[0] || 0, gp.axes[1] || 0);
     if (held[PAD.LEFT])  x = -1;
     if (held[PAD.RIGHT]) x = 1;
     if (held[PAD.UP])    y = -1;
@@ -3561,50 +3948,135 @@ function readPadStick(gp, held) {
     padMove.x = x; padMove.y = y;
 }
 
-window.addEventListener('gamepadconnected', () => {
-    lastInput = 'pad';
+window.addEventListener('gamepadconnected', () => {   // (hints switch to the controller when a button is really pressed, not on plugging in)
     const many = navigator.getGamepads && Array.from(navigator.getGamepads()).filter(p => p && p.connected).length > 1;
     spawnFloatText(400, 300, many ? '🎮 New controller! Hold any button to join' : '🎮 Controller connected!', '#FFFFFF', 180);
 });
 
 // ── VIRTUAL TOUCH CONTROLS ────────────────────────────────────
-let isTouchDevice = false;
+// Rules for the layout: every button is at least TOUCH_MIN_CSS wide on the real screen (a child's thumb),
+// the tap area is exactly the drawn circle, and no two buttons overlap. layoutTouch() places them again
+// whenever the window changes, so a small phone gets bigger buttons (in game pixels) than a tablet.
+// Sideways phones have spare room left and right of the picture (view.offX): the buttons go there, off the game.
+const TOUCH_MIN_CSS  = 48;           // the smallest a button may be on the real screen (about 9 mm)
+const TOUCH_R_MIN    = 30;           // …but never smaller than this many game pixels
+const TOUCH_R_MAX    = 44;           // …or bigger than this (a tablet would get giant buttons)
+const TOUCH_GAP      = 6;            // space between two buttons
+const TOUCH_PAD      = 10;           // space between a button and the screen edge
+const SHOOT_SIZE     = 1.4;          // the big action button is this many times a normal one
+const JOY_SIZE       = 1.4;          // the joystick base, in normal button radii
+const JOY_GRAB       = 1.5;          // you can start the stick this far (× its radius) from its middle
+const JOYSTICK_DEADZONE_RATIO = 0.2; // fraction of maxDist before movement starts
 const VJOY   = { x: 100, y: 490, baseR: 55, maxDist: 40 };
 const VSHOOT = { x: 700, y: 490, r: 45 };
-const TOUCH_AREA_MULTIPLIER  = 1.5;  // expand tap hit area beyond visible radius
-const JOYSTICK_DEADZONE_RATIO = 0.2; // fraction of maxDist before movement starts
 const vTouch = { joyId: null, joyDX: 0, joyDY: 0, joyOriX: 0, joyOriY: 0, shootId: null, meleeId: null, blockId: null };
 const VMELEE = { x: 620, y: 350, r: 22 };
 const VBLOCK = { x: 760, y: 350, r: 20 };
 const VJUMP  = { x: 560, y: 405, r: 20 };
+let buildFlash = null;   // the block a finger just tapped in build mode: { cx, cy, t, ok }
+const BUILD_FLASH_FRAMES = 24;
+
+function touchR() { return Math.max(TOUCH_R_MIN, Math.min(TOUCH_R_MAX, TOUCH_MIN_CSS / 2 / view.fit)); }
+function inBtn(x, y, b) { return Math.hypot(x - b.x, y - b.y) <= b.r; }
+function joyGrabR() { return VJOY.baseR * JOY_GRAB; }
+// A flat on-screen button (SHOP, AWARDS, NEW GAME…) gets a taller tap area on a phone, so a thumb can hit it
+function tapRect(r) {
+    if (!usesTouchLayout()) return r;
+    const need = TOUCH_MIN_CSS / view.fit, padX = Math.max(0, (need - r.w) / 2), padY = Math.max(0, (need - r.h) / 2);
+    return { x: r.x - padX, y: r.y - padY, w: r.w + 2 * padX, h: r.h + 2 * padY };
+}
+
+// Thumb-friendly places. Right thumb: the big button with PUNCH beside it, JUMP above it and BLOCK
+// between them; then two columns of extras going up. Left thumb: the joystick, with the silly buttons above it.
+function layoutTouch() {
+    layoutDirty = false;
+    const tr = touchR(), step = 2 * tr + TOUCH_GAP;
+    const xL = -view.offX + TOUCH_PAD, xR = GAME_W + view.offX - TOUCH_PAD, yB = GAME_H - TOUCH_PAD;
+    VJOY.baseR = Math.round(tr * JOY_SIZE); VJOY.maxDist = Math.round(tr);
+    VJOY.x = xL + VJOY.baseR; VJOY.y = yB - VJOY.baseR;
+    const sr = VSHOOT.r = Math.round(tr * SHOOT_SIZE);
+    VSHOOT.x = xR - sr; VSHOOT.y = yB - sr;
+    for (const b of [VMELEE, VBLOCK, VJUMP, VSILLY, VDANCE, VFART, VBUILD, VSPELL, VMOUNT, VGOD, VDASH, VGADGET, MUTE_BTN, SETTINGS_BTN]) b.r = tr;
+    VMELEE.x = VSHOOT.x - sr - tr - TOUCH_GAP;   VMELEE.y = yB - tr;
+    VJUMP.x  = xR - tr;                          VJUMP.y  = VSHOOT.y - sr - tr - TOUCH_GAP;
+    VBLOCK.x = VMELEE.x;                         VBLOCK.y = VJUMP.y;
+    const col1 = VJUMP.x, col2 = VMELEE.x, up = k => VJUMP.y - k * step;
+    [[VDASH, 1], [VGADGET, 2], [VSPELL, 3], [VGOD, 4]].forEach(([b, k]) => { b.x = col1; b.y = up(k); });
+    [[VBUILD, 1], [VMOUNT, 2]].forEach(([b, k]) => { b.x = col2; b.y = up(k); });
+    const first = VJOY.y - joyGrabR() - tr - TOUCH_GAP;
+    [VDANCE, VFART, VSILLY, SETTINGS_BTN, MUTE_BTN].forEach((b, k) => { b.x = xL + tr; b.y = first - k * step; });
+}
+
+// Everything round on screen right now: [button, icon, held?]. Drawing and the tests both use this.
+function touchButtonList() {
+    const list = [[VSHOOT, '', vTouch.shootId !== null],
+                  [VMELEE, '👊', vTouch.meleeId !== null], [VBLOCK, '🛡', vTouch.blockId !== null], [VJUMP, '🦘', false],
+                  [VDANCE, '💃', false], [VFART, '💨', false], [VSILLY, sillyTurn % 2 ? '🤧' : '🫢', false],
+                  [SETTINGS_BTN, '⚙', false], [MUTE_BTN, muted ? '🔇' : '🔊', false],
+                  [VBUILD, state.buildMode ? '⚔' : '🧱', state.buildMode]];
+    if (state.spell) list.push([VSPELL, SPELLS.find(x => x.id === state.spell).icon, false]);
+    if (godParent()) list.push([VGOD, nextGodPower().icon, false]);
+    if (state.lastMount) list.push([VMOUNT, state.mount ? '🚶' : MOUNTS.find(m => m.id === state.lastMount).icon, !!state.mount]);
+    if (state.buildMode) list.push([VGADGET, '🔄', false]);
+    else if (state.gadget) list.push([VGADGET, GADGETS.find(g => g.id === state.gadget).icon, false]);
+    if (state.hasDash) list.push([VDASH, '⚡', false]);
+    return list;
+}
+
+// The touch buttons are only there while you are playing and nothing is covering them
+function touchUiShown() {
+    return isTouchDevice && state.gamePhase === 'playing' && !state.won && !state.levelComplete
+        && !menu && !state.shopOpen && !state.awardsOpen && !race && !petBattle && !tvShow && !credits && !danceBattle;
+}
 
 function canvasPos(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const x = (clientX - rect.left) * (GAME_W / rect.width);
-    const y = (clientY - rect.top)  * (GAME_H / rect.height);
-    const flipX = mod('upsideDown') !== mod('mirror'), flipY = mod('upsideDown');   // the picture may be turned or mirrored
-    return { x: flipX ? GAME_W - x : x, y: flipY ? GAME_H - y : y };
+    let x = (clientX - rect.left) * (view.w  / rect.width);
+    let y = (clientY - rect.top)  * (GAME_H / rect.height);
+    if (mod('upsideDown') !== mod('mirror')) x = view.w - x;   // the picture may be turned or mirrored
+    if (mod('upsideDown')) y = GAME_H - y;
+    return { x: x - view.offX, y };
+}
+
+// Build mode, finger on the world: mine the block under it, or place the chosen block on an empty spot
+// (the same rules as a mouse click). Returns true if the tap was used.
+function touchBuildTap(p) {
+    if (!state.buildMode || state.gamePhase !== 'playing' || menu || state.shopOpen || state.won || state.levelComplete) return false;
+    if (p.x < 0 || p.x > GAME_W || p.y < 0 || p.y > GAME_H) return false;
+    const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
+    if (Math.hypot(p.x - player.x, p.y - player.y) > BUILD_REACH) {
+        buildFlash = { cx, cy, t: BUILD_FLASH_FRAMES, ok: false };
+        spawnFloatText(p.x, p.y, 'Come closer!', '#FFFFFF', 40);
+        return true;
+    }
+    buildFlash = { cx, cy, t: BUILD_FLASH_FRAMES, ok: true };
+    buildAt(cx, cy, p.x, p.y);
+    return true;
 }
 
 canvas.addEventListener('touchstart', e => {
     e.preventDefault();
-    isTouchDevice = true;
+    if (!isTouchDevice) { isTouchDevice = true; fitCanvas(); }   // (the first touch: the side margins appear)
+    if (layoutDirty) layoutTouch();
     initAudio();
     lastInput = 'touch';
     for (const t of e.changedTouches) {
         const p = canvasPos(t.clientX, t.clientY);
         if (state.gamePhase === 'playing' && !menu && !state.shopOpen) {   // the fighting buttons can be held
-            if (Math.hypot(p.x - VMELEE.x, p.y - VMELEE.y) < VMELEE.r * 1.3) { vTouch.meleeId = t.identifier; meleePress(); continue; }
-            if (Math.hypot(p.x - VBLOCK.x, p.y - VBLOCK.y) < VBLOCK.r * 1.3) { vTouch.blockId = t.identifier; startBlock(); continue; }
-            if (Math.hypot(p.x - VJUMP.x,  p.y - VJUMP.y)  < VJUMP.r * 1.3)  { superJump(); continue; }
+            if (inBtn(p.x, p.y, VMELEE)) { vTouch.meleeId = t.identifier; meleePress(); continue; }
+            if (inBtn(p.x, p.y, VBLOCK)) { vTouch.blockId = t.identifier; startBlock(); continue; }
+            if (inBtn(p.x, p.y, VJUMP))  { superJump(); continue; }
         }
         if (handleTap(p.x, p.y)) continue;
-        if (vTouch.joyId === null && Math.hypot(p.x - VJOY.x, p.y - VJOY.y) < VJOY.baseR * TOUCH_AREA_MULTIPLIER) {
+        const onJoy = Math.hypot(p.x - VJOY.x, p.y - VJOY.y) < joyGrabR(), onShoot = inBtn(p.x, p.y, VSHOOT);
+        if (vTouch.joyId === null && onJoy) {
             vTouch.joyId = t.identifier; vTouch.joyOriX = p.x; vTouch.joyOriY = p.y;
             vTouch.joyDX = 0; vTouch.joyDY = 0;
-        } else if (vTouch.shootId === null && Math.hypot(p.x - VSHOOT.x, p.y - VSHOOT.y) < VSHOOT.r * TOUCH_AREA_MULTIPLIER) {
+        } else if (vTouch.shootId === null && onShoot) {
             vTouch.shootId = t.identifier;
             pressAction();
+        } else if (!onJoy && !onShoot) {
+            touchBuildTap(p);   // a tap on the world itself (never on a button or the stick)
         }
     }
 }, { passive: false });
@@ -3628,8 +4100,10 @@ function clearTouchId(id) {
     if (id === vTouch.meleeId) { vTouch.meleeId = null; meleeRelease(); }
     if (id === vTouch.blockId) { vTouch.blockId = null; stopBlock(); }
 }
-canvas.addEventListener('touchend',    e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
+// (iOS counts the finger LIFTING as the tap that allows sound: so the audio is unlocked here too)
+canvas.addEventListener('touchend',    e => { e.preventDefault(); initAudio(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
 canvas.addEventListener('touchcancel', e => { e.preventDefault(); for (const t of e.changedTouches) clearTouchId(t.identifier); }, { passive: false });
+document.addEventListener('pointerup', () => initAudio());
 
 // ── ENTITY FACTORIES ─────────────────────────────────────────
 function makeDigSpots() {
@@ -3909,7 +4383,7 @@ function drawHouse() {
     if (F.bookshelf) { ctx.fillStyle = '#6B3E1E'; ctx.fillRect(530, 70, 60, 64);
                      for (let r = 0; r < 3; r++) for (let b = 0; b < 6; b++) { ctx.fillStyle = ['#C03030', '#3060C0', '#30A050', '#E0A020', '#8040A0', '#20A0A0'][(b + r) % 6]; ctx.fillRect(534 + b * 9, 74 + r * 20, 7, 16); } }
     if (F.tv)      { ctx.fillStyle = '#222'; ctx.fillRect(350, 84, 100, 60); ctx.fillStyle = `hsl(${(t * 40) % 360}, 60%, 55%)`; ctx.fillRect(356, 90, 88, 48);
-                     ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('📺 CARTOONS!', 400, 118);
+                     ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('📺 CARTOONS!', 400, 118);
                      ctx.fillStyle = '#444'; ctx.fillRect(390, 144, 20, 6); }
     if (F.sofa)    { ctx.fillStyle = '#3A6AB0'; pathRoundRect(340, 200, 120, 40, 10); ctx.fill(); ctx.fillStyle = '#4A7AC8'; pathRoundRect(345, 214, 110, 22, 8); ctx.fill(); }
     if (F.lamp)    { ctx.fillStyle = '#555'; ctx.fillRect(688, 150, 4, 50); ctx.fillStyle = '#FFE8A0'; ctx.beginPath(); ctx.moveTo(676, 152); ctx.lineTo(704, 152); ctx.lineTo(698, 134); ctx.lineTo(682, 134); ctx.fill();
@@ -3947,7 +4421,7 @@ function drawHouse() {
     });
     if (bed) label('💤 your pets are sleeping', 635, 346);
     // What the button does here
-    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const verb = mainBtn();
     const i = nearPot();
     if (nearHome(CATALOGUE)) drawSpeech(CATALOGUE, `${verb}: Buy furniture`);
     else if (nearHome(HOUSE_BED, 40)) drawSpeech(HOUSE_BED, `${verb}: Take a nap (free heal)`);
@@ -3962,7 +4436,6 @@ const CAPTAIN = { id: 'captain', name: 'Captain Salty', x: 705, y: 545, coat: '#
 const DOCK    = { x: 70, y: 540 };    // on each island: sail back to Paradise
 const SKY_STAIRS = { x: 650, y: 170 };   // in Heaven
 const ROCKET  = { x: 70, y: 470 };    // in the Void
-const ISLANDS = [ROOM.CANDY, ROOM.ICE, ROOM.HAUNTED];
 
 const e0 = (type, x, y, extra = {}) => ({ type, x, y, r: 15, hp: ENEMY_TYPES[type].hp, maxHp: ENEMY_TYPES[type].hp, alive: true,
                                            hitFlash: 0, frozen: 0, dx: 0, dy: 0, emerge: 40, hopTimer: 0,
@@ -4044,6 +4517,7 @@ function paintArena(g, R) {
 // 🏬 THE MALL (a door in the Void): shops in a row, each opens a pop-up store
 const MALL_DOOR  = { x: 140, y: 128 };   // in the Void
 const MALL_EXIT  = { x: 400, y: 578 };
+const CHART_SIGN = { x: 480, y: 505 };   // in the Void: a sign you walk up to for the weapon chart
 const MALL_SHOPS = [
     { id: 'magic',  name: '✨ MAGIC SHOP', keeper: 'Merlin', x: 140, awning: '#6A3AAA', coat: '#3A2A9A', hat: 'wizard', items: () => spellItems(), title: "✨ MERLIN'S MAGIC SHOP" },
     { id: 'stable', name: '🐴 STABLE',     keeper: 'Rita',   x: 300, awning: '#8A5A2A', coat: '#6A8A3A', hat: 'cowboy', items: () => mountItems(), title: "🐴 RITA'S STABLE — pick a ride!" },
@@ -4128,9 +4602,9 @@ function drawMall() {
         if (sh.id === 'magic') for (let k = 0; k < 3; k++) drawStar(x - 40 + k * 40, 120 + Math.sin(t * 3 + k) * 3, 3, '#FFE066');
     }
     ctx.fillStyle = '#6B3E1E'; ctx.fillRect(MALL_EXIT.x - 24, 560, 48, 40);
-    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', MALL_EXIT.x, 556);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🚪 Back to the Void', MALL_EXIT.x, 556);
     const sh = nearMallShop();
-    if (sh && !menu) drawSpeech({ x: sh.x, y: 230 }, `${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Shop at ${sh.name.replace(/^\S+ /, '')}`);
+    if (sh && !menu) drawSpeech({ x: sh.x, y: 230 }, `${mainBtn()}: Shop at ${sh.name.replace(/^\S+ /, '')}`);
 }
 
 function drawMallDoor() {
@@ -4174,7 +4648,7 @@ PLACES.pyramid = { name: '🏜 THE DESERT PYRAMID', spawn: [120, 470], island: t
                    enemies: [e0('mummy', 300, 200), e0('mummy', 550, 420), e0('scarab', 450, 150), e0('scarab', 650, 300), e0('scarab', 250, 400),
                              e0('mummyking', 520, 250, { r: 32, coinDrop: 25, summonTimer: 360, wrapTimer: 120 })] }) };
 PLACES.cloudcity = { name: '☁ CLOUD CITY', spawn: [270, 470],
-    make: () => ({ coins: [], enemies: [], eggs: [0, 1, 2].map(() => ({ x: 100 + Math.random() * 600, y: 120 + Math.random() * 380, got: false })), returned: false,
+    make: () => ({ coins: [], enemies: [], eggs: [0, 1, 2].map(() => { const p = reachablePoint(100 + Math.random() * 600, 120 + Math.random() * 380); return { x: p.x, y: p.y, got: false }; }), returned: false,
                    birds: [0, 1, 2, 3, 4].map(i => ({ x: 150 + i * 130, y: 200 + (i % 2) * 180, t: i })) }) };
 const BIRD_CHAT = ['Tweet tweet! Welcome to Cloud City!', 'Have you seen Mama Bird\'s eggs?', 'I love flying! 🐦', 'The clouds are so soft today!', 'Chirp! You can\'t fly? Poor thing!'];
 
@@ -4263,8 +4737,8 @@ PLACES.snowfort = { name: '☃ SNOWBALL FIGHT!',  spawn: [400, 520],
 for (const [id, sp] of Object.entries(SUBPLACES)) {
     PLACES[id] = { name: sp.name, spawn: [400, 520],
         make: () => ({ coins: [], prize: false, night: id === 'museum' ? 1200 : 0, enemies: sp.enemies(),
-                       items: Array.from({ length: sp.count }, (_, k) => ({ x: 80 + Math.random() * 640, y: 110 + Math.random() * 380, got: false,
-                                                                           icon: id === 'underbed' ? LOST_TOYS[k] : sp.item })) }) };
+                       items: Array.from({ length: sp.count }, (_, k) => { const p = reachablePoint(80 + Math.random() * 640, 110 + Math.random() * 380);
+                                                                           return { x: p.x, y: p.y, got: false, icon: id === 'underbed' ? LOST_TOYS[k] : sp.item }; }) }) };
 }
 
 function inRectXY(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
@@ -4506,7 +4980,7 @@ function paintJungle(g, R) {
 function drawNewPlaces() {
     const t = Date.now() / 1000, P = place();
     const label = (text, x, y, col = 'rgba(255,255,255,0.9)') => { ctx.fillStyle = col; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(text, x, y); };
-    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+    const verb = mainBtn();
     drawWorld2(t, P, label, verb);
     drawMagicPlaces(t, label, verb);
     drawHeroPlaces(t, label, verb);
@@ -4595,7 +5069,6 @@ function drawNewPlaces() {
             if (spikesUp()) { ctx.fillStyle = '#CCCCCC'; for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(sp.x + k * 7 - 4, sp.y); ctx.lineTo(sp.x + k * 7, sp.y - 14); ctx.lineTo(sp.x + k * 7 + 4, sp.y); ctx.fill(); } }
         }
         ctx.strokeStyle = '#3A7A1A'; ctx.lineWidth = 4;   // vines hanging over the pit
-        const swingA = P.swing ? Math.sin(P.swing.t * Math.PI) : 0;
         ctx.beginPath(); ctx.moveTo(400, 150); ctx.quadraticCurveTo(400, 240, P.swing ? player.x : 400 + Math.sin(t) * 10, P.swing ? player.y - 10 : 250); ctx.stroke();
         for (const v of VINES) { ctx.fillStyle = '#6A9A2A'; ctx.beginPath(); ctx.arc(v.x, v.y, 8, 0, Math.PI * 2); ctx.fill(); }
         const vi = nearVine();
@@ -4710,7 +5183,7 @@ function drawTreasureX() {
     ctx.beginPath(); ctx.moveTo(sp.x - 9, sp.y - 9); ctx.lineTo(sp.x + 9, sp.y + 9); ctx.moveTo(sp.x + 9, sp.y - 9); ctx.lineTo(sp.x - 9, sp.y + 9); ctx.stroke();
     if (d < 30) {
         ctx.fillStyle = '#FFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(`${lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE'}: Dig for treasure!`, sp.x, sp.y - 18);
+        ctx.fillText(`${mainBtn()}: Dig for treasure!`, sp.x, sp.y - 18);
     }
     ctx.restore();
 }
@@ -5055,12 +5528,12 @@ function drawHeaven() {
     ctx.fillStyle = '#7A5A10'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
     ctx.fillText(`Angel of Wishes — ${state.heavenWishes} wish${state.heavenWishes === 1 ? '' : 'es'} left`, WISH_ANGEL.x, WISH_ANGEL.y + 34);
     if (nearWishAngel() && !menu) {
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        const verb = mainBtn();
         drawSpeech(WISH_ANGEL, `${verb}: Make a wish! ✨`);
     }
     if (!state.buildMode) {
         ctx.fillStyle = 'rgba(90,70,20,0.75)'; ctx.font = 'bold 12px Arial';
-        ctx.fillText('No monsters up here — it heals you! Press B to build anything with UNLIMITED blocks.', 400, 590);
+        ctx.fillText(`No monsters up here — it heals you! ${byInput('Press B', 'Tap 🧱', 'Click the left stick')} to build anything with UNLIMITED blocks.`, 400, 590);
     }
 }
 
@@ -5171,7 +5644,8 @@ try { muted = localStorage.getItem('lop_muted') === '1'; } catch (e) {}
 const MUTE_BTN = { x: 26, y: 574, r: 16 };
 
 function initAudio() {
-    if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+    resumeGame();   // any real key press, click or tap means the kid is back (resumeGame ignores a hidden tab)
+    if (audioCtx) { if (audioCtx.state === 'suspended' && !paused) audioCtx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     audioCtx   = new AC();
@@ -5182,6 +5656,29 @@ function initAudio() {
     noiseBuf   = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.5, audioCtx.sampleRate);
     const data = noiseBuf.getChannelData(0);
     for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    if (audioCtx.state === 'suspended' && !paused) audioCtx.resume();   // (iOS makes a new context start asleep)
+}
+
+// ── FULL SCREEN ───────────────────────────────────────────────
+// Hides the browser bars on a phone. Not every browser can (iPhone Safari can't): then there is no button.
+const FULLSCREEN_BTN = { x: 616, y: 12, w: 172, h: 40 };   // on the title screen
+function fullscreenRoot() { return document.documentElement; }
+function fullscreenOK() {
+    const el = fullscreenRoot();
+    return !!(el && (el.requestFullscreen || el.webkitRequestFullscreen));
+}
+function inFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+    try {
+        if (inFullscreen()) {
+            (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+        } else {
+            const el = fullscreenRoot(), go = el.requestFullscreen || el.webkitRequestFullscreen;
+            const done = go.call(el);
+            // Android can also keep the phone sideways while the game is full screen
+            if (done && done.then) done.then(() => { try { screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} }).catch(() => {});
+        }
+    } catch (e) { /* a browser that says no: nothing happens */ }
 }
 
 function toggleMute() {
@@ -5221,6 +5718,7 @@ const SFX = {
     superHit: () => { tone(600, 0.1, 'square', 0.12, 1200); tone(900, 0.12, 'triangle', 0.15, 1800, 0.05); },
     defeat:   () => { noise(0.25, 0.3); tone(400, 0.25, 'sawtooth', 0.1, 60); },
     dig:      () => { noise(0.1, 0.35, 500); tone(90, 0.12, 'sine', 0.35, 50); },
+    rumble:   () => { noise(0.4, 0.3, 200); tone(60, 0.4, 'sawtooth', 0.2, 40); },
     found:    () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.15, 'square', 0.1, null, i * 0.08)),
     coin:     () => { tone(988, 0.06, 'square', 0.08); tone(1319, 0.2, 'square', 0.08, null, 0.06); },
     hurt:     () => tone(300, 0.3, 'sawtooth', 0.18, 80),
@@ -5242,6 +5740,8 @@ const SFX = {
     place:    () => { tone(200, 0.06, 'square', 0.15, 120); noise(0.05, 0.2, 800); },
     groan:    () => { tone(140, 0.6, 'sawtooth', 0.08, 90); },
     hiss:     () => noise(0.8, 0.25, 5000),
+    clink:    () => { tone(1500, 0.05, 'square', 0.1, 900); tone(700, 0.08, 'triangle', 0.12, 500, 0.03); },
+    stick:    () => { noise(0.08, 0.2, 1800); tone(260, 0.1, 'triangle', 0.18, 120); },
     whoosh:   () => { noise(0.2, 0.2, 2500); tone(300, 0.2, 'sine', 0.08, 900); },
     boom:     () => { noise(0.6, 0.5, 600); tone(80, 0.5, 'sawtooth', 0.3, 30); },
     magic:    () => [880, 1175, 1568, 2093].forEach((f, i) => tone(f, 0.12, 'sine', 0.12, null, i * 0.05)),
@@ -5329,7 +5829,7 @@ function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
 // Schedules the next few notes a little ahead of time so the music never stutters
 function musicTick() {
-    if (!audioCtx || muted || !settings.music) return;
+    if (!audioCtx || muted || !settings.music || paused) return;
     const playing = state.gamePhase === 'playing' && !state.won && !state.levelComplete;
     const songKey = state.room === ROOM.PARADISE && paradise.phase !== 'day' ? 'night' : state.room === ROOM.ARENA ? 'hell'
                   : ({ camp: 'mall', olympus: 'heaven', piratecove: 'ship', chess: 'mall', library: 'underground',
@@ -5390,13 +5890,15 @@ function settingsItems() {
           action: () => openMenu('🧩 MODS — change how the game works!', modItems) },
         { icon: '💾', name: 'Save Now', desc: 'The game also saves by itself', cost: 0, status: 'SAVE',
           action: () => { saveGame(); saveWorld(); showToast('💾 Saved!', '#88EEFF', 90); } },
+        ...(fullscreenOK() ? [{ icon: '⛶', name: 'Full Screen', desc: 'Hide the browser bars', cost: 0, status: inFullscreen() ? 'ON' : 'OFF', action: toggleFullscreen }] : []),
     ];
 }
 
+const SETTINGS_MENU_H = 470;   // taller than a normal menu: 13 items, in rows of two
 function openSettings() {
     if (state.gamePhase !== 'playing') return;
     if (menu) { menu = null; return; }
-    openMenu('⚙ SETTINGS', settingsItems);
+    openMenu('⚙ SETTINGS', settingsItems, { h: SETTINGS_MENU_H });
 }
 
 // ── TOASTS (big messages at the top of the screen) ───────────
@@ -5547,7 +6049,7 @@ const SAVE_FIELDS = ['level', 'lightCrystals', 'paradiseClearCount', 'power', 'p
                      'unlockedSkins', 'activeSkin', 'bubble', 'score', 'housesOwned', 'ammoBonus', 'ownedPets', 'activePet',
                      'ownedGadgets', 'gadget', 'hasDash', 'weaponLevel', 'inv', 'armor', 'diamondPickaxe',
                      'furniture', 'garden', 'lessons', 'hats', 'hat', 'petXp', 'placesSeen', 'gotStarterBlocks', 'treasure',
-                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt', 'mirrorShield', 'saberColor', 'heroSuit'];
+                     'spells', 'spell', 'mounts', 'mount', 'lastMount', 'bouncy', 'melee', 'ownedMelee', 'hogwarts', 'demigod', 'house', 'quest', 'questsDone', 'wand', 'wands', 'creature', 'creatureFood', 'trials', 'fleece', 'fullGod', 'gloop', 'petCostume', 'petCostumes', 'yard', 'magicGarden', 'farmAt', 'mirrorShield', 'saberColor', 'heroSuit', 'hotbar', 'job'];
 let savedGame = null;
 try { savedGame = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
 
@@ -5718,7 +6220,7 @@ function rollBirthLuck() {
         state.demigod = g.id; g.give(); giveAward('demigod'); sfx('found');
         showToast(`${g.icon} You are a DEMIGOD! ${g.who}`, '#FFD700', 420);
         spawnFloatText(400, 200, `🎁 Gift: ${g.gift}`, '#FFE680', 360);
-        spawnFloatText(400, 222, `${g.powers.map(p => p.icon + ' ' + p.name).join('  ·  ')}  (press T)`, '#FFE680', 360);
+        spawnFloatText(400, 222, `${g.powers.map(p => p.icon + ' ' + p.name).join('  ·  ')}  (${byInput('press T', 'tap the button', 'hold ⧉ + A')})`, '#FFE680', 360);
     }
     if (!state.hogwarts && Math.random() < BORN_WIZARD_CHANCE) {
         state.hogwarts = true; giveAward('hogwarts'); sfx('found');
@@ -5727,11 +6229,22 @@ function rollBirthLuck() {
     }
 }
 
+// "New Game" would erase the save, so ask first (a plain two-choice menu works with keys, taps and a controller)
+function askNewGame() {
+    if (!savedGame) { startFromIntro(true); return; }
+    openMenu('Start over? Your game will be erased.', () => [
+        { icon: '💾', name: 'Keep my game', desc: 'Go back', cost: 0, status: null, action: () => { menu = null; } },
+        { icon: '✦',  name: 'Start over',   desc: 'Erase it and begin again', cost: 0, status: null, action: () => { menu = null; startFromIntro(true); } },
+    ], { hint: byInput('Arrows + SPACE to choose', 'Tap to choose', 'A to choose, B to go back'), h: 190 });
+}
+
 function startFromIntro(fresh = false) {
     if (fresh || !savedGame) {
         if (fresh) { clearSave(); worldBlocks = {}; saveWorld(); }
         state.gamePhase = 'playing';
-        showToast('⛏ Like Minecraft: SPACE or left-click mines, B builds, right-click places blocks!', '#FFE066', 300);
+        showToast(byInput('⛏ Like Minecraft: SPACE or left-click mines, B builds, right-click places blocks!',
+                          '⛏ Like Minecraft: tap 🧱, then tap the ground to mine and place blocks!',
+                          '⛏ Like Minecraft: A mines, click the left stick to build and place blocks!'), '#FFE066', 300);
         rollBirthLuck();
         return;
     }
@@ -5747,11 +6260,13 @@ function startFromIntro(fresh = false) {
         for (const [k, v] of Object.entries({ dirt: 10, planks: 10, stone: 5, glass: 5 })) state.inv[k] = (state.inv[k] || 0) + v;
     }
     while (state.petXp.length < PETS.length) state.petXp.push(0);
+    state.hotbar = Math.max(0, Math.min(HOTBAR.length - 1, Math.floor(Number(state.hotbar)) || 0));   // old saves have none; a bad one must not crash the build code
     const cfg = LEVEL_CONFIGS[state.level - 1];
     state.ammoMax = cfg.ammoMax + state.ammoBonus;
     state.ammo    = state.ammoMax;
     hell = makeHell(); paradise = makeParadise(); voidRoom = makeVoidRoom();
     paradise.chests.forEach((c, i) => { if (i < state.paradiseClearCount) { c.visible = true; c.opened = true; } });
+    restoreJob();
     changeRoom(ROOM.VOID);
     showToast(`💾 Welcome back! Level ${state.level}, 🪙${state.coins}`, '#88EEFF');
     if (state.demigod === undefined) rollBirthLuck();   // saves from before this get one roll too
@@ -5780,6 +6295,7 @@ const BLOCKS = {
     leaves:     { name: 'Leaves',      hits: 1, drop: 'leaves'  },
     planks:     { name: 'Planks',      hits: 3, drop: 'planks'  },
     brick:      { name: 'Bricks',      hits: 4, drop: 'brick'   },
+    mazeStone:  { name: 'Maze Wall',   hits: 1, drop: null, unbreakable: true },   // only the maze uses it: never craftable, placeable or dropped
     glass:      { name: 'Glass',       hits: 1, drop: 'glass'   },
     gold:       { name: 'Gold Block',  hits: 4, drop: 'gold'    },
     cloud:      { name: 'Cloud',       hits: 1, drop: 'cloud'   },
@@ -5789,6 +6305,9 @@ const BLOCKS = {
     goldOre:    { name: 'Gold Ore',    hits: 5, drop: 'gold'    },
     diamondOre: { name: 'Diamond Ore', hits: 6, drop: 'diamond' },
 };
+const HARD_MSG_FRAMES = 60;   // "Too hard!" shows at most this often while you bash an unbreakable block
+let lastHardMsg = -999;
+function isUnbreakable(b) { return !!(b && BLOCKS[b.type] && BLOCKS[b.type].unbreakable); }
 const HOTBAR = ['dirt', 'grass', 'stone', 'log', 'planks', 'brick', 'glass', 'leaves', 'gold', 'cloud', 'tnt'];   // blocks you can place
 const MATERIALS = { iron: '⛓ Iron', diamond: '💎 Diamond' };
 const BUILD_REACH   = 170;    // how far away you can click to build
@@ -5820,6 +6339,52 @@ function solidAt(x, y) { return !!blockAtCell(Math.floor(x / CELL), Math.floor(y
 function playerHitsBlock(px, py) {
     for (const [ox, oy] of [[-8, -6], [8, -6], [-8, 16], [8, 16], [0, 5]]) if (solidAt(px + ox, py + oy)) return true;
     return false;
+}
+
+// ── REACHABLE PICKUPS (coins, hearts, eggs… must never land inside a wall or a sealed pocket) ──
+const PICKUP_BOUNDS   = { x0: 30, x1: 770, y0: 70, y1: 570 };   // the play area a pickup may sit in
+const PICKUP_SEARCH   = 60;    // random tries around the wanted spot, moving further away each time
+const PICKUP_STEP     = 4;     // px further out per try (so the search reaches about 240 px)
+let reachCache = { key: '', cells: null };
+
+// Cells the player can walk to from where they stand. Walls you can mine away don't
+// count as walls (you can always get through those); unbreakable ones do. Null = the room has none.
+function reachableCells() {
+    const blocks = roomBlocks();
+    if (!Object.values(blocks).some(isUnbreakable)) return null;
+    const sx = Math.floor(player.x / CELL), sy = Math.floor(player.y / CELL);
+    const key = `${frameNo}|${state.room}|${sx},${sy}|${Object.keys(blocks).length}`;
+    if (reachCache.key === key) return reachCache.cells;
+    const maxX = Math.ceil(800 / CELL), maxY = Math.ceil(600 / CELL), seen = new Set([cellKey(sx, sy)]), todo = [[sx, sy]];
+    while (todo.length) {
+        const [cx, cy] = todo.pop();
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = cx + dx, ny = cy + dy, k = cellKey(nx, ny);
+            if (nx < 0 || ny < 0 || nx > maxX || ny > maxY || seen.has(k) || isUnbreakable(blocks[k])) continue;
+            seen.add(k); todo.push([nx, ny]);
+        }
+    }
+    reachCache = { key, cells: seen };
+    return seen;
+}
+
+// A spot near (x, y) where the player can really walk up and pick something up:
+// inside the room, not in a block or a rock, and (in the maze) connected to the player.
+// Falls back to opts.fallback, then to the player's own spot.
+function reachablePoint(x, y, opts = {}) {
+    const B = PICKUP_BOUNDS, reach = reachableCells();
+    const ok = (px, py) => px >= B.x0 && px <= B.x1 && py >= B.y0 && py <= B.y1
+        && !playerHitsBlock(px, py) && !sceneryAt(px, py)
+        && (!reach || reach.has(cellKey(Math.floor(px / CELL), Math.floor(py / CELL))));
+    const cx = Math.max(B.x0, Math.min(B.x1, x)), cy = Math.max(B.y0, Math.min(B.y1, y));
+    if (ok(cx, cy)) return { x: cx, y: cy };
+    for (let i = 1; i <= PICKUP_SEARCH; i++) {
+        const a = Math.random() * Math.PI * 2, r = 6 + i * PICKUP_STEP;
+        const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+        if (ok(px, py)) return { x: px, y: py };
+    }
+    if (opts.fallback && ok(opts.fallback.x, opts.fallback.y)) return { x: opts.fallback.x, y: opts.fallback.y };
+    return { x: player.x, y: player.y };
 }
 
 // The starting blocks in each room: trees in Paradise, ores in Hell and the Underground
@@ -5859,6 +6424,35 @@ function isCreative() { return settings.creative || state.room === ROOM.HEAVEN; 
 function invCount(type) { return state.inv[type] || 0; }
 
 // Is it OK to put a block here? (not on you, portals, people, doors, chests or dig spots)
+// ── KEEP CLEAR: things you walk up to or into must never be buried under blocks ──
+// A lazy list (the constants live in sections further down the file). Doors, stairs and boats also
+// get a ring, because their trigger is "stand near it". Portals, NPCs, dig spots etc. are checked in canPlaceAt().
+const KEEP_CLEAR_R = 36;   // a block whose middle is closer than this to a spot is refused
+function keepClearSpots(room = state.room) {
+    const list = [], at = (rooms, o) => { if ([].concat(rooms).includes(room)) list.push(o); };
+    at(ROOM.VOID, ROCKET);  at(ROOM.SPACE, ROCKET);
+    at(ROOM.VOID, RACE_MASTER);  at(ROOM.VOID, CHART_SIGN);  at(ROOM.VOID, ARENA_GATE);  at(ROOM.ARENA, ARENA_EXIT);
+    at(ROOM.VOID, SHOP_BTN);  at(ROOM.VOID, AWARDS_BTN);   // the shop and awards spots (on-screen buttons: rectangles)
+    at(ROOM.VOID, MALL_DOOR);  at(ROOM.MALL, MALL_EXIT);  at(ROOM.TOY, TOY_EXIT);
+    at(ROOM.HOUSE, HOUSE_DOOR);
+    at(ROOM.HEAVEN, SKY_STAIRS);  at(ROOM.HEAVEN, BALLOON);  at(ROOM.CLOUDCITY, BALLOON);  at(ROOM.HEAVEN, ENDING_DOOR);  at(ROOM.HEAVEN, HEAVEN_OLYMPUS);
+    at(ROOM.SKY, { x: 400, y: 575 });
+    at(ROOM.GREECE, MAZE_DOOR);  at(ROOM.GREECE, GORGON_DOOR);  at(ROOM.GREECE, CHARON);
+    at([ROOM.GORGON, ROOM.UNDERWORLD, ROOM.CHESS, ROOM.LIBRARY], SCHOOL_EXIT);
+    at(ROOM.CAMP, CAMP_EXIT);  at(ROOM.CAMP, OLYMPUS_STAIRS);  at(ROOM.OLYMPUS, OLYMPUS_EXIT);
+    at([ROOM.STADIUM, ROOM.SNOWFORT], SUBPLACE_EXIT);
+    if (PLACES[room] && PLACES[room].island) list.push(DOCK);
+    for (const [id, sp] of Object.entries(SUBPLACES)) {   // every mini-world's door, and the way back out of it
+        if (sp.parent === room) list.push(sp.door);
+        if (id === room) list.push(SUBPLACE_EXIT);
+    }
+    return list;
+}
+function onKeepClearSpot(x, y) {
+    return keepClearSpots().some(o => o.w ? inRect(x, y, { x: o.x - CELL / 2, y: o.y - CELL / 2, w: o.w + CELL, h: o.h + CELL })
+                                          : Math.hypot(o.x - x, o.y - y) < KEEP_CLEAR_R);
+}
+
 function canPlaceAt(cx, cy) {
     const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
     if (x < 0 || x > 800 || y < 56 || y > 600) return false;
@@ -5873,6 +6467,7 @@ function canPlaceAt(cx, cy) {
     }
     if (state.room === ROOM.HELL) for (const d of hell.digSpots) if (Math.hypot(d.x - x, d.y - y) < 30) return false;
     if (state.room === ROOM.HEAVEN && Math.hypot(WISH_ANGEL.x - x, WISH_ANGEL.y - y) < 34) return false;
+    if (onKeepClearSpot(x, y)) return false;
     return true;
 }
 
@@ -5887,6 +6482,12 @@ function buildAt(cx, cy, aimX, aimY) {
     const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
     state.digAnim = 14;
     if (!b && mineScenery(aimX !== undefined ? aimX : x, aimY !== undefined ? aimY : y)) return;   // chop trees, mine rocks
+    if (b && isUnbreakable(b)) {   // maze walls: a clink and a short message, nothing breaks
+        sfx('clink');
+        spawnParticles(x, y, '#9A9AB0', 3);
+        if (frameNo - lastHardMsg >= HARD_MSG_FRAMES) { lastHardMsg = frameNo; spawnFloatText(x, y - 10, 'Too hard!', '#FFFFFF', 50); }
+        return;
+    }
     if (b) {
         b.hits++;
         const need = state.diamondPickaxe || isCreative() ? 1 : BLOCKS[b.type].hits;
@@ -6060,8 +6661,10 @@ let groundHoles = [];      // little holes you've dug (they fill back in)
 // Dig the ground when there's nothing to fight (or you don't have a weapon)
 function wouldDigGround() {
     if (state.gamePhase !== 'playing' || state.won || state.levelComplete || !GROUND[state.room]) return false;
-    const enemies = targetableEnemies().length > 0 || (state.room === ROOM.HELL && hell.devil.alive);
-    return state.power === POWER.NONE || !enemies;
+    // With the stick only close bad guys count (it only reaches a little); shots reach everywhere
+    const near = e => state.power !== POWER.NONE || Math.hypot(e.x - player.x, e.y - player.y) - e.r < STICK_ENGAGE;
+    const enemies = targetableEnemies().some(near) || (state.room === ROOM.HELL && hell.devil.alive && near(hell.devil));
+    return !enemies;
 }
 
 function tryDigGround() {
@@ -6112,7 +6715,7 @@ function blastBlocks(x, y, radius) {
             litTnt.push({ room: state.room, cx: ccx + dx, cy: ccy + dy, t: 12 });   // chain reaction!
             continue;
         }
-        if (b.type !== 'tnt') delete blocks[k];
+        if (b.type !== 'tnt' && !isUnbreakable(b)) delete blocks[k];
     }
     worldDirty = true;
 }
@@ -6124,7 +6727,7 @@ function updateBlocks() {
         if (--t.t > 0) continue;
         litTnt.splice(i, 1);
         const blocks = roomBlocks();
-        delete blocks[cellKey(t.cx, t.cy)];
+        if (!isUnbreakable(blocks[cellKey(t.cx, t.cy)])) delete blocks[cellKey(t.cx, t.cy)];
         const x = t.cx * CELL + CELL / 2, y = t.cy * CELL + CELL / 2;
         blastBlocks(x, y, 2);
         for (const e of targetableEnemies()) if (Math.hypot(e.x - x, e.y - y) < 85) damageEnemy(e, POWER.NONE, false, 2);
@@ -6138,7 +6741,7 @@ function updateBlocks() {
 const blockArt = {};
 function blockColor(type) {
     return { grass: '#5DA84A', dirt: '#8A5A34', stone: '#8A8A8A', log: '#7A5230', leaves: '#3F8F2F', planks: '#B88A50', brick: '#A0442E',
-             glass: '#BFE8FF', gold: '#F2C82E', cloud: '#FFFFFF', tnt: '#D23A2A', netherrack: '#7A2A26', ironOre: '#8A8A8A',
+             glass: '#BFE8FF', gold: '#F2C82E', cloud: '#FFFFFF', tnt: '#D23A2A', netherrack: '#7A2A26', mazeStone: '#3B3B4A', ironOre: '#8A8A8A',
              goldOre: '#7A2A26', diamondOre: '#8A8A8A' }[type];
 }
 function blockCanvas(type) {
@@ -6167,6 +6770,12 @@ function blockCanvas(type) {
     if (type === 'gold')  { g.fillStyle = '#FFF0A0'; g.fillRect(3, 3, 6, 3); g.fillStyle = '#C89A10'; g.fillRect(0, CELL - 3, CELL, 3); }
     if (type === 'cloud') { g.fillStyle = '#E8F4FF'; g.fillRect(0, CELL - 4, CELL, 4); }
     if (type === 'leaves'){ g.fillStyle = 'rgba(0,40,0,0.5)'; for (let i = 0; i < 8; i++) g.fillRect(Math.floor(R() * 8) * px, Math.floor(R() * 8) * px, px, px); }
+    if (type === 'mazeStone') {   // dark, heavy stone slabs with a pale edge and cracks: clearly not brick
+        g.fillStyle = '#23232E'; g.fillRect(0, 0, CELL, 3); g.fillRect(0, 11, CELL, 2); g.fillRect(0, 21, CELL, 3);
+        g.fillRect(8, 3, 2, 8); g.fillRect(16, 13, 2, 8);
+        g.fillStyle = '#5A5A70'; g.fillRect(1, 3, 6, 1); g.fillRect(11, 13, 5, 1); g.fillRect(1, 13, 6, 1);
+        g.strokeStyle = '#14141C'; g.lineWidth = 1; g.beginPath(); g.moveTo(14, 4); g.lineTo(12, 9); g.lineTo(15, 10); g.stroke();
+    }
     if (type === 'tnt')   { g.fillStyle = '#F2F2F2'; g.fillRect(0, 8, CELL, 8); g.fillStyle = '#222'; g.font = 'bold 8px Arial'; g.textAlign = 'center'; g.fillText('TNT', CELL / 2, 15); }
     if (type === 'ironOre')    spots('#D8B890', 6);
     if (type === 'goldOre')    spots('#FFD84A', 6);
@@ -6183,7 +6792,7 @@ function drawBlocks() {
         const x = cx * CELL, y = cy * CELL;
         ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x + 3, y + 3, CELL, CELL);   // little shadow
         ctx.drawImage(blockCanvas(b.type), x, y);
-        if (b.hits > 0) {   // cracks as you mine it
+        if (b.hits > 0 && !isUnbreakable(b)) {   // cracks as you mine it
             ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1.2;
             ctx.beginPath(); ctx.moveTo(x + 4, y + 5); ctx.lineTo(x + 11, y + 12); ctx.lineTo(x + 9, y + 19);
             if (b.hits > 1) { ctx.moveTo(x + 11, y + 12); ctx.lineTo(x + 19, y + 9); }
@@ -6197,8 +6806,8 @@ function drawBlocks() {
     }
     if (!state.buildMode && !menu) {   // walked up to something you can chop or mine
         const m = nearbyMineable();
-        if (m) {
-            const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        if (m && !(m.cx !== undefined && isUnbreakable(blockAtCell(m.cx, m.cy)))) {   // (no invitation to mine maze walls)
+            const verb = mainBtn();
             const o = m.scenery, x = o ? o.x : m.cx * CELL + CELL / 2, y = o ? o.y - o.r - 14 : m.cy * CELL - 6;
             const what = o ? (o.kind === 'tree' ? '🪓 Chop the tree' : '⛏ Mine the rock') : `⛏ Mine the ${BLOCKS[blockAtCell(m.cx, m.cy).type].name}`;
             ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
@@ -6215,7 +6824,7 @@ function drawBlocks() {
             ctx.strokeStyle = '#FFFFFF';
             ctx.beginPath(); ctx.arc(sc.x, sc.kind === 'tree' ? sc.y - sc.r * 0.2 : sc.y, sc.r + 6, 0, Math.PI * 2); ctx.stroke();
             ctx.setLineDash([]);
-            ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+            ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
             ctx.fillText(sc.kind === 'tree' ? '🪓 Chop!' : '⛏ Mine!', sc.x, sc.y - sc.r - 14);
         } else {
             ctx.strokeStyle = blockAtCell(cx, cy) ? '#FFFFFF' : canPlaceAt(cx, cy) ? '#FFE066' : '#FF6666';
@@ -6223,18 +6832,48 @@ function drawBlocks() {
         }
         ctx.setLineDash([]);
     }
+    if (buildFlash && state.buildMode) {   // the spot a finger just tapped
+        if (--buildFlash.t <= 0) buildFlash = null;
+        else {
+            ctx.globalAlpha = Math.min(1, buildFlash.t / 10);
+            ctx.strokeStyle = buildFlash.ok ? '#FFFFFF' : '#FF6666'; ctx.lineWidth = 3;
+            ctx.strokeRect(buildFlash.cx * CELL + 1, buildFlash.cy * CELL + 1, CELL - 2, CELL - 2);
+            ctx.globalAlpha = 1;
+        }
+    }
 }
 
 // Minecraft-style hotbar along the bottom while building
+// Bigger slots on a phone (a finger taps them); they shrink to fit between the joystick and the buttons
+const HOTBAR_W_MIN = 34, HOTBAR_W_MAX = 52;
+function hotbarGeom() {
+    const n = HOTBAR.length;
+    let left = 0, right = GAME_W;
+    if (usesTouchLayout()) {   // keep clear of the stick (left) and the punch / block buttons (right) when they sit over the picture
+        if (layoutDirty) layoutTouch();
+        left  = Math.max(0, VJOY.x + joyGrabR());
+        right = Math.min(GAME_W, VBLOCK.x - VBLOCK.r - TOUCH_GAP);
+    }
+    const W = usesTouchLayout() ? Math.max(HOTBAR_W_MIN, Math.min(HOTBAR_W_MAX, Math.floor((right - left - 12) / n))) : HOTBAR_W_MIN;
+    const mid = usesTouchLayout() ? (left + right) / 2 : GAME_W / 2;
+    return { n, W, x0: Math.round(mid - (n * W) / 2), y0: 580 - W };
+}
+function hotbarPanel() { const { n, W, x0, y0 } = hotbarGeom(); return { x: x0 - 6, y: y0 - 26, w: n * W + 12, h: W + 32 }; }
+function hotbarSlotAt(x, y) {
+    const { n, W, x0, y0 } = hotbarGeom();
+    if (y < y0 || y > y0 + W || x < x0 || x >= x0 + n * W) return -1;
+    return Math.floor((x - x0) / W);
+}
 function drawHotbar() {
     if (!state.buildMode) return;
-    const n = HOTBAR.length, W = 34, x0 = 400 - (n * W) / 2, y0 = 548;
+    const { n, W, x0, y0 } = hotbarGeom(), panel = hotbarPanel();
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(x0 - 6, y0 - 26, n * W + 12, W + 32);
-    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-    const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap BUILD' : 'SPACE / click';
-    const cyc  = lastInput === 'pad' ? 'B' : lastInput === 'touch' ? '🔄' : 'Q or 1-9';
-    ctx.fillText(`🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${verb}: place / mine / chop trees   ${cyc}: pick block`, 400, y0 - 12);
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
+    ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+    const hint = lastInput === 'touch'
+        ? `🧱 BUILD MODE${isCreative() ? ' — ∞ BLOCKS!' : ''}   Tap the ground: mine / place   🔄 next block   ⚔ fight`
+        : `🧱 BUILD MODE${isCreative() ? ' — ∞ UNLIMITED BLOCKS!' : ''}   ${keyName('SPACE / click', 'A')}: place / mine / chop trees   ${keyName('Q or 1-9', 'B')}: pick block`;
+    ctx.fillText(hint, panel.x + panel.w / 2, y0 - 10);
     HOTBAR.forEach((type, i) => {
         const x = x0 + i * W, count = invCount(type);
         ctx.fillStyle = i === state.hotbar ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.08)';
@@ -6244,12 +6883,12 @@ function drawHotbar() {
         ctx.globalAlpha = 1;
         ctx.strokeStyle = i === state.hotbar ? '#FFFFFF' : '#555'; ctx.lineWidth = i === state.hotbar ? 2.5 : 1;
         ctx.strokeRect(x, y0, W - 2, W - 2);
-        ctx.fillStyle = '#FFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'right';
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'right';
         ctx.fillText(isCreative() ? '∞' : String(count), x + W - 5, y0 + W - 5);
     });
     const mats = Object.keys(MATERIALS).filter(m => invCount(m) > 0).map(m => `${MATERIALS[m]} ${invCount(m)}`).join('   ');
-    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = '10px Arial';
-    ctx.fillText(`${BLOCKS[HOTBAR[state.hotbar]].name}${mats ? '   ·   ' + mats : ''}${state.diamondPickaxe ? '   ·   ⛏ Diamond Pickaxe' : ''}`, 400, y0 + W + 6);
+    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = '12px Arial';
+    ctx.fillText(`${BLOCKS[HOTBAR[state.hotbar]].name}${mats ? '   ·   ' + mats : ''}${state.diamondPickaxe ? '   ·   ⛏ Diamond Pickaxe' : ''}`, panel.x + panel.w / 2, y0 + W + 4);
     ctx.restore();
 }
 
@@ -6371,12 +7010,13 @@ function damagePlayer() {
 // loops over the room's projectiles and enemies, and changeRoom() replaces
 // those arrays, so switching rooms mid-loop crashed the game (a frozen screen).
 let pendingRespawn = false;
+const RESPAWN_SAFE_FRAMES = 120;   // a little longer than a room entry: you also lost your weapons
 function respawnPlayer() {
     const maxHp = fullHearts();
     state.power           = POWER.NONE;
     state.powerTier       = 1;
     state.playerHp        = maxHp;
-    state.playerInvincible = 120;
+    state.playerInvincible = RESPAWN_SAFE_FRAMES;
     pendingRespawn = true;
 }
 
@@ -6484,6 +7124,8 @@ function spawnAmbush() {
     sfx('worm');
 }
 
+const ENTRY_SAFE_FRAMES   = 90;    // 1.5 s nobody can hurt you after walking into a room (a monster may be standing at the door)
+const ENTRY_SAFE_DISTANCE = 120;   // monsters in a fresh mini-world start at least this far from where you arrive
 function changeRoom(dest) {
     if (state.gamePhase === 'playing') sfx('portal');
     state.room = dest;
@@ -6532,6 +7174,7 @@ function changeRoom(dest) {
     if (PLACES[dest]) {
         placeState[dest] = PLACES[dest].make();
         [player.x, player.y] = PLACES[dest].spawn;
+        keepMonstersAwayFromArrival(placeState[dest].enemies);
         if (dest !== ROOM.SHIP) {
             state.placesSeen = state.placesSeen || {};
             state.placesSeen[dest] = true;
@@ -6544,6 +7187,19 @@ function changeRoom(dest) {
     placePetBesidePlayer();
     for (const f of activeFriends()) { f.x = player.x + 30 * (f.n - 1); f.y = player.y; }   // friends come along through portals
     if (state.gamePhase === 'playing') maybeMiniBoss();
+    state.playerInvincible = Math.max(state.playerInvincible, ENTRY_SAFE_FRAMES);
+}
+
+// Slide any monster that starts too close to the arrival point straight away from it (inside the room)
+function keepMonstersAwayFromArrival(list) {
+    for (const e of list || []) {
+        let dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy);
+        if (d >= ENTRY_SAFE_DISTANCE) continue;
+        if (d < 1) { dx = 0; dy = -1; d = 1; }   // exactly on top of you: up
+        const nx = Math.max(40, Math.min(760, player.x + dx / d * ENTRY_SAFE_DISTANCE)), ny = Math.max(80, Math.min(560, player.y + dy / d * ENTRY_SAFE_DISTANCE));
+        if (e.home) { e.home.x += nx - e.x; e.home.y += ny - e.y; }   // its patrol spot moves with it
+        e.x = nx; e.y = ny;
+    }
 }
 
 // ── UPDATE: PLAYER ────────────────────────────────────────────
@@ -6726,13 +7382,13 @@ function roomCoins() {
 function dropLoot(e) {
     const count = (e.coinDrop || COINS_PER_KILL) * (mod('doubleCoins') ? 2 : 1);
     for (let i = 0; i < count; i++) {
-        roomCoins().push({
-            x: Math.max(30, Math.min(770, e.x + (Math.random() - 0.5) * 16 * count)),
-            y: Math.max(70, Math.min(570, e.y + (Math.random() - 0.5) * 16 * count)),
-            picked: false,
-        });
+        const p = reachablePoint(e.x + (Math.random() - 0.5) * 16 * count, e.y + (Math.random() - 0.5) * 16 * count, { fallback: e });
+        roomCoins().push({ x: p.x, y: p.y, picked: false });
     }
-    if (Math.random() < HEART_DROP_CHANCE) heartPickups.push({ x: e.x + 12, y: e.y, life: 600 });
+    if (Math.random() < HEART_DROP_CHANCE) {
+        const p = reachablePoint(e.x + 12, e.y, { fallback: e });
+        heartPickups.push({ x: p.x, y: p.y, life: 600 });
+    }
 }
 
 // Some mornings it's somebody's birthday!
@@ -6835,6 +7491,12 @@ function updateRoomEnemies() {
         if (e.slip > 0) e.slip--;
         if (e.stun > 0) { e.stun--; if (e.hitFlash > 0) e.hitFlash--; continue; }   // seeing stars
         if (!e.alive) continue;
+        if (e.warn > 0) {   // a mole's warning: rumbling mound
+            e.warn--;
+            if (e.warn % 30 === 0 && e.warn > 0) sfx('rumble');
+            if (Math.random() < 0.5) spawnParticles(e.x, e.y + 6, '#6B3E1E', 1);
+            continue;
+        }
         if (e.emerge > 0) {
             e.emerge--;
             if (Math.random() < 0.4) spawnParticles(e.x, e.y + 8, '#6B3E1E', 1);
@@ -7151,8 +7813,10 @@ function moveEnemy(e) {
     } else if (e.type === 'mole') {
         // Chases the player — even inside caves (they live underground!)
         const a = Math.atan2(player.y - e.y, player.x - e.x);
-        e.x += Math.cos(a) * e.speed;
-        e.y += Math.sin(a) * e.speed;
+        const sp = e.speed * (e.slowStart > 0 ? MOLE_SLOW_FACTOR : 1);
+        if (e.slowStart > 0) e.slowStart--;
+        e.x += Math.cos(a) * sp;
+        e.y += Math.sin(a) * sp;
     } else if (e.type === 'fire') {
         e.x += e.dx; e.y += e.dy;
     } else if (e.type === 'ghost') {
@@ -7340,10 +8004,11 @@ function updateEnemyProjectiles() {
 
 // ── UPDATE: SHOOTING ──────────────────────────────────────────
 function shoot() {
-    if (state.won || state.levelComplete || state.power === POWER.NONE || state.room === ROOM.VOID) return;
+    if (state.won || state.levelComplete || state.room === ROOM.VOID) return;
+    if (state.power === POWER.NONE) { stickSwing(); return; }   // no element yet: swing the stick
     lastP1Shot = Date.now(); tryTeamUp();
     if (fight.blocking) return;
-    if (state.ammoReloading || state.ammo <= 0) return;
+    if (state.ammoReloading || state.ammo <= 0) { stickSwing(); return; }   // reloading: the stick is better than nothing
 
     const enemies = [];
     enemies.push(...targetableEnemies());
@@ -7474,20 +8139,50 @@ function canDig() {
 }
 
 function powerName(power = state.power, tier = state.powerTier) {
-    if (power === POWER.NONE)    return 'None';
+    if (power === POWER.NONE)    return 'Smiting Stick';
     if (power === POWER.RAINBOW) return 'Rainbow';
     return tier >= 2 ? `Super ${power}` : power;
 }
 
+// Finds a place for the mole to come up: far from the player, in the room, and
+// preferably in (or at the edge of) the player's cave so they can see it (you only
+// see inside the cave while hiding), then in the other cave, then anywhere
+const MOLE_EDGE_PAD = 45;   // px around a cave still counts as "at the edge"
+function moleSpawnPoint(s) {
+    const farEnough = (x, y) => Math.hypot(x - player.x, y - player.y) >= MOLE_MIN_DIST;
+    const ownCave = HELL_CAVES.find(c => s.x >= c.x && s.x <= c.x + c.w && s.y >= c.y && s.y <= c.y + c.h);
+    const around = c => {
+        const out = [];
+        for (let i = 0; i < 40; i++) {
+            const x = c.x - MOLE_EDGE_PAD + Math.random() * (c.w + 2 * MOLE_EDGE_PAD), y = c.y - MOLE_EDGE_PAD + Math.random() * (c.h + 2 * MOLE_EDGE_PAD);
+            if (x >= 40 && x <= 760 && y >= 80 && y <= 560 && farEnough(x, y)) out.push({ x, y });
+        }
+        return out;
+    };
+    const own = ownCave ? around(ownCave) : [];
+    const other = HELL_CAVES.filter(c => c !== ownCave).flatMap(around);
+    const anywhere = [];
+    for (let i = 0; i < 40; i++) {
+        const x = 40 + Math.random() * 720, y = 80 + Math.random() * 480;
+        if (farEnough(x, y)) anywhere.push({ x, y });
+    }
+    const list = own.length ? own : other.length ? other : anywhere;
+    if (list.length) return list[Math.floor(Math.random() * list.length)];
+    // Nothing found (very unlikely): the far side of the room from the player
+    return { x: player.x < 400 ? 700 : 100, y: player.y < 300 ? 500 : 100 };
+}
+
 function spawnMole(s) {
-    // Pops out a little way from the player so it doesn't hit them straight away
-    const a = Math.random() * Math.PI * 2;
+    const p = moleSpawnPoint(s);
     hell.enemies.push({
-        type: 'mole', x: s.x + Math.cos(a) * 45, y: s.y + Math.sin(a) * 45, alive: true,
+        type: 'mole', x: p.x, y: p.y, alive: true,
         r: 13 + s.depth * 2, hp: s.depth * 2 + 1, maxHp: s.depth * 2 + 1, hitFlash: 0, frozen: 0,
         speed: 0.8 + s.depth * 0.25,
-        emerge: 45,   // frames spent climbing out (harmless while emerging)
+        warn: MOLE_WARN_FRAMES,        // shaking mound first (can't hurt or be hurt)
+        emerge: MOLE_EMERGE_FRAMES,    // then climbs out (still harmless)
+        slowStart: MOLE_SLOW_FRAMES,   // then walks slowly for a moment
     });
+    sfx('rumble');
 }
 
 function nearbyGem() {
@@ -8024,7 +8719,7 @@ function drawGadgets() {
 }
 
 // A clickable BUILD button that also shows which block you're holding
-const BUILD_BTN = { x: 272, y: 5, w: 86, h: 22 };   // in the top bar
+const BUILD_BTN = { x: 248, y: 5, w: 118, h: 22 };   // in the top bar
 function drawBuildButton() {
     if (lastInput === 'touch' || state.gamePhase !== 'playing' || state.won || state.levelComplete) return;
     const b = BUILD_BTN, type = HOTBAR[state.hotbar];
@@ -8033,25 +8728,26 @@ function drawBuildButton() {
     ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.strokeStyle = '#FFE066'; ctx.lineWidth = 1.5; ctx.strokeRect(b.x, b.y, b.w, b.h);
     ctx.drawImage(blockCanvas(type), b.x + 3, b.y + 3, 16, 16);
-    ctx.fillStyle = state.buildMode ? '#222' : '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText(`BUILD (B) ${isCreative() ? '∞' : '×' + invCount(type)}`, b.x + 22, b.y + b.h / 2 + 1);
+    ctx.fillStyle = state.buildMode ? '#222' : '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(`BUILD (${keyName('B', 'L3')}) ${isCreative() ? '∞' : '×' + invCount(type)}`, b.x + 22, b.y + b.h / 2 + 1);
     ctx.restore();
 }
 
-// Little gadget + dash icons in the bottom-left corner
+// Little gadget + dash icons in the bottom-left corner (keyboard and controller: on a phone the real buttons are in the side margins)
 function drawGadgetHud() {
+    if (lastInput === 'touch') return;
     const slots = [];
     if (state.gadget) {
         const g = GADGETS.find(g => g.id === state.gadget);
-        slots.push({ icon: g.icon, key: lastInput === 'pad' ? 'B' : 'Q', cd: state.gadgetCooldown / g.cooldown });
+        slots.push({ icon: g.icon, key: keyName('Q', 'B'), cd: state.gadgetCooldown / g.cooldown });
     }
-    if (state.hasDash) slots.push({ icon: '💨', key: lastInput === 'pad' ? 'LT' : '⇧', cd: state.dashCooldown / DASH_COOLDOWN });
+    if (state.hasDash) slots.push({ icon: '💨', key: keyName('⇧', 'LT'), cd: state.dashCooldown / DASH_COOLDOWN });
     if (state.spell) {
         const sp = SPELLS.find(x => x.id === state.spell);
-        slots.push({ icon: sp.icon, key: lastInput === 'pad' ? 'X' : 'R', cd: state.spellCooldown / sp.cooldown });
+        slots.push({ icon: sp.icon, key: keyName('R', 'X'), cd: state.spellCooldown / sp.cooldown });
     }
     const gp = nextGodPower();
-    if (gp) slots.push({ icon: gp.icon, key: lastInput === 'pad' ? 'BACK' : 'T', cd: state.godCooldown / gp.cd });
+    if (gp) slots.push({ icon: gp.icon, key: keyName('T', 'BACK'), cd: state.godCooldown / gp.cd });
     slots.forEach((sl, i) => {
         const x = 70 + i * 40, y = 574;
         ctx.save();
@@ -8063,7 +8759,7 @@ function drawGadgetHud() {
         ctx.strokeStyle = sl.cd > 0 ? '#777' : '#FFD700'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.stroke();
         ctx.font = '15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#FFF';
         ctx.fillText(sl.icon, x, y + 1);
-        if (lastInput !== 'touch') { ctx.font = 'bold 8px Arial'; ctx.fillText(sl.key, x + 12, y - 12); }
+        ctx.font = 'bold 8px Arial'; ctx.fillText(sl.key, x + 12, y - 12);
         ctx.restore();
     });
 }
@@ -8149,9 +8845,8 @@ function drawRace() {
         ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 60px Arial';
         ctx.fillText(String(Math.ceil(race.countdown / 60)), 400, 330);
     } else if (!race.winner) {
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'TAP' : 'SPACE';
         ctx.fillStyle = Math.floor(Date.now() / 200) % 2 ? '#FFE066' : '#FFFFFF'; ctx.font = 'bold 18px Arial';
-        ctx.fillText(`Press ${verb} as fast as you can to cheer your pet on!`, 400, 496);
+        ctx.fillText(`${byInput('Press SPACE', 'Tap', 'Press A')} as fast as you can to cheer your pet on!`, 400, 496);
     } else {
         ctx.fillStyle = '#FFD700'; ctx.font = 'bold 26px Arial';
         ctx.fillText(race.winner.you ? '🏆 YOU WIN! +50 pet XP' : `${PETS[race.winner.pet].name} wins!`, 400, 496);
@@ -8279,7 +8974,7 @@ function startWizardDuel() {
     const w = e0('wizard', Math.min(740, player.x + 220), Math.max(120, player.y - 80), { r: 26, coinDrop: 30, teleTimer: 150, spellTimer: 100, emerge: 0 });
     w.hp = w.maxHp = 20;
     list.push(w);
-    showToast('⚔ WIZARD DUEL! Use your spells! (R / X / ✨)', '#CC99FF', 200); sfx('laugh');
+    showToast(`⚔ WIZARD DUEL! Use your spells! (${byInput('R', '✨', 'X')})`, '#CC99FF', 200); sfx('laugh');
 }
 
 // 🧪 Potions: mix blocks you've mined
@@ -8311,7 +9006,7 @@ function spellClassItems() {
         status: state.spell === sp.id ? 'HOLDING' : state.spells[sp.id] ? 'LEARNED — pick' : null,
         action: () => {
             if (state.spells[sp.id]) { state.spell = sp.id; return; }
-            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} You learned ${sp.name}! Cast it with R / X / ✨`); giveAward('wizard'); }
+            if (spend(sp.cost)) { state.spells[sp.id] = true; state.spell = sp.id; showToast(`${sp.icon} You learned ${sp.name}! Cast it with ${byInput('R', '✨', 'X')}`); giveAward('wizard'); }
         },
     }));
 }
@@ -8434,7 +9129,7 @@ function gadgetItems(page = 0) {
                  status: state.gadget === g.id ? 'HOLDING' : owned ? 'OWNED — pick' : null,
                  action: () => {
                      if (owned) { state.gadget = g.id; return; }
-                     if (spend(g.cost)) { state.ownedGadgets[g.id] = true; state.gadget = g.id; showToast(`${g.icon} ${g.name}! Use it with Q / B / ⚙`); }
+                     if (spend(g.cost)) { state.ownedGadgets[g.id] = true; state.gadget = g.id; showToast(`${g.icon} ${g.name}! Use it with ${byInput('Q', '⚙', 'B')}`); }
                  } };
     });
     if (GADGETS.length > (page + 1) * GADGETS_PER_PAGE)
@@ -8455,26 +9150,34 @@ function meleeItems() {
                          if (spend(m.cost)) {
                              state.ownedMelee[m.id] = true; state.melee = m.id; giveAward('weaponMaster');
                              if (m.id === 'lightsaber') state.saberColor = Math.floor(Math.random() * SABER_COLORS.length);
-                             showToast(`${m.icon} ${m.name.toUpperCase()}! Swing it with J / RB / 👊`);
+                             showToast(`${m.icon} ${m.name.toUpperCase()}! Swing it with ${byInput('J', '👊', 'RB')}`);
                          }
                      } });
     }
     items.push({ icon: '🪞', name: 'Mirror Shield', desc: 'Blocking bounces bullets back at monsters!', cost: 50, status: state.mirrorShield ? 'OWNED' : null,
-                 action: () => { if (!state.mirrorShield && spend(50)) { state.mirrorShield = true; showToast('🪞 MIRROR SHIELD! Block (X / LB) to bounce bullets back!', '#AADDFF', 220); } } });
+                 action: () => { if (!state.mirrorShield && spend(50)) { state.mirrorShield = true; showToast(`🪞 MIRROR SHIELD! Block (${byInput('X', '🛡', 'LB')}) to bounce bullets back!`, '#AADDFF', 220); } } });
     items.push({ icon: '⬅', name: 'Back', desc: 'Back to the Forge', cost: 0, status: 'BACK', action: () => openMenu("🔨 THE BLACKSMITH'S FORGE", forgeItems) });
     return items;
 }
 
 function drawMenu() {
     if (!menu) return;
-    const { X, Y, W, H } = MENU;
+    const { X, Y, W } = MENU, H = menu.h;
     ctx.save();
     ctx.fillStyle = 'rgba(12,8,24,0.97)'; ctx.fillRect(X, Y, W, H);
     ctx.strokeStyle = '#FFB347'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
     ctx.fillStyle = '#FFB347'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
     ctx.fillText(menu.title, 400, Y + 26);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px Arial';
-    ctx.fillText(`Your coins: 🪙${state.coins}   ·   ${lastInput === 'pad' ? 'A to buy, B to close' : lastInput === 'touch' ? 'Tap to buy, tap the title to close' : 'Arrows + SPACE (or click) to buy, E to close'}`, 400, Y + 44);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '12px Arial';
+    const costs = menu.items().some(it => it.cost > 0);   // the coin count only matters where something costs coins
+    const keysHint = costs ? byInput('Arrows + SPACE (or click) to buy, E to close', 'Tap to buy, ✕ to close', 'A to buy, B to close')
+                           : byInput('Arrows + SPACE (or click) to choose, E to close', 'Tap to choose, ✕ to close', 'A to choose, B to close');
+    ctx.fillText(menu.hint || (costs ? `Your coins: 🪙${state.coins}   ·   ${keysHint}` : keysHint), 400, Y + 44);
+    ctx.beginPath(); ctx.arc(MENU_CLOSE.x, MENU_CLOSE.y, MENU_CLOSE.r, 0, Math.PI * 2);   // ✕ close button
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill(); ctx.strokeStyle = '#FFB347'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath();
+    for (const dir of [-1, 1]) { ctx.moveTo(MENU_CLOSE.x - 6, MENU_CLOSE.y - 6 * dir); ctx.lineTo(MENU_CLOSE.x + 6, MENU_CLOSE.y + 6 * dir); }
+    ctx.stroke();
     menu.items().forEach((it, i) => {
         const r = menuItemRect(i);
         const cursor = i === menu.cursor && lastInput !== 'touch';
@@ -8482,14 +9185,27 @@ function drawMenu() {
         ctx.fillRect(r.x, r.y, r.w, r.h);
         ctx.strokeStyle = cursor ? '#FFFFFF' : it.status ? '#C8A040' : '#444'; ctx.lineWidth = cursor ? 2.5 : 1;
         ctx.strokeRect(r.x, r.y, r.w, r.h);
+        if (menu.wide) {   // icon, a bold name, then the wrapped text under it
+            ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
+            ctx.fillText(it.icon, r.x + 28, r.y + r.h / 2 + 8);
+            ctx.textAlign = 'left'; ctx.fillStyle = '#FFE8B0'; ctx.font = 'bold 14px Arial';
+            ctx.fillText(it.name, r.x + MENU_WIDE.TEXT_X, r.y + 17);
+            ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = '12px Arial';
+            wideDescLines(it).forEach((line, k) => ctx.fillText(line, r.x + MENU_WIDE.TEXT_X, r.y + MENU_WIDE.HEAD + 11 + k * MENU_WIDE.LINE));
+            return;
+        }
         ctx.font = '24px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#FFF';
-        ctx.fillText(it.icon, r.x + 28, r.y + 40);
+        ctx.fillText(it.icon, r.x + 28, r.y + r.h / 2 + 8);
         ctx.textAlign = 'left';
-        ctx.fillStyle = '#FFE8B0'; ctx.font = 'bold 13px Arial'; ctx.fillText(it.name, r.x + 56, r.y + 20);
-        ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.font = '10px Arial'; ctx.fillText(it.desc, r.x + 56, r.y + 36);
-        ctx.font = 'bold 11px Arial';
+        const tx = r.x + 54, tw = r.w - 58, off = (r.h - 54) / 2;
+        ctx.font = '12px Arial';
+        const desc = wrapText(it.desc, tw, 2), two = desc.length > 1;   // a long description takes two lines
+        ctx.fillStyle = '#FFE8B0'; fitText(it.name, tx, r.y + off + (two ? 13 : 19), tw, two ? 13 : 14, true);
+        ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '12px Arial';
+        desc.forEach((line, k) => ctx.fillText(line, tx, r.y + off + (two ? 26 : 34) + k * 12, tw));
         ctx.fillStyle = it.status ? '#FFD700' : state.coins >= (it.cost || 0) ? '#FFD700' : '#886';
-        ctx.fillText(it.status ? '✓ ' + it.status : it.cost ? `🪙${it.cost}` : 'Need more…', r.x + 56, r.y + 53);
+        ctx.font = 'bold 12px Arial';
+        ctx.fillText(it.status ? '✓ ' + it.status : it.cost ? `🪙${it.cost}` : '', tx, r.y + off + (two ? 51 : 50), tw);
     });
     ctx.restore();
 }
@@ -8551,13 +9267,23 @@ function startJob(job) {
     if (job.kind === 'apples') {
         paradise.apples = [];
         for (let i = 0; i < job.count; i++) {
-            paradise.apples.push({ x: 60 + Math.random() * 680, y: 260 + Math.random() * 170 });
+            paradise.apples.push(reachablePoint(60 + Math.random() * 680, 260 + Math.random() * 170));
         }
     }
     if (job.kind === 'water') {
         const crops = [...paradise.crops].sort(() => Math.random() - 0.5);
         crops.forEach((c, i) => { c.thirsty = i < job.count; });
     }
+}
+
+// A saved job comes back only if it is whole; startJob() puts the apples and thirsty crops back in the town
+const JOB_KINDS = ['deliver', 'water', 'fish', 'apples'];
+function restoreJob() {
+    const j = state.job;
+    const ok = j && typeof j === 'object' && JOB_KINDS.includes(j.kind) && typeof j.giver === 'string' && Number.isFinite(j.pay)
+               && (j.kind === 'deliver' ? Array.isArray(j.stops) && j.stops.length > 0 : Number.isFinite(j.count) && Number.isFinite(j.got));
+    if (!ok) { state.job = null; return; }
+    startJob(j);
 }
 
 // What pressing the button will do, shown above the townsperson
@@ -9047,14 +9773,23 @@ function drawIntro() {
             ctx.strokeStyle = `rgba(255,255,80,${pulse})`; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
             ctx.fillStyle = '#FFFF80'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
             ctx.fillText(label, b.x + b.w / 2, b.y + 24);
-            ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '10px Arial';
-            ctx.fillText(sub, b.x + b.w / 2, b.y + b.h + 13);
+            ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '12px Arial';
+            ctx.fillText(sub, b.x + b.w / 2, b.y + b.h + 15);
         }
     }
 
+    if (fullscreenOK() && usesTouchLayout()) {   // ⛶ full screen, for phones
+        const b = FULLSCREEN_BTN;
+        ctx.fillStyle = 'rgba(30,20,70,0.9)'; ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 15px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(inFullscreen() ? '⛶ Exit full screen' : '⛶ Full screen', b.x + b.w / 2, b.y + b.h / 2 + 1);
+        ctx.textBaseline = 'alphabetic';
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = '11px Arial';
-    ctx.fillText('Move: WASD / Arrows  |  Shoot: Space  |  Dance: G  |  Fart: F  |  Mystery portals go anywhere!', 400, 562);
+    ctx.fillText(usesTouchLayout() ? 'Move: left stick  |  Shoot: big button  |  Mystery portals go anywhere!'
+                                   : 'Move: WASD / Arrows  |  Shoot: Space  |  Dance: G  |  Fart: F  |  Mystery portals go anywhere!', 400, 562);
 }
 
 // ── DRAW: PORTALS ─────────────────────────────────────────────
@@ -9092,7 +9827,7 @@ function drawGoldenPortal() {
     }
     ctx.restore();
     if (d < SECRET_REVEAL_DIST) {
-        ctx.fillStyle = '#FFE066'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
         ctx.fillText('✨ SECRET! ✨', x, y + PORTAL_R + 18);
     }
 }
@@ -9185,9 +9920,53 @@ function drawRaceMaster() {
     ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
     ctx.fillText('🏁 Race Master', x, y + 30);
     if (nearRaceMaster()) {
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        const verb = mainBtn();
         drawSpeech({ x, y }, `${verb}: Start a race! 🏁`);
     }
+}
+
+// ── THE WEAPON CHART (a sign in the Void): which weapon beats which bad guy ──
+function nearChartSign() {
+    return state.room === ROOM.VOID && !state.shopOpen && !state.buildMode && Math.hypot(player.x - CHART_SIGN.x, player.y - CHART_SIGN.y) < 44;
+}
+
+// "Fire Monster" → "Fire Monsters", "Mummy" → "Mummies", "The Kraken" → "Krakens"
+function monsterPlural(name) {
+    const n = name.replace(/^The /, '');
+    if (n === 'Shadow You') return n;
+    if (/man$/.test(n)) return n.slice(0, -3) + 'men';
+    if (/Mouse$/.test(n)) return n.slice(0, -5) + 'Mice';
+    if (/[^aeiou]y$/.test(n)) return n.slice(0, -1) + 'ies';
+    if (/(s|sh|ch|x)$/.test(n)) return n + 'es';
+    return n + 's';
+}
+
+function weaponChartItems() {
+    const rows = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER].map(w => {
+        const beats = new Set(Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].weakTo === w).map(k => monsterPlural(ENEMY_TYPES[k].name)));
+        return { icon: WEAPON_INFO[w].icon, name: `${WEAPON_INFO[w].label} beats`, desc: [...beats].join(', '), cost: 0, status: null, action: () => { menu = null; } };
+    });
+    rows.push({ icon: '🌈', name: 'RAINBOW POWER', desc: 'Beats everything!', cost: 0, status: null, action: () => { menu = null; } });
+    return rows;
+}
+
+function openWeaponChart() {
+    openMenu('📖 WHAT BEATS WHAT', weaponChartItems,
+             { hint: `Every weapon still does a little damage to everything  ·  ${byInput('E to close', '✕ to close', 'B to close')}`, h: WEAPON_CHART_H, wide: true });
+}
+
+function drawChartSign() {
+    const { x, y } = CHART_SIGN;
+    drawGroundShadow(x, y + 16, 14, 4);
+    ctx.fillStyle = '#6B3E1E'; ctx.fillRect(x - 3, y - 6, 6, 24);   // post
+    ctx.fillStyle = '#C8964F'; ctx.fillRect(x - 24, y - 30, 48, 28);
+    ctx.strokeStyle = '#6B3E1E'; ctx.lineWidth = 2; ctx.strokeRect(x - 24, y - 30, 48, 28);
+    ctx.font = '20px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
+    ctx.fillText('📖', x, y - 15);
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 12px Arial';
+    ctx.fillText('Weapon chart', x, y + 32);
+    if (nearChartSign()) drawSpeech({ x, y: y - 20 }, `${mainBtn()}: What beats what?`);
 }
 
 function drawArenaGate() {
@@ -9213,27 +9992,16 @@ function drawVoid() {
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillText('Every portal is a mystery — where will it take you?', 400, 328);
 
-    // Shield hint
+    // Shield hint (one short line: the full list of monsters is on the weapon chart sign)
     if (state.power !== POWER.NONE) {
-        const shielded = state.power === POWER.RAINBOW ? 'EVERY MONSTER (not the Devil!)'
-            : Object.keys(ENEMY_TYPES).filter(isShieldedAgainst).map(k => ENEMY_TYPES[k].name.toUpperCase() + 'S').join(' & ');
-        ctx.fillStyle = WEAPON_INFO[state.power].color;
+        const w = WEAPON_INFO[state.power];
+        ctx.fillStyle = w.color;
         ctx.font = 'bold 12px Arial';
-        ctx.fillText(`🛡 ${WEAPON_INFO[state.power].label} SHIELD — protects you from ${shielded}`, 400, 360);
+        ctx.fillText(state.power === POWER.RAINBOW ? '🛡 RAINBOW SHIELD — protects you from every monster (not the Devil!)'
+                                                   : `🛡 ${w.label} SHIELD — protects you from the monsters ${w.label.toLowerCase()} beats`, 400, 360);
     }
 
-    // Which weapon beats which bad guy
-    const chart = [POWER.ICE, POWER.BRIMSTONE, POWER.LIGHTNING, POWER.WATER].map(w => {
-        const plural = n => n.endsWith('man') ? n.slice(0, -3) + 'men' : n === 'Shadow You' ? n : n + 's';
-        const beats = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].weakTo === w).map(k => plural(ENEMY_TYPES[k].name));
-        const list = beats.length > 1 ? beats.slice(0, -1).join(', ') + ' & ' + beats[beats.length - 1] : beats[0];
-        return `${WEAPON_INFO[w].icon} ${WEAPON_INFO[w].label} beats ${list}`;
-    });
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.font = 'bold 12px Arial';
-    ctx.fillText('WHAT BEATS WHAT (every weapon still does a little damage to everything)', 400, 446);
-    ctx.font = '10px Arial';
-    chart.forEach((line, i) => ctx.fillText(line, 400, 462 + i * 14));
-    ctx.fillText('🌈 RAINBOW POWER beats everything!', 400, 462 + chart.length * 14);
+    drawChartSign();
 
     // Void enemies
     const t = Date.now() / 400;
@@ -9284,10 +10052,10 @@ function drawVoid() {
         ctx.strokeRect(b.x, b.y, b.w, b.h);
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#FFD700'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const key = lastInput === 'pad' ? 'Y' : lastInput === 'touch' ? '' : 'E';
+        const key = byInput('E', '', 'Y');
         ctx.fillText(`🛒 SHOP${key ? '  (' + key + ')' : ''}`, b.x + b.w / 2, b.y + b.h / 2 + 1);
         // AWARDS button
-        const a = AWARDS_BTN, akey = lastInput === 'pad' ? 'X' : lastInput === 'touch' ? '' : 'H';
+        const a = AWARDS_BTN, akey = byInput('H', '', 'X');
         ctx.fillStyle = 'rgba(40,20,70,0.85)'; ctx.fillRect(a.x, a.y, a.w, a.h);
         ctx.strokeStyle = '#FFD700'; ctx.strokeRect(a.x, a.y, a.w, a.h);
         ctx.fillStyle = '#FFD700';
@@ -9348,7 +10116,7 @@ function drawHell() {
     const digSpot = nearbyDigSpot();
     if (digSpot) drawDigView(digSpot);
     if (digSpot) {
-        const verb = lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap DIG' : 'Press SPACE';
+        const verb = byInput('Press SPACE', 'Tap DIG', 'Press A');
         ctx.fillStyle = canDig() ? '#FFE08A' : '#FF8888';
         ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
         ctx.fillText(!canDig() ? 'Beat the mole monster first!'
@@ -9534,15 +10302,142 @@ function drawEmojiEnemy(e, t) {
         ctx.fillStyle = '#FFF'; ctx.fillRect(-6, -e.r * 0.12, 4, 5); ctx.fillRect(2, -e.r * 0.12, 4, 5);
     } else if (e.type === 'megaboss') {   // all the bosses stuck together!
         ctx.font = `${e.r * 1.1}px Arial`;
-        [['🐲', -0.55, -0.45], ['👸', 0.55, -0.45], ['🐂', -0.6, 0.45], ['🤖', 0.6, 0.45], ['👹', 0, 0]].forEach(([em, ox, oy]) => ctx.fillText(em, ox * e.r, oy * e.r + Math.sin(t * 4 + ox * 3) * 2));
+        [['🐲', -0.55, -0.45], ['🐍', 0.55, -0.45], ['🐂', -0.6, 0.45], ['🤖', 0.6, 0.45], ['👹', 0, 0]].forEach(([em, ox, oy]) => ctx.fillText(em, ox * e.r, oy * e.r + Math.sin(t * 4 + ox * 3) * 2));
     } else if (e.type === 'cerberus') { ctx.font = `${size * 0.7}px Arial`; ctx.fillText('🐕', -e.r * 0.7, 4); ctx.fillText('🐕', e.r * 0.7, 4); ctx.fillText('🐕', 0, -e.r * 0.5); }   // three heads!
     else ctx.fillText(info.emoji, 0, 0);
     if (info.crown) { ctx.font = `${e.r * 0.8}px Arial`; ctx.fillText('👑', 0, -e.r * 1.05); }
-    if (e.type === 'medusa') { ctx.font = `${e.r * 0.7}px Arial`; for (let k = 0; k < 5; k++) ctx.fillText('🐍', Math.cos(k * 0.8 - 1.6 - 0.4) * e.r * 0.9, -e.r * 0.6 + Math.sin(k * 0.8 - 2) * e.r * 0.5 + Math.sin(t * 6 + k) * 2); }
+    ctx.restore();
+}
+
+// A mole is coming! Shaking dirt mound with a big "!" (warning), then a mound it climbs out of
+function drawMoleMound(e) {
+    const warning = e.warn > 0;
+    const shake = warning ? Math.sin(frameNo * 1.7) * 3 : Math.sin(frameNo * 1.2) * 1.5;
+    const grow = warning ? 0.6 + 0.4 * (1 - e.warn / MOLE_WARN_FRAMES) : 1;
+    ctx.save();
+    if (warning) {   // pulsing red ring so it still shows up in the dark caves
+        const pulse = 0.5 + 0.5 * Math.sin(frameNo * 0.3);
+        ctx.strokeStyle = `rgba(255,70,40,${0.55 + 0.4 * pulse})`; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.ellipse(e.x, e.y + 6, 30 + 8 * pulse, 15 + 4 * pulse, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(e.x + shake, e.y + 6, 26 * grow, 11 * grow, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#7A4C26';
+    ctx.beginPath(); ctx.ellipse(e.x + shake, e.y + 6, 24 * grow, 14 * grow, 0, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = '#A8723C';
+    ctx.beginPath(); ctx.ellipse(e.x + shake - 5, e.y + 2, 11 * grow, 7 * grow, 0, Math.PI, 0); ctx.fill();
+    if (warning) {
+        const blink = Math.floor(frameNo / 8) % 2 === 0;
+        ctx.fillStyle = blink ? '#FFEE33' : '#FF6633';
+        ctx.strokeStyle = '#3A1400'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
+        ctx.font = 'bold 38px Arial'; ctx.textAlign = 'center';
+        ctx.shadowColor = '#FFAA00'; ctx.shadowBlur = 10;
+        ctx.strokeText('!', e.x + shake, e.y - 14); ctx.fillText('!', e.x + shake, e.y - 14);
+    }
+    ctx.restore();
+}
+
+// ── MEDUSA: a scaly green monster with a head full of writhing snakes ──
+const MEDUSA_WARN_FRAMES = 90;   // matches the "DON'T LOOK AT ME!" wind-up in moveEnemy
+const MEDUSA_SNAKES      = 9;
+
+function drawMedusa(e) {
+    const u = e.r / 30;   // everything is drawn for r = 30 and scaled
+    const w = frameNo * 0.12;
+    const k = e.gazeTimer > 0 && e.gazeTimer <= MEDUSA_WARN_FRAMES ? 1 - e.gazeTimer / MEDUSA_WARN_FRAMES : 0;   // 0 → 1 during the stare wind-up
+    const pulse = 0.5 + 0.5 * Math.sin(frameNo * 0.5);
+    const thrash = 1 + k * 1.8;   // the snakes go wild before she stares
+    ctx.save();
+    ctx.translate(e.x, e.y); ctx.scale(u, u);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // Snakes for hair (behind the head)
+    for (let i = 0; i < MEDUSA_SNAKES; i++) {
+        const f = i / (MEDUSA_SNAKES - 1), a = -Math.PI * (0.98 - 0.96 * f);   // fanned out over the top and down the sides
+        const dx = Math.cos(a), dy = Math.sin(a), px = -dy, py = dx;
+        const len = 26 + (i % 3) * 7, sx = dx * 17, sy = -3 + dy * 19;
+        const pts = [];
+        for (let j = 0; j <= 8; j++) {
+            const q = j / 8, sway = Math.sin(w * thrash * 1.6 + i * 1.9 + q * 5) * (2 + 10 * q) * (0.7 + 0.3 * thrash);
+            pts.push([sx + dx * q * len + px * sway, sy + dy * q * len + py * sway + q * q * 8]);   // droops a little
+        }
+        for (const [col, wid] of [['#17401C', 7], ['#4FA23A', 5], ['#8BD05A', 1.6]]) {
+            for (let j = 0; j < 8; j++) {
+                const q = j / 8, fat = 1 - q * 0.55;
+                ctx.strokeStyle = col; ctx.lineWidth = wid * fat;
+                ctx.beginPath(); ctx.moveTo(pts[j][0], pts[j][1] - (col === '#8BD05A' ? 1 : 0)); ctx.lineTo(pts[j + 1][0], pts[j + 1][1] - (col === '#8BD05A' ? 1 : 0)); ctx.stroke();
+            }
+        }
+        const [hx, hy] = pts[8], [bx, by] = pts[7], ha = Math.atan2(hy - by, hx - bx);   // snake head
+        ctx.save(); ctx.translate(hx, hy); ctx.rotate(ha);
+        ctx.fillStyle = '#3F8F2F'; ctx.beginPath(); ctx.ellipse(1, 0, 5, 3.4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = k > 0.3 ? '#FF3322' : '#FFE600'; ctx.beginPath(); ctx.arc(2, -1.3, 1.1, 0, Math.PI * 2); ctx.arc(2, 1.3, 1.1, 0, Math.PI * 2); ctx.fill();
+        if (Math.sin(w * 2.2 + i * 2.3) > 0.2) {   // flicking tongue
+            ctx.strokeStyle = '#E02040'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(5.5, 0); ctx.lineTo(9, 0); ctx.moveTo(9, 0); ctx.lineTo(11, -1.5); ctx.moveTo(9, 0); ctx.lineTo(11, 1.5); ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    // Shoulders in a dark scaly robe
+    ctx.fillStyle = '#244F2C'; ctx.beginPath(); ctx.ellipse(0, 27, 19, 11, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#3F8A47'; ctx.lineWidth = 1;
+    for (let row = 0; row < 3; row++) for (let col = -3; col <= 3; col++) {
+        const sx = col * 5 + (row % 2) * 2.5, sy = 22 + row * 4;
+        if ((sx * sx) / 330 + ((sy - 27) * (sy - 27)) / 100 < 0.9) { ctx.beginPath(); ctx.arc(sx, sy, 2.6, 0.2, Math.PI - 0.2); ctx.stroke(); }
+    }
+
+    // Head: scaly green skin
+    const skin = ctx.createRadialGradient(-5, -10, 3, 0, -2, 26);
+    skin.addColorStop(0, '#A4DB72'); skin.addColorStop(0.6, '#5BAA45'); skin.addColorStop(1, '#2F6F33');
+    ctx.fillStyle = skin; ctx.strokeStyle = '#1C4A22'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(0, -2, 21, 23, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = 'rgba(30,90,35,0.55)'; ctx.lineWidth = 0.9;   // little scales
+    for (let row = 0; row < 9; row++) for (let col = -4; col <= 4; col++) {
+        const sx = col * 5 + (row % 2) * 2.5, sy = -20 + row * 5;
+        if ((sx * sx) / 400 + ((sy + 2) * (sy + 2)) / 480 < 0.82 && !(Math.abs(sx) < 14 && sy > -13 && sy < -1)) { ctx.beginPath(); ctx.arc(sx, sy, 2.4, 0.3, Math.PI - 0.3); ctx.stroke(); }
+    }
+
+    // Glowing eyes: yellow, then hot red while she winds up her stare
+    const eyeCol = `rgb(255, ${Math.round(232 - 200 * k)}, ${Math.round(20 * (1 - k))})`;
+    for (const side of [-1, 1]) {
+        const ex = side * 9, ey = -7;
+        if (k > 0) {   // red glow around the eye
+            const aura = ctx.createRadialGradient(ex, ey, 2, ex, ey, 16 + 10 * pulse);
+            aura.addColorStop(0, `rgba(255,40,0,${0.55 * k})`); aura.addColorStop(1, 'rgba(255,40,0,0)');
+            ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(ex, ey, 26, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = '#10200F'; ctx.beginPath(); ctx.ellipse(ex, ey, 7.6, 5.4, side * -0.38, 0, Math.PI * 2); ctx.fill();   // dark socket
+        ctx.save();
+        ctx.shadowColor = eyeCol; ctx.shadowBlur = 7 + 20 * k * (0.7 + 0.3 * pulse);
+        ctx.fillStyle = eyeCol; ctx.beginPath(); ctx.ellipse(ex, ey, 6.2, 4.2, side * -0.38, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.ellipse(ex, ey, 1.5 - 0.5 * k, 4, 0, 0, Math.PI * 2); ctx.fill();   // slit pupil
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(ex - 2, ey - 2, 0.9, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#143A1A'; ctx.lineWidth = 3.4;   // angry brow slanting down to the middle
+        ctx.beginPath(); ctx.moveTo(side * 17, -17 + k * 2); ctx.lineTo(side * 3, -9 + k * 2); ctx.stroke();
+    }
+
+    // Nose holes
+    ctx.fillStyle = '#1C4A22'; ctx.beginPath(); ctx.ellipse(-2.2, 3, 1, 1.6, 0, 0, Math.PI * 2); ctx.ellipse(2.2, 3, 1, 1.6, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Wide mouth with fangs and a forked tongue
+    const open = 4 + Math.sin(w * 1.3) * 1 + 4 * k;
+    const tongue = 8 + Math.sin(w * 3.1) * 4 + 4 * k;
+    ctx.fillStyle = '#2A0608';
+    ctx.beginPath(); ctx.moveTo(-13, 9); ctx.quadraticCurveTo(0, 9 + open * 2.2, 13, 9); ctx.quadraticCurveTo(0, 6, -13, 9); ctx.fill();
+    ctx.strokeStyle = '#E02040'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, 12); ctx.lineTo(0, 12 + tongue); ctx.moveTo(0, 12 + tongue); ctx.lineTo(-3.5, 14 + tongue); ctx.moveTo(0, 12 + tongue); ctx.lineTo(3.5, 14 + tongue); ctx.stroke();
+    ctx.fillStyle = '#FFFFF0';
+    for (const side of [-1, 1]) {
+        ctx.beginPath(); ctx.moveTo(side * 4, 8.2); ctx.lineTo(side * 8, 8.6); ctx.lineTo(side * 6, 8.4 + 6 + open * 0.3); ctx.fill();   // long fangs
+        ctx.beginPath(); ctx.moveTo(side * 10, 9); ctx.lineTo(side * 12.4, 9.2); ctx.lineTo(side * 11.2, 13); ctx.fill();               // small teeth
+    }
     ctx.restore();
 }
 
 function drawEnemyBody(e, t) {
+    if (e.type === 'mole' && e.warn > 0) { drawMoleMound(e); return; }
+    if (e.type === 'mole' && e.emerge > 0) drawMoleMound(e);   // the mole rises out of its mound
     if (e.frog) { drawGroundShadow(e.x, e.y + 12, 10, 3); drawFrog(e); return; }
     if (ENEMY_TYPES[e.type].emoji) { drawEmojiEnemy(e, t); return; }
     if (!e.hidden && !(e.emerge > 45)) {
@@ -9557,7 +10452,9 @@ function drawEnemyBody(e, t) {
         ctx.beginPath(); ctx.ellipse(e.x, e.y + e.r * 0.6, e.r * 1.2, e.r * 0.45, 0, Math.PI, 0); ctx.fill();
         ctx.globalAlpha = Math.max(0.1, 1 - e.emerge / 60);
     }
-    if (e.type === 'fire') {
+    if (e.type === 'medusa') {
+        drawMedusa(e);
+    } else if (e.type === 'fire') {
         ctx.fillStyle = '#FF6600'; ctx.shadowColor = '#FF4400'; ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#FFAA00';
@@ -10477,7 +11374,7 @@ function drawTownDetails(night) {
         }
         ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c.x, c.y - 14 + droop); ctx.stroke();
         if (!c.thirsty) { ctx.fillStyle = '#E03A2A'; ctx.beginPath(); ctx.arc(c.x + 3, c.y - 9, 3, 0, Math.PI * 2); ctx.fill(); }
-        else if (!night) { ctx.fillStyle = '#88CCFF'; ctx.font = '10px Arial'; ctx.textAlign = 'center'; ctx.fillText('💧?', c.x, c.y - 20); }
+        else if (!night) { ctx.fillStyle = '#88CCFF'; ctx.font = '12px Arial'; ctx.textAlign = 'center'; ctx.fillText('💧?', c.x, c.y - 20); }
     }
     // Butterflies (daytime)
     if (!night) {
@@ -10522,7 +11419,7 @@ function drawParadise() {
             ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(a.x - 2.5, a.y - 2.5, 2, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#33AA33'; ctx.fillRect(a.x - 1, a.y - 11, 4, 5);
         }
-        const verb = lastInput === 'pad' ? 'A' : lastInput === 'touch' ? 'Tap' : 'SPACE';
+        const verb = mainBtn();
         const n = state.buildMode ? null : nearbyNpc();   // in build mode the button builds instead
         if (n && !(P.speech && P.speech.npc === n)) drawSpeech(n, `${verb}: ${talkLabel(n)}`);
         else if (nearbyCrop()) drawSpeech(nearbyCrop(), `${verb}: Water the crop`);
@@ -10788,7 +11685,7 @@ function drawVignette() {
 function drawRoomBackground() {
     const t = Date.now() / 1000;
     if (state.room === ROOM.VOID) {
-        ctx.fillStyle = voidBgColor; ctx.fillRect(0, 0, 800, 600);
+        ctx.fillStyle = VOID_BG_COLOR; ctx.fillRect(0, 0, 800, 600);
         ctx.drawImage(roomBackground('void'), -50 + Math.sin(t / 6) * 30, -50 + Math.cos(t / 8) * 15);
     } else if (state.room === ROOM.SECRET) {
         const gold = ctx.createRadialGradient(400, 300, 50, 400, 300, 500);
@@ -10919,6 +11816,8 @@ function drawInsideCave() {
     ctx.fillStyle = state.caveProtectionExpired ? '#FF7744' : '#FFD08A'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center';
     ctx.fillText(state.caveProtectionExpired ? '⚠ The Devil found you — get out of the cave!' : `🕳 Hiding in the cave… the Devil can't see you (${secs}s)`,
                  400, c.y > 300 ? c.y - 24 : c.y + c.h + 34);
+    // A mole's warning mound shows through the dark so you always see where it will come up
+    for (const e of hell.enemies) if (e.alive && e.type === 'mole' && e.warn > 0) drawMoleMound(e);
     ctx.restore();
 }
 
@@ -10948,7 +11847,7 @@ function drawCaveDarkness() {
     const gem = nearbyGem();
     if (gem) {
         ctx.fillStyle = '#FFE08A'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
-        const verb = lastInput === 'pad' ? 'Press A' : lastInput === 'touch' ? 'Tap DIG' : 'Press SPACE';
+        const verb = byInput('Press SPACE', 'Tap DIG', 'Press A');
         ctx.fillText(`${verb} to mine the gem!`, gem.x, gem.y - 26);
     }
     ctx.fillStyle = 'rgba(255,220,150,0.6)'; ctx.font = '12px Arial'; ctx.textAlign = 'center';
@@ -11512,14 +12411,13 @@ function drawHUD() {
     ctx.fillText(`${names[state.room]} · ${lvlLabel}`, 400, 38);
 
     // Power
-    ctx.fillStyle = state.power === POWER.RAINBOW ? getPlayerColor()
-                  : state.power === POWER.NONE    ? '#888' : WEAPON_INFO[state.power].color;
+    ctx.fillStyle = state.power === POWER.RAINBOW ? getPlayerColor() : WEAPON_INFO[state.power].color;
     ctx.font = 'bold 17px Arial'; ctx.textAlign = 'right';
-    ctx.fillText(`Power: ${state.power === POWER.NONE ? '' : WEAPON_INFO[state.power].icon + ' '}${powerName()}`, 786, 28);
+    ctx.fillText(`Power: ${WEAPON_INFO[state.power].icon} ${powerName()}`, 786, 28);
 
     // ── AMMO BAR ──────────────────────────────────────────────
     if (state.power !== POWER.NONE && state.room !== ROOM.VOID) {
-        const bx = 14, by = 54, bh = 10, bw = 130;
+        const bx = 14, by = 54, bh = 14, bw = 130;
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
 
@@ -11528,7 +12426,7 @@ function drawHUD() {
             ctx.fillStyle = '#FF8800';
             ctx.fillRect(bx, by, bw * pct, bh);
             ctx.fillStyle = '#FFA500';
-            ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
+            ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
             const secsLeft = Math.ceil(state.ammoReloadTimer / 60);
             ctx.fillText(`RELOADING… ${secsLeft}s`, bx + 2, by + bh - 1);
         } else {
@@ -11537,8 +12435,8 @@ function drawHUD() {
                 ctx.fillStyle = i < state.ammo ? '#4FC3F7' : '#333';
                 ctx.fillRect(bx + i * (bulletW + 2), by, bulletW, bh);
             }
-            ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            ctx.font = '9px Arial'; ctx.textAlign = 'left';
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
             ctx.fillText(`AMMO ${state.ammo}/${state.ammoMax}`, bx + 2, by + bh - 1);
         }
     }
@@ -11559,13 +12457,16 @@ function drawHUD() {
     drawBuildButton();
     if (state.treasure && !state.buildMode) {
         ctx.save();
-        ctx.fillStyle = 'rgba(60,40,10,0.8)'; ctx.fillRect(250, 50, 300, 18);
-        ctx.fillStyle = '#FFE8A0'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
-        ctx.fillText(`🗺 Clue ${state.treasure.step + 1}/3: ${state.treasure.spots[state.treasure.step].clue}`, 400, 63);
+        const clue = `🗺 Clue ${state.treasure.step + 1}/3: ${state.treasure.spots[state.treasure.step].clue}`;
+        ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        const cw = Math.max(300, ctx.measureText(clue).width + 20);
+        ctx.fillStyle = 'rgba(60,40,10,0.8)'; ctx.fillRect(400 - cw / 2, 50, cw, 20);
+        ctx.fillStyle = '#FFE8A0'; ctx.fillText(clue, 400, 65);
         ctx.restore();
     }
 
     // ── MUTE BUTTON (M) ───────────────────────────────────────
+    if (!usesTouchLayout()) {   // (on a phone these are drawn with the other touch buttons)
     ctx.save();
     ctx.globalAlpha = 0.6;
     ctx.beginPath(); ctx.arc(MUTE_BTN.x, MUTE_BTN.y, MUTE_BTN.r, 0, Math.PI * 2);
@@ -11577,10 +12478,11 @@ function drawHUD() {
     ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
     ctx.fillStyle = '#FFF'; ctx.fillText('⚙', SETTINGS_BTN.x, SETTINGS_BTN.y + 1);
     ctx.restore();
+    }
     if (settings.creative) {   // a badge so you know you're in Creative Mode
         ctx.save();
-        ctx.fillStyle = 'rgba(60,160,60,0.9)'; ctx.fillRect(364, 50, 72, 16);
-        ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText('🎮 CREATIVE', 400, 62);
+        ctx.fillStyle = 'rgba(60,160,60,0.9)'; ctx.fillRect(352, 50, 96, 18);
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'; ctx.fillText('🎮 CREATIVE', 400, 63);
         ctx.restore();
     }
 }
@@ -11601,7 +12503,7 @@ function drawRainbowBg() {
 function drawEndHint() {
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.font = '12px Arial'; ctx.textAlign = 'center';
-    ctx.fillText(lastInput === 'pad' ? 'or press START' : lastInput === 'touch' ? 'tap the button' : 'or press ENTER', 400, 494);
+    ctx.fillText(byInput('or press ENTER', 'tap the button', 'or press START'), 400, 494);
 }
 
 function drawScoreLine(y) {
@@ -11663,9 +12565,9 @@ function drawLevelComplete() {
     ctx.save();
     ctx.shadowColor = '#4FC3F7'; ctx.shadowBlur = 20;
     ctx.fillStyle   = '#0a2840';
-    ctx.fillRect(300, 420, 200, 55);
+    ctx.fillRect(END_BTN.x, END_BTN.y, END_BTN.w, END_BTN.h);
     ctx.strokeStyle = '#4FC3F7'; ctx.lineWidth = 2;
-    ctx.strokeRect(300, 420, 200, 55);
+    ctx.strokeRect(END_BTN.x, END_BTN.y, END_BTN.w, END_BTN.h);
     ctx.fillStyle = '#FFFFFF';
     ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
     ctx.fillText('Next Level  ▶', 400, 454);
@@ -11709,9 +12611,9 @@ function drawWin() {
     ctx.save();
     ctx.shadowColor = '#4488FF'; ctx.shadowBlur = 20;
     ctx.fillStyle   = '#1a3488';
-    ctx.fillRect(300, 420, 200, 55);
+    ctx.fillRect(END_BTN.x, END_BTN.y, END_BTN.w, END_BTN.h);
     ctx.strokeStyle = '#6699FF'; ctx.lineWidth = 2;
-    ctx.strokeRect(300, 420, 200, 55);
+    ctx.strokeRect(END_BTN.x, END_BTN.y, END_BTN.w, END_BTN.h);
     ctx.fillStyle = '#FFFFFF';
     ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
     ctx.fillText('Play Again', 400, 454);
@@ -11776,9 +12678,9 @@ function drawShop() {
 
     ctx.font = '12px Arial'; ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText(lastInput === 'pad'   ? 'D-pad to choose  |  A to buy / wear  |  B to close'
-               : lastInput === 'touch' ? 'Tap an item to buy or wear it  |  ✕ to close'
-               : 'Arrows to choose, SPACE to buy / wear (or click)  |  1-8 skins, 9 bubble  |  E to close', 400, SY + 68);
+    ctx.fillText(byInput('Arrows to choose, SPACE to buy / wear (or click)  |  1-8 skins, 9 bubble  |  E to close',
+                         'Tap an item to buy or wear it  |  ✕ to close',
+                         'D-pad to choose  |  A to buy / wear  |  B to close'), 400, SY + 68);
 
     // Close button
     ctx.beginPath(); ctx.arc(SHOP_CLOSE.x, SHOP_CLOSE.y, SHOP_CLOSE.r, 0, Math.PI * 2);
@@ -11820,29 +12722,29 @@ function drawShop() {
 
         // Key hint
         ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
-        if (lastInput === 'keyboard') ctx.fillText(`[${i + 1}]`, ix, iy + 16);
+        ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        if (lastInput === 'keyboard') ctx.fillText(`[${i + 1}]`, ix, iy + 15);
 
         // Name
         ctx.fillStyle = unlocked ? (col === '#2A2A2A' ? '#BBB' : col) : '#555';
-        ctx.font = '10px Arial';
-        ctx.fillText(name, ix, iy + 27);
+        ctx.font = '12px Arial';
+        ctx.fillText(name, ix, iy + 28, 66);
 
         // Cost or ✓
         if (!unlocked) {
             ctx.fillStyle = state.coins >= cost ? '#FFD700' : '#886';
-            ctx.font = 'bold 9px Arial';
-            ctx.fillText(`🪙${cost}`, ix, iy + 39);
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText(`🪙${cost}`, ix, iy + 41);
         } else if (active) {
             ctx.fillStyle = '#FFD700';
-            ctx.font = 'bold 11px Arial';
-            ctx.fillText('✓', ix, iy + 39);
+            ctx.font = 'bold 14px Arial';
+            ctx.fillText('✓', ix, iy + 41);
         }
     }
 
     // Bottom row: Shield Bubble, then pets
-    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'left';
-    ctx.fillText('ITEMS & PETS — pets follow you, fight with their own powers and LEVEL UP!', SX + 14, SY + 174);
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
+    ctx.fillText('ITEMS & PETS — pets follow you, fight with their own powers and LEVEL UP!', SX + 14, SY + 174, SHOP.W - 28);
     for (let i = 8; i < SHOP_SLOTS; i++) {
         const r = shopSlotRect(i);
         const isPet = i >= 9, j = i - 9;
@@ -11854,22 +12756,21 @@ function drawShop() {
         ctx.strokeRect(r.x, r.y, r.w, r.h);
         if (isPet) {
             drawPetShape(PETS[j].id, r.cx, r.cy, 1.3, 1);
-            if (owned) { ctx.fillStyle = '#FFE066'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'right'; ctx.fillText(`Lv${petLevel(j)}`, r.x + r.w - 3, r.y + 11); }
+            if (owned) { ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'right'; ctx.fillText(`Lv${petLevel(j)}`, r.x + r.w - 3, r.y + 11); }
         } else {
             ctx.beginPath(); ctx.arc(r.cx, r.cy, 16, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(170,230,255,0.25)'; ctx.fill();
             ctx.strokeStyle = '#CCF0FF'; ctx.lineWidth = 2; ctx.stroke();
         }
         ctx.textAlign = 'center';
-        ctx.fillStyle = isPet ? '#FFE8B0' : '#AEE8FF'; ctx.font = 'bold 10px Arial';
-        ctx.fillText(isPet ? PETS[j].name : 'Bubble', r.cx, r.y + 66);
-        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '8px Arial';
-        ctx.fillText(isPet ? PETS[j].power : (lastInput === 'keyboard' ? 'Block 1 hit (9)' : 'Block 1 hit'), r.cx, r.y + 80);
+        ctx.fillStyle = isPet ? '#FFE8B0' : '#AEE8FF';
+        fitText(isPet ? PETS[j].name : 'Bubble', r.cx, r.y + 65, r.w - 2, 12, true);
+        ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '12px Arial';
+        ctx.fillText(isPet ? PETS[j].power : (lastInput === 'keyboard' ? 'Block 1 hit (9)' : 'Block 1 hit'), r.cx, r.y + 81, r.w - 2);
         const cost = isPet ? PETS[j].cost : BUBBLE_COST;
-        ctx.font = 'bold 10px Arial';
         ctx.fillStyle = active ? '#FFD700' : owned ? '#AEE8FF' : state.coins >= cost ? '#FFD700' : '#886';
-        ctx.font = 'bold 9px Arial';
-        ctx.fillText(active ? '✓ WITH YOU' : owned ? (isPet ? 'OWNED' : '✓ HAVE') : `🪙${cost}`, r.cx, r.y + 97);
+        ctx.font = 'bold 12px Arial';
+        ctx.fillText(active ? '✓ WITH YOU' : owned ? (isPet ? 'OWNED' : '✓ HAVE') : `🪙${cost}`, r.cx, r.y + 99, r.w - 2);
     }
     ctx.restore();
 }
@@ -11877,73 +12778,59 @@ function drawShop() {
 // ── DRAW: CONTROLS ────────────────────────────────────────────
 function drawControls() {
     if (!settings.hints) return;
+    if (lastInput === 'touch') {   // a short line a child can read, in the gap between the stick and the buttons
+        if (state.buildMode || state.gamePhase !== 'playing' || !touchUiShown()) return;
+        ctx.save();
+        ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+        const text = 'Left: walk  ·  Big button: shoot or dig', w = ctx.measureText(text).width + 20;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(400 - w / 2, 576, w, 20);
+        ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillText(text, 400, 590);
+        ctx.restore();
+        return;
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
     ctx.font = '11px Arial'; ctx.textAlign = 'right';
     const hint = lastInput === 'pad'   ? 'Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back'
-               : lastInput === 'touch' ? 'Move: joystick  |  Shoot / Dig: button'
                : p2.active ? 'P1: WASD + Space   ·   P2: Arrows + Enter   ·   P: Player 2 leaves'
                : 'Move: WASD  |  Shoot: Space (hold = charge)  |  Punch: J  |  Block: X  |  Jump: C  |  Build: B  |  Settings: O';
     ctx.fillText(hint, 792, 592);
 }
 
 function drawVirtualControls() {
-    if (!isTouchDevice || state.gamePhase === 'intro' || state.won || state.levelComplete) return;
+    if (!touchUiShown() || paused) return;
+    if (layoutDirty) layoutTouch();
     ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
-    // Joystick base
-    ctx.beginPath();
-    ctx.arc(VJOY.x, VJOY.y, VJOY.baseR, 0, Math.PI * 2);
-    ctx.fillStyle   = 'rgba(255,255,255,0.10)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth   = 2;
-    ctx.stroke();
+    // Joystick: drawn where the finger really is (the stick starts wherever you first touch)
+    const held = vTouch.joyId !== null;
+    const jx = held ? vTouch.joyOriX : VJOY.x, jy = held ? vTouch.joyOriY : VJOY.y;
+    ctx.beginPath(); ctx.arc(jx, jy, VJOY.baseR, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(jx + vTouch.joyDX, jy + vTouch.joyDY, VJOY.baseR * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.32)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.stroke();
 
-    // Joystick stick
-    ctx.beginPath();
-    ctx.arc(VJOY.x + vTouch.joyDX, VJOY.y + vTouch.joyDY, 22, 0, Math.PI * 2);
-    ctx.fillStyle   = 'rgba(255,255,255,0.28)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.60)';
-    ctx.lineWidth   = 2;
-    ctx.stroke();
-
-    // Shoot button
-    ctx.beginPath();
-    ctx.arc(VSHOOT.x, VSHOOT.y, VSHOOT.r, 0, Math.PI * 2);
-    ctx.fillStyle   = vTouch.shootId !== null ? 'rgba(255,220,50,0.40)' : 'rgba(255,220,50,0.15)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,220,50,0.70)';
-    ctx.lineWidth   = 2;
-    ctx.stroke();
-    ctx.fillStyle   = 'rgba(255,255,255,0.80)';
-    ctx.font        = 'bold 13px Arial';
-    ctx.textAlign   = 'center';
-    ctx.textBaseline = 'middle';
-    const touchBtns = [[VDANCE, '💃'], [VFART, '💨'], [VSILLY, sillyTurn % 2 ? '🤧' : '🫢'], [VMELEE, '👊'], [VBLOCK, '🛡'], [VJUMP, '🦘']];
-    touchBtns.push([VBUILD, state.buildMode ? '⚔' : '🧱']);
-    if (state.spell) touchBtns.push([VSPELL, SPELLS.find(x => x.id === state.spell).icon]);
-    if (godParent()) touchBtns.push([VGOD, nextGodPower().icon]);
-    if (state.lastMount) touchBtns.push([VMOUNT, state.mount ? '🚶' : MOUNTS.find(m => m.id === state.lastMount).icon]);
-    if (state.buildMode) touchBtns.push([VGADGET, '🔄']);
-    else if (state.gadget) touchBtns.push([VGADGET, GADGETS.find(g => g.id === state.gadget).icon]);
-    if (state.hasDash) touchBtns.push([VDASH, '⚡']);
-    for (const [b, icon] of touchBtns) {
+    // Round buttons: lit up while a finger holds them
+    for (const [b, icon, on] of touchButtonList()) {
+        const big = b === VSHOOT;
         ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
-        ctx.fillStyle = '#FFF'; ctx.font = '16px Arial'; ctx.fillText(icon, b.x, b.y + 1);
+        ctx.fillStyle = big ? (on ? 'rgba(255,220,50,0.45)' : 'rgba(255,220,50,0.18)') : (on ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.16)'); ctx.fill();
+        ctx.strokeStyle = big ? 'rgba(255,220,50,0.8)' : 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2.5; ctx.stroke();
+        if (!icon) continue;
+        ctx.fillStyle = '#FFF'; ctx.font = `${Math.round(b.r * 0.95)}px Arial`; ctx.fillText(icon, b.x, b.y + 2);
     }
-    ctx.font = 'bold 13px Arial';
-    ctx.fillText(state.buildMode ? 'BUILD' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : nearbyMineable() ? 'MINE'
-                 : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : wouldDigGround() ? 'DIG' : 'SHOOT', VSHOOT.x, VSHOOT.y);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.font = `bold ${Math.round(VSHOOT.r * 0.3)}px Arial`;
+    ctx.fillText(state.buildMode ? 'PLACE' : (nearbyDigSpot() && canDig()) || nearbyGem() ? 'DIG' : nearbyNpc() ? 'TALK' : nearbyMineable() ? 'MINE'
+                 : nearbyCrop() ? 'WATER' : atFishingSpot() ? 'FISH' : wouldDigGround() ? 'DIG' : state.power === POWER.NONE ? 'SWING' : 'SHOOT', VSHOOT.x, VSHOOT.y);
 
     ctx.restore();
 }
 
 // ── MAIN LOOP ─────────────────────────────────────────────────
 function update() {
-    if (state.gamePhase === 'intro') return;
+    if (paused || state.gamePhase === 'intro') return;
     if (race) { updateRace(); updateParticles(); return; }   // everything waits while you race
     if (petBattle) { updatePetBattle(); updateParticles(); return; }
     if (tvShow) { if (++tvShow.t > 900) tvShow = null; return; }
@@ -11954,6 +12841,9 @@ function update() {
         if (state.coinsBackup === undefined) state.coinsBackup = state.coins;
         state.coins = 99999;
     }
+    endScreenFrames = state.won || state.levelComplete ? endScreenFrames + 1 : 0;
+    // A menu, the shop or the awards board is open: the world waits for you (monsters must not hurt you while you read)
+    if (menu || state.shopOpen || state.awardsOpen) { fight.charge = 0; updateParticles(); return; }
     updatePlayer();
     if (!state.won && !state.levelComplete) {
         updateEnemies();
@@ -11995,8 +12885,20 @@ function update() {
 }
 let lastSave = 0;
 
+// The game paints its 800×600 picture in the middle of the canvas; on a wide phone the margins are
+// black and only the touch buttons are drawn there.
 function draw() {
-    ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);   // 800×600 drawing onto however many real pixels we have
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (view.margin) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+    ctx.setTransform(renderScale, 0, 0, renderScale, view.offX * renderScale, 0);   // 800×600 drawing onto however many real pixels we have
+    ctx.save();
+    if (view.margin) { ctx.beginPath(); ctx.rect(0, 0, GAME_W, GAME_H); ctx.clip(); }
+    drawGame();
+    ctx.restore();
+    drawVirtualControls();
+}
+
+function drawGame() {
     ctx.save();
     if (state.screenShake > 0) {
         const s = state.screenShake * 0.8;
@@ -12005,6 +12907,8 @@ function draw() {
 
     if (state.gamePhase === 'intro') {
         drawIntro();
+        drawMenu();
+        drawPaused();
         ctx.restore();
         return;
     }
@@ -12049,7 +12953,6 @@ function draw() {
     drawControlsPanel();
     drawHUD();
     drawControls();
-    drawVirtualControls();
     drawHotbar();
     drawShop();
     drawAwards();
@@ -12062,6 +12965,7 @@ function draw() {
     drawCredits();
     if (state.levelComplete) drawLevelComplete();
     if (state.won)           drawWin();
+    drawPaused();
 
     ctx.restore();
 }
@@ -12093,16 +12997,44 @@ function reportError(where, e) {
 window.addEventListener('error', ev => reportError('window', ev.error || ev.message));
 window.addEventListener('unhandledrejection', ev => reportError('promise', ev.reason));
 
+// The game counts in frames, so it must always run at 60 steps a second, whatever the screen's refresh rate:
+// a 144 Hz monitor would run it 2.4x fast and a 30 Hz tablet at half speed. Real time is collected in
+// stepAccum and spent in fixed 1/60 s update() steps; draw() runs once per screen frame.
+const STEP_MS         = 1000 / 60;   // one game step
+const MAX_STEPS_FRAME = 4;           // never catch up more than this in one frame: a hitch must not fast-forward the game
+const STEP_SNAP_MS    = 2;           // a frame this close to one step counts as exactly one (60 Hz timers wobble by a ms or so)
+const MAX_FRAME_GAP   = 250;         // a longer gap (hidden tab, slow device) just restarts the clock
+let lastFrameTime = null, stepAccum = 0;
+function resetFrameClock() { lastFrameTime = null; stepAccum = 0; }
+
+// How many update steps this frame is owed. Called without a timestamp (tests, the first call) = exactly one.
+function stepsOwed(now) {
+    if (now === undefined) { resetFrameClock(); return 1; }
+    const dt = lastFrameTime === null ? NaN : now - lastFrameTime;
+    lastFrameTime = now;
+    if (!(dt >= 0) || dt > MAX_FRAME_GAP) { stepAccum = 0; return 1; }
+    stepAccum += Math.abs(dt - STEP_MS) < STEP_SNAP_MS ? STEP_MS : dt;
+    let n = Math.floor(stepAccum / STEP_MS);
+    stepAccum -= n * STEP_MS;
+    if (n > MAX_STEPS_FRAME) { n = MAX_STEPS_FRAME; stepAccum = 0; }
+    return n;
+}
+
 // If one frame throws, log it and carry on: an uncaught error here would stop
 // requestAnimationFrame from being re-armed and freeze the game until a reload.
-function loop() {
-    try { pollGamepad(); update(); }
-    catch (e) { reportError('update', e); }
+function loop(now) {
+    // pollGamepad() runs once per step so a button press is seen exactly once, never lost or doubled
+    for (let n = stepsOwed(now); n > 0; n--) {
+        try { pollGamepad(); update(); }
+        catch (e) { reportError('update', e); }
+    }
     try { draw(); }
     catch (e) { reportError('draw', e); fitCanvas(); }   // resizing the canvas also resets any half-finished ctx.save()/clip
     requestAnimationFrame(loop);
 }
 
+gameReady = true;
+if (needTurn) pauseGame();   // (a phone opened upright)
 loop();
 </script>
 </body>
