@@ -677,7 +677,7 @@ function updatePlaceExits() {
     if (state.room === ROOM.CAMP && near(OLYMPUS_STAIRS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }
     if (state.room === ROOM.HEAVEN && near(ENDING_DOOR, 26)) {
         if (endingUnlocked()) { startCredits(); player.y += 50; }
-        else { showToast(`🔒 The SECRET ENDING needs ${ENDING_AWARDS} awards (you have ${Object.keys(awards.got).length}) and the Boss Rush crown!`, '#FFE8A0', 240); player.y += 50; }
+        else { showToast(`🔒 The SECRET ENDING needs ${ENDING_AWARDS} awards (you have ${awardsEarned()}) and the Boss Rush crown!`, '#FFE8A0', 240); player.y += 50; }
         return true;
     }
     if (state.room === ROOM.HEAVEN && near(HEAVEN_OLYMPUS, 30)) { changeRoom(ROOM.OLYMPUS); showToast('🏛 You climbed all the way up to MOUNT OLYMPUS!', '#FFE066', 200); return true; }

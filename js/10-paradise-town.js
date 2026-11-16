@@ -1089,7 +1089,7 @@ function yardItems() {
         action: () => {
             if (state.yard[b.id]) return;
             if (!spend(b.cost)) return;
-            state.yard[b.id] = true; giveAward('builder'); sfx('place'); menu = null;
+            state.yard[b.id] = true; giveAward('yardBuilder'); sfx('place'); menu = null;
             spawnParticles(b.x, b.y, '#FFE066', 30); triggerShake(6);
             showToast(`🔨 You built a ${b.name}!`, '#FFE066', 180);
         } }));
@@ -1220,7 +1220,7 @@ function drawSecretRoom2() {
     if (state.room !== ROOM.SECRETROOM) return;
     const P = place();
     ctx.save(); ctx.font = '40px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(P.chest ? '📭' : '🧰', SECRET_CHEST.x, SECRET_CHEST.y); ctx.restore();
-    const n = Object.keys(awards.got || {}).length;
+    const n = awardsEarned();
     ctx.fillStyle = '#FFE066'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
     ctx.fillText(`🏆 Your trophy shelf: ${n} awards!`, 400, 118);
     ctx.fillText('🕵 Nobody knows about this room… except you!', 400, 300);

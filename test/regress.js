@@ -794,7 +794,7 @@ check('awards board: every word is 12 px or more, every award is reachable by pa
         const lines = recordText(drawAwards);
         for (const l of lines) if (l.size < 12) out.push('page ' + (awardsPage + 1) + ': "' + l.t.slice(0, 24) + '" is ' + l.size + ' px');
         const bad = sideways(lines, AWARDS_BOARD.X, AWARDS_BOARD.X + AWARDS_BOARD.W); if (bad) out.push('page ' + (awardsPage + 1) + ' too wide: ' + bad);
-        AWARDS.forEach((a, i) => { if (lines.some(l => l.t.includes(a.name))) seen.add(i); });   // (by position: three ids are used twice)
+        AWARDS.forEach((a, i) => { if (lines.some(l => l.t.includes(a.name))) seen.add(i); });   // (by position)
         return lines;
     };
     const walk = (how, open, next, close) => {
@@ -896,8 +896,59 @@ check('a live mole is drawn on top of the dark while you hide in a Hell cave (an
     return arcsAtMole().hits.length ? 'a defeated mole was drawn' : '';
 });
 
+check('awards: every id is unique, every giveAward() names a real award, every award can be earned, and the count cannot pass the total', () => {
+    const out = [], ids = AWARDS.map(a => a.id);
+    const dup = ids.filter((id, i) => ids.indexOf(id) !== i); if (dup.length) out.push('same id used twice: ' + [...new Set(dup)].join(', '));
+    const names = AWARDS.map(a => a.icon + a.name), dupN = names.filter((n, i) => names.indexOf(n) !== i); if (dupN.length) out.push('same icon and name twice: ' + dupN.join(', '));
+    const literal = new Set();
+    for (const src of __SRC) for (const m of src.matchAll(/giveAward\(\s*'([^']+)'/g)) literal.add(m[1]);
+    for (const id of literal) if (!ids.includes(id)) out.push('giveAward(\'' + id + '\') names no award');
+    // beating a boss gives the award named after its type (see damageEnemy); those have no literal call
+    const bossAwards = ids.filter(id => !literal.has(id));
+    for (const id of bossAwards) if (!ENEMY_TYPES[id] && id !== 'wizardBoss') out.push('award "' + id + '" has no giveAward() that can grant it');
+    awards.got = {}; for (const id of ids) awards.got[id] = true; awards.got.oldRemovedAward = true;
+    if (awardsEarned() > AWARDS.length) out.push('earned ' + awardsEarned() + ' of ' + AWARDS.length);
+    return out.join('; ');
+});
+
+check('awards: earning one of the formerly shared ids gives exactly one award', () => {
+    const out = [];
+    const earn = (what, fn, wantId) => {
+        awards.got = {}; fn();
+        const got = Object.keys(awards.got);
+        if (awardsEarned() !== 1 || got.length !== 1 || got[0] !== wantId) out.push(what + ' gave ' + (got.join('+') || 'nothing') + ', wanted only ' + wantId);
+    };
+    startPlaying(); changeRoom(ROOM.PARADISE);
+    earn('placing a block', () => giveAward('builder'), 'builder');
+    earn('building in the backyard', () => { state.yard = {}; state.coins = 9999; menu = null; yardItems()[0].action(); }, 'yardBuilder');
+    earn('the magic combo', () => { lastCombo = 0; lastMagicUse = { kind: 'spell', at: Date.now() }; checkMagicCombo('gadget'); }, 'combo');
+    earn('learning a spell', () => giveAward('wizard'), 'wizard');
+    changeRoom(ROOM.HELL);
+    earn('beating the Evil Wizard', () => {
+        const e = { type: 'wizard', x: 400, y: 300, alive: true, r: 26, hp: 0, maxHp: 5, hitFlash: 0, frozen: 0, coinDrop: 0 };
+        spawnList().push(e); damageEnemy(e, 999); delete awards.got.firstKill;   // (any kill also gives First Victory)
+    }, 'wizardBoss');
+    menu = null; return out.join('; ');
+});
+
+check('awards: an old save with the old ids and an unknown id loads, draws and counts only real awards', () => {
+    const out = [];
+    awards = Object.assign({ got: {}, kills: 0, fish: 0, farts: 0 }, { got: { builder: true, combo: true, wizard: true, longGoneAward: true }, kills: 3 });
+    if (awardsEarned() !== 3) out.push('counted ' + awardsEarned() + ', wanted 3');
+    startPlaying(); changeRoom(ROOM.VOID); menu = null; state.shopOpen = false;
+    state.awardsOpen = true; awardsPage = 0;
+    const lines = recordText(drawAwards); state.awardsOpen = false;
+    if (!lines.some(l => l.t.includes('3/' + AWARDS.length))) out.push('board does not say 3/' + AWARDS.length);
+    giveAward('longGoneAward');   // unknown ids are ignored, not a crash
+    if (awardsEarned() !== 3) out.push('an unknown id changed the count');
+    giveAward('yardBuilder'); if (awardsEarned() !== 4) out.push('the new award did not start unearned');
+    awards.got = {}; return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;
 `;
-loadGame({ driver, ...opts });
+const fs = require('fs'), jsDir = path.join(__dirname, '..', 'js');
+const srcs = fs.readdirSync(jsDir).filter(f => f.endsWith('.js')).map(f => fs.readFileSync(path.join(jsDir, f), 'utf8'));
+loadGame({ driver: 'const __SRC = ' + JSON.stringify(srcs) + ';\n' + driver, ...opts });

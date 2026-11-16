@@ -114,7 +114,7 @@ function damageEnemy(e, power, chained = false, bonus = 0) {
         if (e.type === 'king') giveAward('king');
         if (e.type === 'ghostking' || e.type === 'dragon' || e.type === 'shadow') giveAward(e.type);
         if (e.type === 'monkey' && e.stolen) showToast(`🐒 You got your coins back — and more! (+${e.coinDrop})`, '#FFE066', 150);
-        if (['wizard', 'mummyking', 'candymonster'].includes(e.type)) { giveAward(e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
+        if (['wizard', 'mummyking', 'candymonster'].includes(e.type)) { giveAward(e.type === 'wizard' ? 'wizardBoss' : e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
         if (e.type === 'wizard' && state.chicken) state.chicken = 0;
         if (e.type === 'bigdevil') { giveAward('bigBrother'); state.won = true; showToast("🏆 YOU BEAT THE DEVIL'S BIG BROTHER!!!", '#FFD700', 300); }
         if (e.type === 'octopus' || e.type === 'firedragon') { giveAward(e.type); showToast(`🏆 You beat the ${ENEMY_TYPES[e.type].name.toUpperCase()}!`, '#FFD700', 220); }
