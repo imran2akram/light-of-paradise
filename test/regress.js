@@ -945,6 +945,108 @@ check('awards: an old save with the old ids and an unknown id loads, draws and c
     awards.got = {}; return out.join('; ');
 });
 
+// ── the controls help: a pop-up, and a chip that covers nothing ──
+const rectsTouch = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+const padHold = list => { __h.pads = [{ connected: true, index: 0, buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: list.includes(i), value: 0 })), axes: [0, 0, 0, 0], id: 'pad' }]; pollGamepad(); };
+const gadgetArea = () => ({ x: GADGET_SLOT.x0 - GADGET_SLOT.r, y: GADGET_SLOT.y - 21, w: gadgetHudRight() - (GADGET_SLOT.x0 - GADGET_SLOT.r), h: 21 + GADGET_SLOT.r });
+const lineRect = l => ({ x: l.x0, y: l.y - l.size, w: l.x1 - l.x0, h: l.size + 3 });
+
+check('help chip: closed by default, and with the panel closed it covers no gadget slot, rocket, walk-up spot, hotbar or hint text (keyboard and controller, with and without gadgets, with player 2)', () => {
+    const out = [];
+    for (const input of ['keyboard', 'pad']) for (const owned of [true, false]) for (const two of [false, true]) {
+        const tag = input + (owned ? '' : ', no gadgets') + (two ? ', player 2' : '');
+        startPlaying(); lastInput = input; p2.active = two;
+        if (!owned) { state.spell = null; state.gadget = null; state.hasDash = false; state.demigod = undefined; }
+        if (helpOpen()) out.push(tag + ': the help is open by default');
+        const chip = helpChipRect();
+        if (!helpChipShown()) out.push(tag + ': no chip');
+        const keep = [];   // things that must stay uncovered
+        if (owned && gadgetSlots().length !== 4) out.push(tag + ': expected 4 gadget slots, got ' + gadgetSlots().length);
+        keep.push(['gadget slots', gadgetArea()]);
+        keep.push(['top HUD bar text', { x: 0, y: 0, w: 800, h: 48 }]);
+        keep.push(['rocket and its label', { x: ROCKET.x - 40, y: ROCKET.y - 40, w: 80, h: 85 }]);
+        for (const r of Object.values(ROOM)) for (const o of keepClearSpots(r)) {
+            const box = o.w ? { x: o.x, y: o.y, w: o.w, h: o.h } : { x: o.x - 20, y: o.y - 20, w: 40, h: 40 };
+            if (rectsTouch(chip, box)) out.push(tag + ': chip covers a walk-up spot in room ' + r);
+        }
+        for (const [what, box] of keep) if (rectsTouch(chip, box)) out.push(tag + ': chip covers the ' + what);
+        const hudLines = recordText(drawHUD);
+        for (const l of hudLines) if (rectsTouch(lineRect(l), chip)) out.push(tag + ': chip covers HUD text "' + l.t.slice(0, 20) + '"');
+        const lines = recordText(() => { drawControls(); drawHelpChip(); });
+        for (const l of lines) {
+            if (l.size < 12) out.push(tag + ': "' + l.t + '" is ' + l.size + ' px');
+            if (l.x0 < 0 || l.x1 > 800 || l.y > 600) out.push(tag + ': "' + l.t + '" is off the picture');
+            if (!l.t.startsWith('?') && (rectsTouch(lineRect(l), gadgetArea()) || rectsTouch(lineRect(l), chip))) out.push(tag + ': hint line "' + l.t.slice(0, 20) + '" covers a gadget slot or the chip');
+        }
+        if (!lines.some(l => l.t.startsWith('?'))) out.push(tag + ': chip text not drawn');
+        // build mode: the block bar is its own thing, and the hint line steps aside
+        state.buildMode = true;
+        const hot = hotbarPanel(), bl = recordText(() => { drawControls(); drawHelpChip(); });
+        if (rectsTouch(chip, hot)) out.push(tag + ': chip covers the hotbar');
+        if (rectsTouch(gadgetArea(), hot)) out.push(tag + ': the hotbar covers the gadget slots in build mode');
+        for (const l of bl) if (!l.t.startsWith('?') && rectsTouch(lineRect(l), hot)) out.push(tag + ': hint covers the hotbar in build mode');
+        state.buildMode = false; p2.active = false;
+    }
+    lastInput = 'touch'; if (recordText(drawHelpChip).length) out.push('the chip is drawn for touch');
+    lastInput = 'keyboard';
+    return [...new Set(out)].join('; ');
+});
+
+check('help pop-up: K, the chip (click) and View+LB open it; K, Esc, Space, a click, B, A, Y and Start close it; the world waits; text is 12 px or more; controller shows its own buttons', () => {
+    const out = [];
+    startPlaying(); changeRoom(ROOM.HELL); hell.devil.alive = true; lastInput = 'keyboard';
+    const advances = () => { const f = frameNo; for (let i = 0; i < 4; i++) loop(); return frameNo - f; };
+    const closed = what => { if (helpOpen()) out.push(what + ' did not close it'); };
+    const open = what => { if (!helpOpen()) { out.push(what + ' did not open it'); return false; } return true; };
+    const c = helpChipRect(), tapChip = () => handleTap(c.x + c.w / 2, c.y + c.h / 2);
+    // opening
+    fire('keydown', keyEv('KeyK')); if (open('K')) { if (advances()) out.push('the world ran under the help'); }
+    fire('keydown', keyEv('KeyK')); closed('K again');
+    menu = null; lastInput = 'keyboard'; tapChip(); open('the chip');
+    // closing, keyboard and mouse
+    for (const code of ['Escape', 'Space', 'Enter']) { fire('keydown', keyEv(code)); closed(code); openHelp(); }
+    handleTap(400, 300); closed('a click'); openHelp();
+    handleTap(MENU_CLOSE.x, MENU_CLOSE.y); closed('the X'); menu = null;
+    if (!advances()) out.push('the world did not resume');
+    // controller: View + LB opens; B, A, Y, Start close
+    padHold([]); padHold([PAD.BACK]); padHold([PAD.BACK, PAD.LB]); padHold([]);
+    if (lastInput !== 'pad') out.push('the controller was not seen');
+    if (open('View + LB')) {
+        const lines = recordText(drawMenu), all = lines.map(l => l.t).join(' ');
+        if (lines.some(l => l.size < 12)) out.push('pad: text under 12 px: ' + lines.filter(l => l.size < 12).map(l => l.t));
+        if (!all.includes('RB') || all.includes('WASD')) out.push('pad: the controller list is not shown');
+        const bad = sideways(lines, MENU.X, MENU.X + MENU.W); if (bad) out.push('pad: too wide: ' + bad);
+        if (lines.some(l => l.y > MENU.Y + menu.h)) out.push('pad: text below the panel');
+        if (advances()) out.push('the world ran under the help (pad)');
+    }
+    for (const [name, b] of [['B', PAD.B], ['A', PAD.A], ['Y', PAD.Y], ['Start', PAD.START]]) {
+        if (!helpOpen()) openHelp();
+        padHold([]); padHold([b]); padHold([]); closed('pad ' + name);
+    }
+    // the keyboard list and its text
+    lastInput = 'keyboard'; __h.pads = []; openHelp();
+    const kl = recordText(drawMenu), kall = kl.map(l => l.t).join(' ');
+    if (kl.some(l => l.size < 12)) out.push('keyboard: text under 12 px: ' + kl.filter(l => l.size < 12).map(l => l.t));
+    if (!kall.includes('WASD') || !kall.includes('Help')) out.push('keyboard: the key list is not shown');
+    const kb = sideways(kl, MENU.X, MENU.X + MENU.W); if (kb) out.push('keyboard: too wide: ' + kb);
+    if (kl.some(l => l.y > MENU.Y + menu.h)) out.push('keyboard: text below the panel');
+    menu = null;
+    // not while something else is open
+    state.shopOpen = true; fire('keydown', keyEv('KeyK')); if (helpOpen()) out.push('K opened the help over the shop'); state.shopOpen = false;
+    return out.join('; ');
+});
+
+check('help pop-up: a brand-new player on a keyboard sees it once, a returning one does not', () => {
+    const out = [];
+    startPlaying(); lastInput = 'keyboard'; savedGame = null;
+    try { localStorage.removeItem(HELP_SEEN_KEY); } catch (e) {}
+    startFromIntro(); if (!helpOpen()) out.push('not shown to a new player'); menu = null;
+    startPlaying(); startFromIntro(); if (helpOpen()) out.push('shown a second time'); menu = null;
+    try { localStorage.removeItem(HELP_SEEN_KEY); } catch (e) {}
+    startPlaying(); lastInput = 'touch'; startFromIntro(); if (helpOpen()) out.push('shown on touch'); lastInput = 'keyboard'; menu = null;
+    return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;

@@ -55,6 +55,7 @@ function handleTap(x, y) {
     if (tvShow) { nextTvChannel(); return true; }
     if (danceBattle) { danceTap(x, y); return true; }
     if (lastInput !== 'touch' && state.gamePhase === 'playing' && !menu && !state.shopOpen && inRect(x, y, BUILD_BTN)) { toggleBuild(); return true; }
+    if (helpChipShown() && inRect(x, y, helpChipRect())) { openHelp(); return true; }
     if (state.awardsOpen) {
         if (inRect(x, y, tapRect(awardsPrevRect()))) awardsTurn(-1);
         else if (inRect(x, y, tapRect(awardsNextRect()))) awardsTurn(1);
@@ -62,6 +63,7 @@ function handleTap(x, y) {
         return true;
     }
     if (menu) {
+        if (menu.help) { menu = null; return true; }   // the cheat-sheet closes on any click or tap
         if (Math.hypot(x - MENU_CLOSE.x, y - MENU_CLOSE.y) < MENU_CLOSE.hitR) { menu = null; return true; }   // the ✕
         const list = menu.items();
         for (let i = 0; i < list.length; i++) if (inRect(x, y, menuItemRect(i))) { menuSelect(i); return true; }
@@ -116,7 +118,7 @@ document.addEventListener('keydown', e => {
         if (nav) { e.preventDefault(); moveMenuCursor(nav[0], nav[1]); }
         if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); menuSelect(menu.cursor); }
         if (digitKey(e.code) >= 0) menuSelect(digitKey(e.code));
-        if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyO') menu = null;
+        if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyO' || (e.code === 'KeyK' && menu.help)) menu = null;
         return;
     }
     if (e.code === 'KeyB') toggleBuild();
@@ -149,7 +151,7 @@ document.addEventListener('keydown', e => {
     if (e.code === 'KeyN' && state.gamePhase === 'intro') askNewGame();
     if (e.code === 'KeyG') dance();
     if (e.code === 'KeyT') useGodPower();
-    if (e.code === 'KeyK') toggleControlsPanel();
+    if (e.code === 'KeyK') toggleHelp();
     if (e.code === 'KeyF') fart();
     if (e.code === 'KeyU') burp();
     if (e.code === 'KeyI') sneeze();
@@ -226,7 +228,7 @@ const PAD_COMBOS = [
     { btn: PAD.Y,  label: 'Awards',    run: () => { if (canOpenShop()) setAwardsOpen(!state.awardsOpen); } },
     { btn: PAD.RB, label: 'Burp',      run: () => burp() },
     { btn: PAD.LT, label: 'Sneeze',    run: () => sneeze() },
-    { btn: PAD.LB, label: 'Hide help', run: () => toggleControlsPanel() },
+    { btn: PAD.LB, label: 'Help',      run: () => toggleHelp() },
 ];
 
 // ── GAME CONTROLLER POLLING ────────────────────────────────

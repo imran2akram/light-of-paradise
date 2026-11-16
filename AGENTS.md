@@ -66,7 +66,7 @@ The scripts are classic scripts sharing one global scope, so a top-level `let`/`
 | `18-enemy-drawing.js` | drawing bad guys, Medusa, the enemy bodies, ice blocks and health bars, the Devil |
 | `19-demigods-and-heroes.js` | World 2 (Demigod Camp, quests, Olympus, Pirate Island), the Greek island and the maze, born lucky and the god powers |
 | `20-void-hub.js` | the Void: drawing, weapon chart, Race Master and pet races, void healing, the shop, the awards list and board |
-| `21-hud-and-effects.js` | HUD, toasts, controls panel, particles and floating text, confetti, storms, seasons, party and fireworks |
+| `21-hud-and-effects.js` | HUD, toasts, the controls help pop-up and its "? Help" chip, particles and floating text, confetti, storms, seasons, party and fireworks |
 | `22-main-loop.js` | pause (tab hidden), `update()`, `draw()`, `drawGame()`, error reports, the frame clock, `loop()` and the start-up lines |
 
 **Adding a file** = create `js/NN-name.js` starting with a `// ── NAME ───` banner and add its `<script>` tag to `index.html` at the right place in the order. `node test/scripts.js` fails if a `js/` file is not loaded or a loaded file is missing. No cache-busting strings or version stamps (there is no build step).

@@ -180,6 +180,7 @@ function startFromIntro(fresh = false) {
                           '⛏ Like Minecraft: tap 🧱, then tap the ground to mine and place blocks!',
                           '⛏ Like Minecraft: A mines, click the left stick to build and place blocks!'), '#FFE066', 300);
         rollBirthLuck();
+        if (!fresh) showHelpFirstTime();   // (a New Game after a save and the tests pass fresh: they get no pop-up)
         return;
     }
     const data = savedGame;

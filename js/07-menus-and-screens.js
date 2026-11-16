@@ -33,6 +33,7 @@ function menuItemRect(i) {
     return { x: MENU.X + I.PAD + col * I.COL, y: MENU.Y + I.TOP + row * (tall ? I.ROW_SQUEEZED : I.ROW), w: I.W, h: tall ? I.H_SQUEEZED : I.H };
 }
 function menuSelect(i) {
+    if (menu.help) { menu = null; return; }   // the controls cheat-sheet has nothing to pick: Space, Enter or A just close it
     const list = menu.items();
     if (!list[i]) return;
     menu.cursor = i;
@@ -441,6 +442,7 @@ function drawMenu() {
     ctx.beginPath();
     for (const dir of [-1, 1]) { ctx.moveTo(MENU_CLOSE.x - 6, MENU_CLOSE.y - 6 * dir); ctx.lineTo(MENU_CLOSE.x + 6, MENU_CLOSE.y + 6 * dir); }
     ctx.stroke();
+    if (menu.help) drawHelpRows();
     menu.items().forEach((it, i) => {
         const r = menuItemRect(i);
         const cursor = i === menu.cursor && lastInput !== 'touch';

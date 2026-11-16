@@ -151,12 +151,33 @@ function drawToast() {
     ctx.restore();
 }
 
-// ── CONTROLS PANEL (bottom-left: which button does what) ─────
-let showControls = true;
-try { showControls = localStorage.getItem('lop_controls') !== 'off'; } catch (e) {}
-function toggleControlsPanel() {
-    showControls = !showControls;
-    try { localStorage.setItem('lop_controls', showControls ? 'on' : 'off'); } catch (e) {}
+// ── CONTROLS HELP (a pop-up cheat-sheet: the "? Help" chip, K, or View + LB) ─────
+// It is a menu with no items (so the world waits, and Esc, Space, Enter, K, A, B, Y, Start, a click or the ✕ all close it).
+// Touch has its own hints and does not get it.
+const HELP_SEEN_KEY = 'lop_help_seen';
+const HELP_ROW_H = 22, HELP_TOP = 66, HELP_COL_W = 250;
+const HELP_CHIP = { right: 792, y: 50, h: 20 };   // a tab hanging under the top bar's right end: the bar already covers that strip, so no walk-up spot or prompt is hidden
+function helpChipRect() { const w = keyName(86, 122); return { x: HELP_CHIP.right - w, y: HELP_CHIP.y, w, h: HELP_CHIP.h }; }
+function canOpenHelp() {
+    return state.gamePhase === 'playing' && !state.won && !state.levelComplete && !menu && !state.shopOpen && !state.awardsOpen
+        && !race && !petBattle && !tvShow && !credits && !danceBattle;
+}
+function helpChipShown() { return canOpenHelp() && !usesTouchLayout() && lastInput !== 'touch'; }
+function helpOpen() { return !!(menu && menu.help); }
+function openHelp() {
+    if (!canOpenHelp()) return;
+    const half = Math.ceil(controlsList().length / 2);
+    openMenu(keyName('⌨ CONTROLS', '🎮 CONTROLS'), () => [], { h: HELP_TOP + half * HELP_ROW_H + 40,
+        hint: keyName('Press K, Esc or SPACE (or click) to close', 'Press B or A to close   ·   ⧉ = the View button') });
+    menu.help = true;
+    try { localStorage.setItem(HELP_SEEN_KEY, '1'); } catch (e) {}
+}
+function toggleHelp() { if (helpOpen()) menu = null; else openHelp(); }
+// A brand-new player on a keyboard or controller sees the controls once, by itself
+function showHelpFirstTime() {
+    let seen = false;
+    try { seen = localStorage.getItem(HELP_SEEN_KEY) === '1'; } catch (e) {}
+    if (!seen && !usesTouchLayout() && lastInput !== 'touch') openHelp();
 }
 function controlsList() {
     const pad = lastInput === 'pad', god = !!godParent();
@@ -167,32 +188,33 @@ function controlsList() {
     ] : [
         ['Move', 'WASD'], ['Shoot / dig', 'Space'], ['Hit', 'J'], ['Block', 'X'], ['Jump', 'C'], ['Dash', 'Shift'],
         ['Spell', 'R'], ['Gadget', 'Q'], ['Build', 'B'], ['Ride', 'V'], ['Shop', 'E'], ['Awards', 'H'],
-        ['Dance', 'G'], ['Fart', 'F'], ['Burp', 'U'], ['Sneeze', 'I'], ['Sound', 'M'], ['Settings', 'O'], ['Player 2', 'P'], ['Hide help', 'K'],
+        ['Dance', 'G'], ['Fart', 'F'], ['Burp', 'U'], ['Sneeze', 'I'], ['Sound', 'M'], ['Settings', 'O'], ['Player 2', 'P'], ['Help', 'K'],
     ];
     if (!pad && god) rows.splice(7, 0, ['God power', 'T']);
     return rows;
 }
-function drawControlsPanel() {
-    if (state.gamePhase !== 'playing' || lastInput === 'touch' || menu || state.shopOpen || state.awardsOpen) return;
-    const x = 48, w = 236, rowH = 11;
-    if (!showControls) {
-        ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x, 540, 92, 16);
-        ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
-        ctx.fillText(keyName('⌨ Help: K', '🎮 Help: ⧉+LB'), x + 6, 551); ctx.restore();
-        return;
-    }
+// The rows, inside the open help menu (drawMenu has painted the panel, the title and the ✕)
+function drawHelpRows() {
     const rows = controlsList(), half = Math.ceil(rows.length / 2);
-    const h = 18 + half * rowH, y = 554 - h;
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = '#FFD700'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'left';
-    ctx.fillText(keyName('⌨ CONTROLS', '🎮 CONTROLS  (⧉ = View button)'), x + 6, y + 11);
-    ctx.font = '9px Arial';
+    ctx.font = '14px Arial'; ctx.textBaseline = 'alphabetic';
     rows.forEach(([what, key], i) => {
-        const cx = x + 6 + Math.floor(i / half) * (w / 2), cy = y + 22 + (i % half) * rowH;
-        ctx.fillStyle = '#FFFFFF'; ctx.fillText(what, cx, cy);
-        ctx.fillStyle = '#88DDFF'; ctx.textAlign = 'right'; ctx.fillText(key, cx + w / 2 - 12, cy); ctx.textAlign = 'left';
+        const cx = MENU.X + 24 + Math.floor(i / half) * (HELP_COL_W + 14), cy = MENU.Y + HELP_TOP + 12 + (i % half) * HELP_ROW_H;
+        ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(cx - 6, cy - 15, HELP_COL_W - 6, HELP_ROW_H - 3);
+        ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'left'; ctx.fillText(what, cx, cy);
+        ctx.fillStyle = '#88DDFF'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'right'; ctx.fillText(key, cx + HELP_COL_W - 20, cy); ctx.font = '14px Arial';
     });
+    ctx.restore();
+}
+// The small "? Help" chip: always there while you play on a keyboard or controller, so the cheat-sheet is one press away
+function drawHelpChip() {
+    if (!helpChipShown()) return;
+    const r = helpChipRect();
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = '#88DDFF'; ctx.lineWidth = 1.5; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = '#FFFFFF'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(keyName('? Help: K', '? Help: ⧉+LB'), r.x + r.w / 2, r.y + r.h / 2 + 1);
     ctx.restore();
 }
 
@@ -209,12 +231,16 @@ function drawControls() {
         ctx.restore();
         return;
     }
-    ctx.fillStyle = 'rgba(255,255,255,0.22)';
-    ctx.font = '11px Arial'; ctx.textAlign = 'right';
-    const hint = lastInput === 'pad'   ? 'Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back'
-               : p2.active ? 'P1: WASD + Space   ·   P2: Arrows + Enter   ·   P: Player 2 leaves'
-               : 'Move: WASD  |  Shoot: Space (hold = charge)  |  Punch: J  |  Block: X  |  Jump: C  |  Build: B  |  Settings: O';
-    ctx.fillText(hint, 792, 592);
+    if (state.buildMode) return;   // the block bar along the bottom has its own hint
+    // The line sits to the right of the gadget slots, so it is the longest wording that fits there (or none)
+    const hints = lastInput === 'pad' ? ['Move: stick / D-pad  |  Shoot / Dig: A  |  Shop: Y  |  Sound: Back', 'Move: stick  |  Shoot: A  |  Shop: Y']
+                : p2.active ? ['P1: WASD + Space   ·   P2: Arrows + Enter   ·   P: Player 2 leaves', 'P1: WASD   ·   P2: Arrows   ·   P: P2 leaves']
+                : ['Move: WASD  |  Shoot: Space (hold = charge)  |  Punch: J  |  Block: X  |  Jump: C  |  Build: B  |  Settings: O', 'Move: WASD  |  Shoot: Space  |  Punch: J  |  Jump: C'];
+    const right = 792, left = gadgetHudRight() + 12;
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.font = '12px Arial'; ctx.textAlign = 'right';
+    const hint = hints.find(h => ctx.measureText(h).width <= right - left);
+    if (hint) ctx.fillText(hint, right, 590);
 }
 
 // ── HELPERS ───────────────────────────────────────────────────

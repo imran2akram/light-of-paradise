@@ -33,7 +33,8 @@ Mystery portals take you to a random place: the **Void**, **Hell**, **Paradise I
 | Burp / sneeze | U / I | View + RB / View + LT | 🫢 / 🤧 (one button, takes turns) |
 | Shop / awards (in the Void) | E / H | Y / X | tap the SHOP and AWARDS buttons |
 | Weapon chart (in the Void) | walk up to the sign, then Space | A | the big button |
-| Close a menu | E, O or Escape | B | ✕ |
+| Close a menu or the help | E, O, K or Escape | B | ✕ |
+| Help (the controls list) | K, or click the "? Help" chip | View + LB | — |
 | Settings | O | Start | ⚙ |
 | Sound | M | tap View | 🔊 |
 | Player 2 | P to join (P2 uses arrows + Enter; P1 keeps WASD) | hold any button on a new controller for 1 s; hold Start for 2 s to leave | — |
