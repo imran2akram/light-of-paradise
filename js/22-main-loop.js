@@ -160,7 +160,7 @@ function drawGame() {
     else if (!state.won && !state.levelComplete) drawVignette();
     drawFloatTexts();
     drawJoinProgress();
-    drawControlsPanel();
+    drawHelpChip();
     drawHUD();
     drawControls();
     drawHotbar();

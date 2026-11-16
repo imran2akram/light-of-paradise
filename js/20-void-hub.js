@@ -150,7 +150,7 @@ function drawVoid() {
         ctx.fillStyle = 'rgba(40,20,70,0.85)'; ctx.fillRect(a.x, a.y, a.w, a.h);
         ctx.strokeStyle = '#FFD700'; ctx.strokeRect(a.x, a.y, a.w, a.h);
         ctx.fillStyle = '#FFD700';
-        const got = AWARDS.filter(w => awards.got[w.id]).length;
+        const got = awardsEarned();
         ctx.fillText(`🏅 ${got}/${AWARDS.length}${akey ? '  (' + akey + ')' : ''}`, a.x + a.w / 2, a.y + a.h / 2 + 1);
         ctx.restore();
     }
@@ -522,7 +522,7 @@ const AWARDS = [
     { id: 'collector',   icon: '🧺', name: 'Collector',         desc: 'Find all the things in a secret place' },
     { id: 'petCostume',  icon: '🎀', name: 'Fashion Pet',       desc: 'Dress up your pet' },
     { id: 'petBattle',   icon: '🐾', name: 'Pet Champion',      desc: 'Win a Pet Battle' },
-    { id: 'builder',     icon: '🔨', name: 'Backyard Builder',  desc: 'Build something in your backyard' },
+    { id: 'yardBuilder', icon: '🔨', name: 'Backyard Builder',  desc: 'Build something in your backyard' },
     { id: 'royal',       icon: '🏰', name: 'King of the Castle', desc: 'Sit on your castle throne' },
     { id: 'rollercoaster', icon: '🎢', name: 'Wheee!',          desc: 'Ride your rollercoaster' },
     { id: 'secretRoom',  icon: '🕵', name: 'Secret Agent',      desc: 'Find the secret room in your house' },
@@ -555,13 +555,13 @@ const AWARDS = [
     { id: 'dinoRider',   icon: '🦕', name: 'Dino Rider',       desc: 'Tame a Triceratops' },
     { id: 'firedragon',  icon: '🔥', name: 'Dragon Tamer',     desc: 'Beat the Fire Dragon' },
     { id: 'idol',        icon: '🗿', name: 'Idol Hunter',      desc: 'Grab the Golden Idol' },
-    { id: 'wizard',      icon: '🧙', name: 'Wizard Beater',    desc: 'Beat the Evil Wizard' },
+    { id: 'wizardBoss',  icon: '🧙', name: 'Wizard Beater',    desc: 'Beat the Evil Wizard' },
     { id: 'mummyking',   icon: '🏺', name: 'Pharaoh Beater',   desc: 'Beat the Mummy King' },
     { id: 'candymonster',icon: '🍬', name: 'Sugar Rush',       desc: 'Beat the Candy Monster' },
     { id: 'bigBrother',  icon: '😈', name: 'REAL Hero',        desc: "Beat the Devil's Big Brother" },
     { id: 'pyramidSecret', icon: '🏺', name: 'Tomb Raider',    desc: 'Find a secret pyramid room' },
     { id: 'eggs',        icon: '🐣', name: 'Egg Finder',       desc: "Return Mama Bird's eggs" },
-    { id: 'combo',       icon: '👊', name: 'Combo Kid',        desc: 'Do a punch-punch-KICK combo' },
+    { id: 'comboKid',    icon: '👊', name: 'Combo Kid',        desc: 'Do a punch-punch-KICK combo' },
     { id: 'parry',       icon: '🛡', name: 'Perfect Parry',    desc: 'Parry or counter an attack' },
     { id: 'perfectDodge',icon: '⏳', name: 'Matrix Mode',      desc: 'Do a perfect dodge' },
     { id: 'modder',      icon: '🧩', name: 'Game Modder',      desc: 'Turn on a mod' },
@@ -575,11 +575,14 @@ try { awards = Object.assign(awards, JSON.parse(localStorage.getItem('lop_awards
 
 function saveAwards() { try { localStorage.setItem('lop_awards', JSON.stringify(awards)); } catch (e) {} }
 
+// How many awards are won. Ids saved by older versions that are no longer in AWARDS are not counted.
+function awardsEarned() { return AWARDS.filter(a => awards.got[a.id]).length; }
+
 function giveAward(id) {
-    if (awards.got[id]) return;
+    const a = AWARDS.find(a => a.id === id);
+    if (!a || awards.got[id]) return;   // an unknown id does nothing (a test keeps them out of the code)
     awards.got[id] = true;
     saveAwards();
-    const a = AWARDS.find(a => a.id === id);
     showToast(`🏅 AWARD: ${a.icon} ${a.name}!`, '#FFD700', 220);
     addScore(50);
     sfx('found');
@@ -603,7 +606,7 @@ function drawAwards() {
     ctx.fillStyle = 'rgba(10,5,25,0.97)'; ctx.fillRect(X, Y, W, H);
     ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.strokeRect(X, Y, W, H);
     ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center';
-    const got = AWARDS.filter(a => awards.got[a.id]).length;
+    const got = awardsEarned();
     ctx.fillText(`🏅 AWARDS  ${got}/${AWARDS.length}`, 400, Y + 30);
     ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '12px Arial';
     ctx.fillText(`Monsters beaten: ${awards.kills}   ·   Fish caught: ${awards.fish}`, 400, Y + 50);

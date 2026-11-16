@@ -793,8 +793,8 @@ function drawBuildButton() {
 
 // Little gadget + dash icons in the bottom-left corner (keyboard and controller: on a phone the real buttons are in the side margins)
 const GADGET_SLOT_STEP = 52;   // room for a 12 px key name beside each round slot
-function drawGadgetHud() {
-    if (lastInput === 'touch') return;
+const GADGET_SLOT = { x0: 70, y: 574, r: 16, tagReach: 34 };   // first slot's centre, row, radius; how far a key tag sticks out to the right
+function gadgetSlots() {
     const slots = [];
     if (state.gadget) {
         const g = GADGETS.find(g => g.id === state.gadget);
@@ -807,8 +807,17 @@ function drawGadgetHud() {
     }
     const gp = nextGodPower();
     if (gp) slots.push({ icon: gp.icon, key: keyName('T', 'BACK'), cd: state.godCooldown / gp.cd });
-    slots.forEach((sl, i) => {
-        const x = 70 + i * GADGET_SLOT_STEP, y = 574;
+    return slots;
+}
+// How far right the slots (and their key tags) reach: the bottom hint line must stay clear of this
+function gadgetHudRight() {
+    const n = lastInput === 'touch' ? 0 : gadgetSlots().length;
+    return n ? GADGET_SLOT.x0 + (n - 1) * GADGET_SLOT_STEP + GADGET_SLOT.tagReach : GADGET_SLOT.x0 - GADGET_SLOT.r - 10;   // (just past the sound button)
+}
+function drawGadgetHud() {
+    if (lastInput === 'touch') return;
+    gadgetSlots().forEach((sl, i) => {
+        const x = GADGET_SLOT.x0 + i * GADGET_SLOT_STEP, y = GADGET_SLOT.y;
         ctx.save();
         ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.fill();
         if (sl.cd > 0) {   // cooldown sweep

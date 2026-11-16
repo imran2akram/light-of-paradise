@@ -33,6 +33,7 @@ function menuItemRect(i) {
     return { x: MENU.X + I.PAD + col * I.COL, y: MENU.Y + I.TOP + row * (tall ? I.ROW_SQUEEZED : I.ROW), w: I.W, h: tall ? I.H_SQUEEZED : I.H };
 }
 function menuSelect(i) {
+    if (menu.help) { menu = null; return; }   // the controls cheat-sheet has nothing to pick: Space, Enter or A just close it
     const list = menu.items();
     if (!list[i]) return;
     menu.cursor = i;
@@ -441,6 +442,7 @@ function drawMenu() {
     ctx.beginPath();
     for (const dir of [-1, 1]) { ctx.moveTo(MENU_CLOSE.x - 6, MENU_CLOSE.y - 6 * dir); ctx.lineTo(MENU_CLOSE.x + 6, MENU_CLOSE.y + 6 * dir); }
     ctx.stroke();
+    if (menu.help) drawHelpRows();
     menu.items().forEach((it, i) => {
         const r = menuItemRect(i);
         const cursor = i === menu.cursor && lastInput !== 'touch';
@@ -718,7 +720,7 @@ function drawTvShow() {
     ctx.fillStyle = '#FFF'; ctx.font = 'bold 15px Arial';
     if (tvShow.ch === 0) {
         ctx.fillText('📰 TODAY\'S NEWS', 400, 185); ctx.font = '13px Arial';
-        [`A brave hero has ${state.coins} coins!`, `${awards.kills || 0} monsters beaten so far!`, `${Object.keys(awards.got).length} awards won!`,
+        [`A brave hero has ${state.coins} coins!`, `${awards.kills || 0} monsters beaten so far!`, `${awardsEarned()} awards won!`,
          godParent() ? `They say the hero is the child of ${godParent().name}!` : 'Is the hero secretly a demigod? Nobody knows!',
          state.hogwarts ? 'And they go to Hogwarts!' : 'Weather: sunny with a chance of monsters.'].forEach((line, i) => ctx.fillText(line, 400, 220 + i * 30));
     } else if (tvShow.ch === 1) {
@@ -736,7 +738,7 @@ function drawTvShow() {
 
 // 🌟 THE SECRET ENDING: a golden door in Heaven that only opens for the very best players
 const ENDING_DOOR = { x: 250, y: 160 }, ENDING_AWARDS = 60;
-function endingUnlocked() { return Object.keys(awards.got).length >= ENDING_AWARDS && awards.got.bossRush; }
+function endingUnlocked() { return awardsEarned() >= ENDING_AWARDS && awards.got.bossRush; }
 function drawEndingDoor() {
     const { x, y } = ENDING_DOOR, open = endingUnlocked(), t = Date.now() / 1000;
     ctx.save(); ctx.shadowColor = '#FFD700'; ctx.shadowBlur = open ? 20 + Math.sin(t * 3) * 8 : 6;

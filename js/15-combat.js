@@ -95,7 +95,7 @@ function meleePress() {
     const kick = fight.combo === 3;
     meleeFx(kick ? 'kick' : 'punch', kick ? 46 : 38);
     meleeHit(kick ? 46 : 38, kick ? 3 : 2, kick ? 60 : 12, kick ? 40 : 0);
-    if (kick) { spawnFloatText(player.x, player.y - 40, 'KICK!', '#FFE066', 40); giveAward('combo'); }
+    if (kick) { spawnFloatText(player.x, player.y - 40, 'KICK!', '#FFE066', 40); giveAward('comboKid'); }
     sfx(kick ? 'superHit' : 'hit');
     fight.cooldown = kick ? 16 : 8;
 }

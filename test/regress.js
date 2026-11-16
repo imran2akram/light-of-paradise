@@ -794,7 +794,7 @@ check('awards board: every word is 12 px or more, every award is reachable by pa
         const lines = recordText(drawAwards);
         for (const l of lines) if (l.size < 12) out.push('page ' + (awardsPage + 1) + ': "' + l.t.slice(0, 24) + '" is ' + l.size + ' px');
         const bad = sideways(lines, AWARDS_BOARD.X, AWARDS_BOARD.X + AWARDS_BOARD.W); if (bad) out.push('page ' + (awardsPage + 1) + ' too wide: ' + bad);
-        AWARDS.forEach((a, i) => { if (lines.some(l => l.t.includes(a.name))) seen.add(i); });   // (by position: three ids are used twice)
+        AWARDS.forEach((a, i) => { if (lines.some(l => l.t.includes(a.name))) seen.add(i); });   // (by position)
         return lines;
     };
     const walk = (how, open, next, close) => {
@@ -896,8 +896,161 @@ check('a live mole is drawn on top of the dark while you hide in a Hell cave (an
     return arcsAtMole().hits.length ? 'a defeated mole was drawn' : '';
 });
 
+check('awards: every id is unique, every giveAward() names a real award, every award can be earned, and the count cannot pass the total', () => {
+    const out = [], ids = AWARDS.map(a => a.id);
+    const dup = ids.filter((id, i) => ids.indexOf(id) !== i); if (dup.length) out.push('same id used twice: ' + [...new Set(dup)].join(', '));
+    const names = AWARDS.map(a => a.icon + a.name), dupN = names.filter((n, i) => names.indexOf(n) !== i); if (dupN.length) out.push('same icon and name twice: ' + dupN.join(', '));
+    const literal = new Set();
+    for (const src of __SRC) for (const m of src.matchAll(/giveAward\(\s*'([^']+)'/g)) literal.add(m[1]);
+    for (const id of literal) if (!ids.includes(id)) out.push('giveAward(\'' + id + '\') names no award');
+    // beating a boss gives the award named after its type (see damageEnemy); those have no literal call
+    const bossAwards = ids.filter(id => !literal.has(id));
+    for (const id of bossAwards) if (!ENEMY_TYPES[id] && id !== 'wizardBoss') out.push('award "' + id + '" has no giveAward() that can grant it');
+    awards.got = {}; for (const id of ids) awards.got[id] = true; awards.got.oldRemovedAward = true;
+    if (awardsEarned() > AWARDS.length) out.push('earned ' + awardsEarned() + ' of ' + AWARDS.length);
+    return out.join('; ');
+});
+
+check('awards: earning one of the formerly shared ids gives exactly one award', () => {
+    const out = [];
+    const earn = (what, fn, wantId) => {
+        awards.got = {}; fn();
+        const got = Object.keys(awards.got);
+        if (awardsEarned() !== 1 || got.length !== 1 || got[0] !== wantId) out.push(what + ' gave ' + (got.join('+') || 'nothing') + ', wanted only ' + wantId);
+    };
+    startPlaying(); changeRoom(ROOM.PARADISE);
+    earn('placing a block', () => giveAward('builder'), 'builder');
+    earn('building in the backyard', () => { state.yard = {}; state.coins = 9999; menu = null; yardItems()[0].action(); }, 'yardBuilder');
+    earn('the magic combo', () => { lastCombo = 0; lastMagicUse = { kind: 'spell', at: Date.now() }; checkMagicCombo('gadget'); }, 'combo');
+    earn('learning a spell', () => giveAward('wizard'), 'wizard');
+    changeRoom(ROOM.HELL);
+    earn('beating the Evil Wizard', () => {
+        const e = { type: 'wizard', x: 400, y: 300, alive: true, r: 26, hp: 0, maxHp: 5, hitFlash: 0, frozen: 0, coinDrop: 0 };
+        spawnList().push(e); damageEnemy(e, 999); delete awards.got.firstKill;   // (any kill also gives First Victory)
+    }, 'wizardBoss');
+    menu = null; return out.join('; ');
+});
+
+check('awards: an old save with the old ids and an unknown id loads, draws and counts only real awards', () => {
+    const out = [];
+    awards = Object.assign({ got: {}, kills: 0, fish: 0, farts: 0 }, { got: { builder: true, combo: true, wizard: true, longGoneAward: true }, kills: 3 });
+    if (awardsEarned() !== 3) out.push('counted ' + awardsEarned() + ', wanted 3');
+    startPlaying(); changeRoom(ROOM.VOID); menu = null; state.shopOpen = false;
+    state.awardsOpen = true; awardsPage = 0;
+    const lines = recordText(drawAwards); state.awardsOpen = false;
+    if (!lines.some(l => l.t.includes('3/' + AWARDS.length))) out.push('board does not say 3/' + AWARDS.length);
+    giveAward('longGoneAward');   // unknown ids are ignored, not a crash
+    if (awardsEarned() !== 3) out.push('an unknown id changed the count');
+    giveAward('yardBuilder'); if (awardsEarned() !== 4) out.push('the new award did not start unearned');
+    awards.got = {}; return out.join('; ');
+});
+
+// ── the controls help: a pop-up, and a chip that covers nothing ──
+const rectsTouch = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+const padHold = list => { __h.pads = [{ connected: true, index: 0, buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: list.includes(i), value: 0 })), axes: [0, 0, 0, 0], id: 'pad' }]; pollGamepad(); };
+const gadgetArea = () => ({ x: GADGET_SLOT.x0 - GADGET_SLOT.r, y: GADGET_SLOT.y - 21, w: gadgetHudRight() - (GADGET_SLOT.x0 - GADGET_SLOT.r), h: 21 + GADGET_SLOT.r });
+const lineRect = l => ({ x: l.x0, y: l.y - l.size, w: l.x1 - l.x0, h: l.size + 3 });
+
+check('help chip: closed by default, and with the panel closed it covers no gadget slot, rocket, walk-up spot, hotbar or hint text (keyboard and controller, with and without gadgets, with player 2)', () => {
+    const out = [];
+    for (const input of ['keyboard', 'pad']) for (const owned of [true, false]) for (const two of [false, true]) {
+        const tag = input + (owned ? '' : ', no gadgets') + (two ? ', player 2' : '');
+        startPlaying(); lastInput = input; p2.active = two;
+        if (!owned) { state.spell = null; state.gadget = null; state.hasDash = false; state.demigod = undefined; }
+        if (helpOpen()) out.push(tag + ': the help is open by default');
+        const chip = helpChipRect();
+        if (!helpChipShown()) out.push(tag + ': no chip');
+        const keep = [];   // things that must stay uncovered
+        if (owned && gadgetSlots().length !== 4) out.push(tag + ': expected 4 gadget slots, got ' + gadgetSlots().length);
+        keep.push(['gadget slots', gadgetArea()]);
+        keep.push(['top HUD bar text', { x: 0, y: 0, w: 800, h: 48 }]);
+        keep.push(['rocket and its label', { x: ROCKET.x - 40, y: ROCKET.y - 40, w: 80, h: 85 }]);
+        for (const r of Object.values(ROOM)) for (const o of keepClearSpots(r)) {
+            const box = o.w ? { x: o.x, y: o.y, w: o.w, h: o.h } : { x: o.x - 20, y: o.y - 20, w: 40, h: 40 };
+            if (rectsTouch(chip, box)) out.push(tag + ': chip covers a walk-up spot in room ' + r);
+        }
+        for (const [what, box] of keep) if (rectsTouch(chip, box)) out.push(tag + ': chip covers the ' + what);
+        const hudLines = recordText(drawHUD);
+        for (const l of hudLines) if (rectsTouch(lineRect(l), chip)) out.push(tag + ': chip covers HUD text "' + l.t.slice(0, 20) + '"');
+        const lines = recordText(() => { drawControls(); drawHelpChip(); });
+        for (const l of lines) {
+            if (l.size < 12) out.push(tag + ': "' + l.t + '" is ' + l.size + ' px');
+            if (l.x0 < 0 || l.x1 > 800 || l.y > 600) out.push(tag + ': "' + l.t + '" is off the picture');
+            if (!l.t.startsWith('?') && (rectsTouch(lineRect(l), gadgetArea()) || rectsTouch(lineRect(l), chip))) out.push(tag + ': hint line "' + l.t.slice(0, 20) + '" covers a gadget slot or the chip');
+        }
+        if (!lines.some(l => l.t.startsWith('?'))) out.push(tag + ': chip text not drawn');
+        // build mode: the block bar is its own thing, and the hint line steps aside
+        state.buildMode = true;
+        const hot = hotbarPanel(), bl = recordText(() => { drawControls(); drawHelpChip(); });
+        if (rectsTouch(chip, hot)) out.push(tag + ': chip covers the hotbar');
+        if (rectsTouch(gadgetArea(), hot)) out.push(tag + ': the hotbar covers the gadget slots in build mode');
+        for (const l of bl) if (!l.t.startsWith('?') && rectsTouch(lineRect(l), hot)) out.push(tag + ': hint covers the hotbar in build mode');
+        state.buildMode = false; p2.active = false;
+    }
+    lastInput = 'touch'; if (recordText(drawHelpChip).length) out.push('the chip is drawn for touch');
+    lastInput = 'keyboard';
+    return [...new Set(out)].join('; ');
+});
+
+check('help pop-up: K, the chip (click) and View+LB open it; K, Esc, Space, a click, B, A, Y and Start close it; the world waits; text is 12 px or more; controller shows its own buttons', () => {
+    const out = [];
+    startPlaying(); changeRoom(ROOM.HELL); hell.devil.alive = true; lastInput = 'keyboard';
+    const advances = () => { const f = frameNo; for (let i = 0; i < 4; i++) loop(); return frameNo - f; };
+    const closed = what => { if (helpOpen()) out.push(what + ' did not close it'); };
+    const open = what => { if (!helpOpen()) { out.push(what + ' did not open it'); return false; } return true; };
+    const c = helpChipRect(), tapChip = () => handleTap(c.x + c.w / 2, c.y + c.h / 2);
+    // opening
+    fire('keydown', keyEv('KeyK')); if (open('K')) { if (advances()) out.push('the world ran under the help'); }
+    fire('keydown', keyEv('KeyK')); closed('K again');
+    menu = null; lastInput = 'keyboard'; tapChip(); open('the chip');
+    // closing, keyboard and mouse
+    for (const code of ['Escape', 'Space', 'Enter']) { fire('keydown', keyEv(code)); closed(code); openHelp(); }
+    handleTap(400, 300); closed('a click'); openHelp();
+    handleTap(MENU_CLOSE.x, MENU_CLOSE.y); closed('the X'); menu = null;
+    if (!advances()) out.push('the world did not resume');
+    // controller: View + LB opens; B, A, Y, Start close
+    padHold([]); padHold([PAD.BACK]); padHold([PAD.BACK, PAD.LB]); padHold([]);
+    if (lastInput !== 'pad') out.push('the controller was not seen');
+    if (open('View + LB')) {
+        const lines = recordText(drawMenu), all = lines.map(l => l.t).join(' ');
+        if (lines.some(l => l.size < 12)) out.push('pad: text under 12 px: ' + lines.filter(l => l.size < 12).map(l => l.t));
+        if (!all.includes('RB') || all.includes('WASD')) out.push('pad: the controller list is not shown');
+        const bad = sideways(lines, MENU.X, MENU.X + MENU.W); if (bad) out.push('pad: too wide: ' + bad);
+        if (lines.some(l => l.y > MENU.Y + menu.h)) out.push('pad: text below the panel');
+        if (advances()) out.push('the world ran under the help (pad)');
+    }
+    for (const [name, b] of [['B', PAD.B], ['A', PAD.A], ['Y', PAD.Y], ['Start', PAD.START]]) {
+        if (!helpOpen()) openHelp();
+        padHold([]); padHold([b]); padHold([]); closed('pad ' + name);
+    }
+    // the keyboard list and its text
+    lastInput = 'keyboard'; __h.pads = []; openHelp();
+    const kl = recordText(drawMenu), kall = kl.map(l => l.t).join(' ');
+    if (kl.some(l => l.size < 12)) out.push('keyboard: text under 12 px: ' + kl.filter(l => l.size < 12).map(l => l.t));
+    if (!kall.includes('WASD') || !kall.includes('Help')) out.push('keyboard: the key list is not shown');
+    const kb = sideways(kl, MENU.X, MENU.X + MENU.W); if (kb) out.push('keyboard: too wide: ' + kb);
+    if (kl.some(l => l.y > MENU.Y + menu.h)) out.push('keyboard: text below the panel');
+    menu = null;
+    // not while something else is open
+    state.shopOpen = true; fire('keydown', keyEv('KeyK')); if (helpOpen()) out.push('K opened the help over the shop'); state.shopOpen = false;
+    return out.join('; ');
+});
+
+check('help pop-up: a brand-new player on a keyboard sees it once, a returning one does not', () => {
+    const out = [];
+    startPlaying(); lastInput = 'keyboard'; savedGame = null;
+    try { localStorage.removeItem(HELP_SEEN_KEY); } catch (e) {}
+    startFromIntro(); if (!helpOpen()) out.push('not shown to a new player'); menu = null;
+    startPlaying(); startFromIntro(); if (helpOpen()) out.push('shown a second time'); menu = null;
+    try { localStorage.removeItem(HELP_SEEN_KEY); } catch (e) {}
+    startPlaying(); lastInput = 'touch'; startFromIntro(); if (helpOpen()) out.push('shown on touch'); lastInput = 'keyboard'; menu = null;
+    return out.join('; ');
+});
+
 const failed = results.filter(([, p]) => p).length;
 console.log(failed ? failed + ' scenario(s) failed' : 'all ' + results.length + ' scenarios passed');
 process.exitCode = failed ? 1 : 0;
 `;
-loadGame({ driver, ...opts });
+const fs = require('fs'), jsDir = path.join(__dirname, '..', 'js');
+const srcs = fs.readdirSync(jsDir).filter(f => f.endsWith('.js')).map(f => fs.readFileSync(path.join(jsDir, f), 'utf8'));
+loadGame({ driver: 'const __SRC = ' + JSON.stringify(srcs) + ';\n' + driver, ...opts });

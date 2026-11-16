@@ -568,7 +568,8 @@ function hotbarGeom() {
         right = Math.min(GAME_W, VBLOCK.x - VBLOCK.r - TOUCH_GAP);
     }
     const W = usesTouchLayout() ? Math.max(HOTBAR_W_MIN, Math.min(HOTBAR_W_MAX, Math.floor((right - left - 12) / n))) : HOTBAR_W_MIN;
-    const mid = usesTouchLayout() ? (left + right) / 2 : GAME_W / 2;
+    let mid = usesTouchLayout() ? (left + right) / 2 : GAME_W / 2;
+    if (!usesTouchLayout()) mid = Math.max(mid, gadgetHudRight() + 16 + 6 + (n * W) / 2);   // slide right, off the gadget slots 
     return { n, W, x0: Math.round(mid - (n * W) / 2), y0: 580 - W };
 }
 function hotbarPanel() { const { n, W, x0, y0 } = hotbarGeom(); return { x: x0 - 6, y: y0 - 26, w: n * W + 12, h: W + 32 }; }
